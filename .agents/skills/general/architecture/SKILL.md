@@ -34,7 +34,7 @@ cli  →  agent::run (loop)  →  Backend trait  →  deepseek::{client, pow, st
 `Event` = `Thinking(String) | Text(String)`. One `Backend` value = one conversation; the returned string is the
 answer without the reasoning.
 
-## DeepSeek web protocol (reference: `~/projects/dsfree/FreeDeepseekAPI/client.js`, `server.js`)
+## DeepSeek web protocol (reference: `client.js`, `server.js` of github.com/ForgetMeAI/FreeDeepseekAPI)
 
 Base `https://chat.deepseek.com`. Headers on every call: `Authorization: Bearer <token>`, `Cookie`,
 `x-client-platform: web`, `x-client-version` and `x-app-version` (`2.0.0`), `x-client-locale`,

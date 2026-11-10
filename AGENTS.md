@@ -3,6 +3,9 @@
 Rust CLI for Linux (binary `dsc`): an agent that runs commands on this machine, driven by the free DeepSeek web
 account (chat.deepseek.com), no paid API key. One static binary, no node, no browser at runtime.
 
+`README.md` is the user manual (install, login, flags, approvals, config); keep it in sync with behaviour changes.
+The repo is public: no personal paths, names or data in any tracked file.
+
 ## Layout (target; `[ ]` = not written yet, see `TASKS.md`)
 
 | Path | Role |
