@@ -5,7 +5,7 @@ description: Architecture of deep_seek_cli_free (binary `dsc`) — the layers (C
 
 # Architecture
 
-State: `cli.rs`, `config.rs` and `doctor` (paths only) exist; the rest is design (`TASKS.md`). Update this file with every change.
+State: config, auth, DeepSeek client, proof of work, conversation and throttle exist; stream parser and agent are design (`TASKS.md`).
 
 ## Decisions
 
@@ -43,12 +43,29 @@ Base `https://chat.deepseek.com`. Headers on every call: `Authorization: Bearer 
 |---|---|---|
 | 1 | `POST /api/v0/chat_session/create` `{}` | once per conversation → session id |
 | 2 | `POST /api/v0/chat/create_pow_challenge` `{"target_path":"/api/v0/chat/completion"}` | per turn → `algorithm, challenge, salt, difficulty, expire_at, signature` |
-| 3 | solve | wasm export `wasm_solve(sp, challenge, len, prefix, len, difficulty)`, prefix = `<salt>_<expire_at>_`; answer = f64 at `sp+8` |
+| 3 | solve (`pow::solve`: own thread with a 64 MB stack; `wasmi` with feature `portable-dispatch`, because its default tail-call dispatch overflows the stack in debug builds; worst case 1.8 s release, 3.6 s debug with dependencies at `opt-level = 3`) | wasm export `wasm_solve(sp, challenge, len, prefix, len, difficulty)`, prefix = `<salt>_<expire_at>_`; answer = f64 at `sp+8` |
 | 4 | `POST /api/v0/chat/completion` + header `X-DS-PoW-Response` = base64 of JSON `{algorithm, challenge, salt, answer, signature, target_path}` | body: `chat_session_id, parent_message_id, model_type, prompt, ref_file_ids: [], thinking_enabled, search_enabled` |
 | 5 | SSE `data: {..}` | JSON patches: `p` = path (sticky until the next `p`), `v` = value; `response/content` = answer text, `response/thinking_content` = reasoning; the response message id becomes the next `parent_message_id` |
 
 `model_type`: `default` (fast), `expert`; `thinking_enabled` and `search_enabled` are flags on top.
-HTTP 401/403 = token dead → `dsc login`; 429 → honor `Retry-After`, else wait and retry once.
+Answers of the JSON calls are an envelope `{code, msg, data: {biz_code, biz_msg, biz_data}}` (`client::biz_data`):
+`code` 40002/40003 or HTTP 401/403 = `ApiError::TokenDead` → `dsc login` (seen live: HTTP 200 with
+`40003 Authorization Failed (invalid token)`); HTTP 429 = `ApiError::RateLimited`. A completion error also comes
+as this envelope instead of a stream. The static wasm host is called without the token.
+
+## Throttle (`deepseek::throttle`, config `[throttle]`)
+
+Every completion call goes through `throttle::acquire` (in `Conversation::send`); `doctor` calls are not counted.
+
+| Key | Default | Meaning |
+|---|---|---|
+| `min_interval_ms` | 3000 | minimum gap between two requests |
+| `jitter_ms` | 2000 | random extra gap, 0..=value |
+| `max_per_hour` | 120 | requests in any 60 minutes, 0 = no cap; when reached the CLI waits and says so |
+| `retries_on_429` | 2 | retries after HTTP 429 |
+| `wait_on_429_secs` | 60 | wait before such a retry when there is no `Retry-After` |
+
+Send times live in `<home>/cache/throttle.json`, so the limits also hold across separate `dsc` runs.
 
 ## Auth
 
@@ -89,9 +106,10 @@ own process group (killed as a tree).
 | Path | Content |
 |---|---|
 | `<home>` | `$DSC_HOME`, else `~/.config/dsc` |
-| `<home>/config.toml` | model type, thinking, search, locale, `agent.*`, `policy.*` |
+| `<home>/config.toml` | `deepseek.*` (model type, thinking, search, locale, timeout), `throttle.*`, `agent.*`, `policy.*` |
 | `<home>/auth.json` | secret, 0600 |
-| `<home>/cache/sha3.wasm` | proof-of-work module, refetched when `wasm_url` changes |
+| `<home>/cache/sha3.wasm`, `sha3.url` | proof-of-work module and the URL it came from; refetched when `wasm_url` differs |
+| `<home>/cache/throttle.json` | send times of the last hour |
 | `<home>/sessions/<id>.jsonl` | transcript of each run (prompts, actions, results) for `dsc chat --resume` |
 
 ## Risks

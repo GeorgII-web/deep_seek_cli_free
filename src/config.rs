@@ -33,16 +33,13 @@ impl Paths {
     pub fn cache(&self) -> PathBuf {
         self.home.join("cache")
     }
-
-    pub fn sessions(&self) -> PathBuf {
-        self.home.join("sessions")
-    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
     pub deepseek: Deepseek,
+    pub throttle: Throttle,
     pub agent: Agent,
     pub policy: Policy,
 }
@@ -56,6 +53,34 @@ pub struct Deepseek {
     pub search: bool,
     pub locale: String,
     pub timeout_secs: u64,
+}
+
+/// Request rate limits towards DeepSeek, see `deepseek::throttle`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Throttle {
+    /// Minimum gap between two requests, also across separate `dsc` runs
+    pub min_interval_ms: u64,
+    /// Random extra gap, 0..=this
+    pub jitter_ms: u64,
+    /// Requests allowed in any 60 minutes; 0 = no cap
+    pub max_per_hour: u32,
+    /// Retries after HTTP 429
+    pub retries_on_429: u32,
+    /// Wait before such a retry when the server sent no `Retry-After`
+    pub wait_on_429_secs: u64,
+}
+
+impl Default for Throttle {
+    fn default() -> Self {
+        Self {
+            min_interval_ms: 3000,
+            jitter_ms: 2000,
+            max_per_hour: 120,
+            retries_on_429: 2,
+            wait_on_429_secs: 60,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]

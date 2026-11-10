@@ -5,10 +5,7 @@ when done.
 
 | # | Task | Done when |
 |---|---|---|
-| 2 | `dsc login --import <file>` and `--token` | deps `serde_json`, `rpassword`; `auth.json` (0600) written from `~/projects/dsfree/FreeDeepseekAPI/deepseek-auth.json`; `dsc logout` removes it |
-| 3 | deps `tokio`, `reqwest` (rustls, stream); `deepseek::client` + `session`: headers, session create, challenge fetch, error mapping (401/403/429) | `dsc doctor` shows "token ok" or "token dead" against the live site |
-| 4 | deps `wasmi`, `base64`; `deepseek::pow`: wasm download + cache, `wasm_solve` in `wasmi` | unit test with a recorded challenge/answer pair; solve time printed by `doctor` |
-| 5 | `deepseek::stream` + `Backend` impl: completion call, SSE patches → `Event`, `parent_message_id` | `dsc ask "2+2"` streams the answer; a second turn in the same session remembers the first; parser unit tests on recorded SSE |
+| 5 | needs a live token (`dsc login --token`); confirm `doctor` shows token, wasm, pow ok; record a raw SSE (`dsc "2+2"` prints it now); `deepseek::stream` + `Backend` impl: SSE patches → `Event`, `parent_message_id`; replace `raw()` in `main.rs` | `dsc ask "2+2"` streams the answer; a second turn in the same session remembers the first; parser unit tests on recorded SSE |
 | 6 | `agent::protocol`: instruction text, action block parser | unit tests: plain answer, one block, broken JSON, several blocks |
 | 7 | `agent::tools`: `shell` (bash -lc, timeout, process group kill, output cap), `read_file`, `write_file` | unit tests incl. timeout and cap |
 | 8 | `agent::policy` + `ui`: allow/deny lists, ask prompt (`y/a/n/e`), `--yes` | deny wins over `--yes`; tests on the matcher |
@@ -20,4 +17,5 @@ when done.
 ## Open questions
 
 - Binary name `dsc` ok?
-- Auth token of 2026-07-12 in dsfree may be dead; then task 11 moves before task 3.
+- Proof of work is only checked against a made-up challenge (module loads, full search runs); a real pair needs a live token.
+- Is the token alone enough, or is the cookie needed too? Check with the first live token.

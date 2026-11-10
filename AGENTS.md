@@ -7,11 +7,15 @@ account (chat.deepseek.com), no paid API key. One static binary, no node, no bro
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | entry: parse CLI, `Paths`, `Settings`, dispatch; `doctor()` prints paths and model; other commands bail "not implemented yet" |
+| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt), `raw()` = temporary: a task prints the raw SSE of one turn |
 | `src/cli.rs` | clap: `Cli` = optional `Command` (`chat --resume`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
-| `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/dsc`; `config()`, `auth()`, `cache()`, `sessions()`), `Settings` = `[deepseek]`, `[agent]`, `[policy]` with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing |
-| `src/auth.rs` `[ ]` | token + cookie store; login by import file, pasted token, or own Chrome over CDP |
-| `src/deepseek/` `[ ]` | `client.rs` HTTP calls, `pow.rs` proof of work, `stream.rs` SSE parser, `session.rs` chat session |
+| `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/dsc`; `config()`, `auth()`, `cache()`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing |
+| `src/auth.rs` | `Auth` (`token`, `cookie`, `wasm_url`): `load`, `require`, `import` (FreeDeepseekAPI file), `new`, `save` (0600), `remove`; browser login over CDP `[ ]` |
+| `src/deepseek/client.rs` | `Client`: headers, `create_session`, `create_challenge`, `completion` (returns the SSE response), `fetch_wasm`; `ApiError` (`TokenDead`, `RateLimited`), envelope check `biz_data` |
+| `src/deepseek/pow.rs` | `solve(wasm, challenge)` in `wasmi`, `header()` = `X-DS-PoW-Response` value |
+| `src/deepseek/session.rs` | `Conversation`: session id, `parent_message_id`, wasm cache, `pow_header()`, `send()` with throttle and 429 retries |
+| `src/deepseek/throttle.rs` | `delay_ms` (pure rule), `acquire` (wait + record in `<home>/cache/throttle.json`) |
+| `src/deepseek/stream.rs` `[ ]` | SSE parser → `Event` |
 | `src/agent/` `[ ]` | `protocol.rs` prompt + action parser, `run.rs` loop, `tools.rs` shell/read/write, `policy.rs` approval |
 | `src/ui.rs` `[ ]` | streamed output, approval prompt, colors |
 
@@ -34,5 +38,6 @@ account (chat.deepseek.com), no paid API key. One static binary, no node, no bro
 
 ```bash
 cargo test && cargo fmt --check && cargo clippy --all-targets -- -D warnings
-DSC_HOME=var/home cargo run -- doctor    # throwaway home
+DSC_HOME=var/home cargo run -- doctor    # throwaway home; live calls, no prompt sent
+DSC_TEST_WASM=<sha3.wasm> cargo test --release -- --ignored   # solver against the site module
 ```
