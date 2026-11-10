@@ -150,6 +150,8 @@ pub struct Terminal {
     /// Lines of the last result that the preview left out; printed when the model
     /// says the result is the answer
     hidden_result: Vec<String>,
+    /// Who answers: true = the built-in mock, false = DeepSeek. Shown under the box and on the progress line.
+    mock: Arc<AtomicBool>,
     /// The approval mode: true = allow all (run without asking), false = ask.
     /// Shared with the box, the progress line, the key watcher and the agent loop.
     allow_all: Arc<AtomicBool>,
@@ -162,12 +164,15 @@ impl Terminal {
         let style = Style::detect();
         let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
         let allow_all = Arc::new(AtomicBool::new(allow_all));
+        let mock = Arc::new(AtomicBool::new(false));
         let mut spinner = Spinner::new(std::io::stderr().is_terminal(), style);
         let mut editor = Editor::new(style, history_file);
         if interactive {
             // The mode can only be switched with keys, so it is only shown with a terminal.
             spinner.set_mode(allow_all.clone());
             editor.set_mode(allow_all.clone());
+            spinner.set_model(mock.clone());
+            editor.set_model(mock.clone());
             editor.set_commands(COMMANDS);
         }
         Self {
@@ -188,8 +193,14 @@ impl Terminal {
             view: None,
             mouse: true,
             hidden_result: Vec::new(),
+            mock,
             allow_all,
         }
+    }
+
+    /// Tells the UI who answers now, for the lines at the bottom.
+    pub fn set_model(&mut self, mock: bool) {
+        self.mock.store(mock, Ordering::Relaxed);
     }
 
     /// The approval mode flag for the agent loop.

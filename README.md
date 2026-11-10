@@ -138,11 +138,11 @@ There is 809G free on / (out of 1007G, 16% used).
 ╭──────────────────────────────────────────────────────────────╮
 │ > which command did you run for that?                        │
 ╰──────────────────────────────────────────────────────────────╯
-  ⏵ ask · Shift+Tab mode   Enter send · Shift+Enter new line · Ctrl-C twice quit · ↑↓ history · /help
+  ⏵ ask · ◆ DeepSeek · Shift+Tab mode     Enter send · Shift+Enter new line · Ctrl-C twice quit · ↑↓ history
 ```
 
 While `dsc` works, the line under the box shows what it waits for and for how long
-(`⠹ Waiting for DeepSeek… 3s · Esc to stop · ⏵ ask`). The last line of a task shows the seconds it took, drawn as a rule across the screen; your prompts stand out on a background
+(`⠹ Waiting for DeepSeek… 3s · Esc to stop · ⏵ ask · ◆ DeepSeek`). The last line of a task shows the seconds it took, drawn as a rule across the screen; your prompts stand out on a background
 bar. The box grows
 with your text, up to ten rows. A single task (`dsc "<task>"`) does not clear the screen: it prints below your
 shell prompt.
@@ -181,7 +181,8 @@ Windows Terminal and most others). Colors switch off with
 | DeepSeek | the real account with your token; every task counts against it |
 | Mock | a fake model inside `dsc`: scripted answers, no network, no account |
 
-The choice is saved (`deepseek.api` in `config.toml`) and used on the next start. Use the mock to try the app, its
+The choice is saved (`deepseek.api` in `config.toml`) and used on the next start. The model in use is always
+shown at the bottom, next to the mode: `◆ DeepSeek` or `◆ Mock`. Use the mock to try the app, its
 keys and approvals without touching your account. It understands a few tasks: `!<command>` asks to run the
 command, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
 scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back.

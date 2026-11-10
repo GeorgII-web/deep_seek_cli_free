@@ -260,6 +260,8 @@ pub struct Editor {
     dock: Option<Dock>,
     /// The approval mode (true = allow all): shown in the hint line, Shift+Tab switches it
     mode: Option<Arc<AtomicBool>>,
+    /// Who answers (true = the mock): shown in the hint line next to the mode
+    model: Option<Arc<AtomicBool>>,
     /// Slash commands offered in a menu while the input is the start of one: name, meaning
     commands: &'static [Command],
     /// Docked: the scrollable output above the dock; the box tells it the size of
@@ -312,6 +314,7 @@ impl Editor {
             cursor_line: 0,
             dock: None,
             mode: None,
+            model: None,
             commands: &[],
             view: None,
         }
@@ -319,6 +322,10 @@ impl Editor {
 
     pub fn set_view(&mut self, view: Arc<Mutex<View>>) {
         self.view = Some(view);
+    }
+
+    pub fn set_model(&mut self, model: Arc<AtomicBool>) {
+        self.model = Some(model);
     }
 
     pub fn set_commands(&mut self, commands: &'static [Command]) {
@@ -368,8 +375,8 @@ impl Editor {
         self.mode = Some(mode);
     }
 
-    /// The line under the box, `max` columns wide: on the left the mode and the
-    /// key that switches it, on the right (up to the box edge) as many of the other
+    /// The line under the box, `max` columns wide: on the left the mode, the model
+    /// and the key that switches the mode, on the right (up to the box edge) as many of the other
     /// `(key, meaning)` hints as fit.
     fn hint_line(&self, hints: &[(&str, &str)], max: usize) -> String {
         let s = self.style;
@@ -379,6 +386,15 @@ impl Editor {
             let allow_all = mode.load(Ordering::Relaxed);
             left.push_str(&s.mode_label(allow_all));
             left_columns += if allow_all { 12 } else { 5 };
+        }
+        if let Some(model) = &self.model {
+            let mock = model.load(Ordering::Relaxed);
+            if !left.is_empty() {
+                left.push_str(&dot);
+                left_columns += 3;
+            }
+            left.push_str(&s.model_label(mock));
+            left_columns += if mock { 6 } else { 10 };
         }
         let (mut right, mut right_columns) = (String::new(), 0);
         for (key, what) in hints {

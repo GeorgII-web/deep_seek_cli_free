@@ -54,6 +54,7 @@ async fn main() -> Result<()> {
             let prompt = protocol::first_prompt(&cli.run.task.join(" "), &cwd());
             let mut terminal =
                 ui::Terminal::new(None, cli.run.yes || settings.policy.mode == Mode::AllowAll);
+            terminal.set_model(settings.deepseek.api == Api::Mock);
             let mode = terminal.mode();
             let mut saver = ModeSaver::new(&paths, &settings, mode.clone());
             let mut interrupts = terminal.interrupts();
@@ -153,6 +154,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
     // The conversations that can be continued, and the entry of the one in use.
     let mut store = sessions::Store::load(paths);
     let mut current: Option<sessions::Session> = None;
+    terminal.set_model(api == Api::Mock);
     terminal.set_mouse(settings.ui.mouse_scroll);
     terminal.open_chat(&api_label(api, settings, run), &cwd());
     if api == Api::Mock {
@@ -232,6 +234,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                     Api::Mock => None,
                 };
                 api = chosen;
+                terminal.set_model(api == Api::Mock);
                 conversation = self::model(paths, settings, run, api)?;
                 first = true;
                 current = None;

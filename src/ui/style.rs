@@ -103,6 +103,13 @@ impl Style {
             false => format!("{}⏵ ask{}", self.ok(), self.reset()),
         }
     }
+    /// `◆ DeepSeek` (blue) or `◆ Mock` (cyan): who answers, for the hint and progress lines.
+    pub fn model_label(&self, mock: bool) -> String {
+        match mock {
+            true => format!("{}◆ Mock{}", self.code_text(), self.reset()),
+            false => format!("{}◆ DeepSeek{}", self.accent(), self.reset()),
+        }
+    }
     /// A hint: the key light, its meaning darker.
     pub fn hint(&self, key: &str, what: &str) -> String {
         let space = if what.is_empty() { "" } else { " " };

@@ -45,6 +45,8 @@ pub struct Spinner {
     hint: Option<(&'static str, &'static str)>,
     /// The approval mode shown at the end of the line (true = allow all)
     mode: Option<Arc<AtomicBool>>,
+    /// Who answers, shown after the mode (true = the mock)
+    model: Option<Arc<AtomicBool>>,
     style: Style,
     started: bool,
 }
@@ -68,6 +70,7 @@ impl Spinner {
             docked: false,
             hint: None,
             mode: None,
+            model: None,
             style,
             started: false,
         }
@@ -97,6 +100,11 @@ impl Spinner {
         Notifier(self.state.clone())
     }
 
+    /// Call before the first `start`.
+    pub fn set_model(&mut self, model: Arc<AtomicBool>) {
+        self.model = Some(model);
+    }
+
     /// Shows `label` with a running clock. A new label keeps the clock when one runs.
     pub fn start(&mut self, label: &str) {
         if !self.enabled {
@@ -114,6 +122,7 @@ impl Spinner {
         }
         let (state, style, docked, hint) = (self.state.clone(), self.style, self.docked, self.hint);
         let mode = self.mode.clone();
+        let model = self.model.clone();
         // A plain thread: it must tick also while the async runtime is busy.
         std::thread::spawn(move || {
             loop {
@@ -137,6 +146,12 @@ impl Spinner {
                     suffix.push_str(&format!(
                         "{dot}{}",
                         style.mode_label(mode.load(Ordering::Relaxed))
+                    ));
+                }
+                if let Some(model) = &model {
+                    suffix.push_str(&format!(
+                        "{dot}{}",
+                        style.model_label(model.load(Ordering::Relaxed))
                     ));
                 }
                 let line = format!(
