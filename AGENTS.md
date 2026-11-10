@@ -15,7 +15,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/mock.rs` | `Mock`: the fake model inside the app (scripted answers by task, no network); `TASKS` lists what it understands |
 | `src/model.rs` | `Model`: `Deepseek(Conversation)` or `Mock`, the `Backend` the chat uses; `/model` switches it |
 | `src/sessions.rs` | `Session`, `Store` (`<home>/sessions.json`: conversations that can be continued), `title`, `age` |
-| `src/cli.rs` | clap: `Cli` = optional `Command` (`chat`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
+| `src/cli.rs` | clap: `Cli` = optional `Command` (`chat`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`, `--session`) |
 | `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/deep_seek_cli_free`; `config()`, `auth()`, `cache()`), `migrate` (one-time move of the old folder `~/.config/dsc`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` (with `mode`) with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing, `save` rewrites the file |
 | `src/auth.rs` | `Auth` (`token`, `cookie`, `wasm_url`): `load`, `require`, `import` (FreeDeepseekAPI file), `new`, `save` (0600), `remove`; browser login over CDP `[ ]` |
 | `src/deepseek/client.rs` | `Client`: headers, `create_session`, `create_challenge`, `completion` (returns the SSE response), `fetch_wasm`; `ApiError` (`TokenDead`, `RateLimited`), envelope check `biz_data`; `base()` = `DSC_API_BASE` or DeepSeek |

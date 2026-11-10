@@ -51,7 +51,20 @@ async fn main() -> Result<()> {
         None if cli.run.task.is_empty() => chat(&paths, &settings, &cli.run).await,
         None => {
             let mut conversation = model(&paths, &settings, &cli.run, settings.deepseek.api)?;
-            let prompt = protocol::first_prompt(&cli.run.task.join(" "), &cwd());
+            let task = cli.run.task.join(" ");
+            // With `--session` the task continues that conversation, which has the rules already.
+            let prompt = match &cli.run.session {
+                Some(code) => {
+                    let store = sessions::Store::load(&paths);
+                    let Some(chosen) = store.sessions.iter().find(|session| session.id == *code)
+                    else {
+                        bail!("no session `{code}` here; `dsc` then `/sessions` lists them");
+                    };
+                    conversation.resume(chosen.id.clone(), chosen.parent_message_id);
+                    protocol::next_prompt(&task)
+                }
+                None => protocol::first_prompt(&task, &cwd()),
+            };
             let mut terminal =
                 ui::Terminal::new(None, cli.run.yes || settings.policy.mode == Mode::AllowAll);
             terminal.set_model(settings.deepseek.api == Api::Mock);
@@ -165,6 +178,34 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
     if let Some(note) = token_note {
         terminal.error(&note);
     }
+    terminal.set_title("dsc");
+    // `--session=<code>`: start in that conversation, with its screen as it was left.
+    if let Some(code) = &run.session {
+        match store
+            .sessions
+            .iter()
+            .find(|session| session.id == *code)
+            .cloned()
+        {
+            Some(_) if api == Api::Mock => {
+                terminal.error("sessions belong to the DeepSeek model; switch with `/model` first")
+            }
+            Some(chosen) => {
+                conversation.resume(chosen.id.clone(), chosen.parent_message_id);
+                first = false;
+                let saved =
+                    std::fs::read_to_string(paths.transcript(&chosen.id)).unwrap_or_default();
+                terminal.show_output(&saved);
+                terminal.info(&format!(
+                    "Continuing `{}`. The model remembers that conversation.",
+                    chosen.title
+                ));
+                terminal.set_title(&format!("dsc · {}", chosen.title));
+                current = Some(chosen);
+            }
+            None => terminal.error(&format!("no session `{code}` here; `/sessions` lists them")),
+        }
+    }
     loop {
         let line = terminal.input();
         // Shift+Tab in the box may have switched the mode.
@@ -239,6 +280,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 first = true;
                 current = None;
                 terminal.show_output("");
+                terminal.set_title("dsc");
                 saver.save_api(api);
                 match api {
                     Api::Deepseek => terminal
@@ -286,6 +328,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                         if chosen.tasks == 1 { "" } else { "s" },
                         sessions::age(sessions::now(), chosen.updated)
                     ));
+                    terminal.set_title(&format!("dsc · {}", chosen.title));
                     current = Some(chosen);
                 }
                 continue;
@@ -296,6 +339,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 current = None;
                 // A new conversation starts on a clean screen; the old one is saved with its session.
                 terminal.show_output("");
+                terminal.set_title("dsc");
                 terminal
                     .info("New conversation: the model starts from zero. `/sessions` goes back.");
                 continue;
@@ -382,6 +426,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             entry.tasks += 1;
             entry.updated = sessions::now();
             store.upsert(entry.clone());
+            terminal.set_title(&format!("dsc · {}", entry.title));
             // The screen of this conversation, so a later switch can show it again.
             if let Some(output) = terminal.output() {
                 let file = paths.transcript(&entry.id);
@@ -392,6 +437,12 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         if quit {
             break;
         }
+    }
+    // After the screen is given back: how to come back to exactly this conversation.
+    let resume = current.map(|session| session.id);
+    drop(terminal);
+    if let Some(code) = resume {
+        println!("\nContinue this conversation:\n  dsc --session={code}");
     }
     Ok(())
 }

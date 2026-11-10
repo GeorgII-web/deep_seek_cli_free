@@ -203,6 +203,15 @@ impl Terminal {
         self.mock.store(mock, Ordering::Relaxed);
     }
 
+    /// Sets the title of the terminal tab (screen layout only): `dsc`, or the
+    /// name of the conversation.
+    pub fn set_title(&self, title: &str) {
+        if self.screen {
+            let title: String = title.chars().filter(|c| !c.is_control()).take(80).collect();
+            screen_write(&format!("\x1b]0;{title}\x07"));
+        }
+    }
+
     /// The approval mode flag for the agent loop.
     pub fn mode(&self) -> Arc<AtomicBool> {
         self.allow_all.clone()
@@ -447,7 +456,8 @@ impl Terminal {
         if docked {
             // The alternate screen: nothing of the terminal's earlier history is
             // reachable, and the app scrolls its own output.
-            screen_write("\x1b[?1049h\x1b[2J\x1b[H");
+            // The tab title is saved first; it comes back when the chat closes.
+            screen_write("\x1b[22;0t\x1b[?1049h\x1b[2J\x1b[H");
             if self.mouse {
                 // Button and wheel reports, in the SGR form.
                 screen_write("\x1b[?1000h\x1b[?1006h");
@@ -853,7 +863,7 @@ impl Drop for Terminal {
             }
             // Back on the normal screen the conversation is printed once, so it
             // stays in the terminal after the chat closed.
-            screen_write("\x1b[?1049l");
+            screen_write("\x1b[?1049l\x1b[23;0t");
             if let Some(view) = self.view.take() {
                 let transcript = view
                     .lock()

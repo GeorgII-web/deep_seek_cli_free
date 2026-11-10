@@ -192,7 +192,16 @@ scrolling), `code` shows formatting, `dead` shows the token window; anything els
 Every conversation you start is remembered after its first task. `/sessions` opens a list (title = the first
 task, number of tasks, age, folder); Up / Down choose, Enter switches, Esc closes. After a switch the screen
 shows that conversation's earlier output again and the model remembers it, also after a restart of `dsc`, because the messages themselves are kept by DeepSeek:
-`sessions.json` holds only the session id, the place to continue at and the title, and `sessions/<id>.log` the
+When you quit, `dsc` prints the command that brings you back to exactly this conversation, with its screen as you
+left it:
+
+```console
+Continue this conversation:
+  dsc --session=6a1f0c9e-…
+```
+
+The terminal tab is named after the conversation (`dsc · <first task>`), so several chats are easy to tell
+apart. `sessions.json` holds only the session id, the place to continue at and the title, and `sessions/<id>.log` the
 screen output. `/new` starts a conversation on a clean screen. The list contains the
 conversations started with `dsc`, the last 50; chats from the DeepSeek website are not in it, since they lack the
 agent rules.
@@ -205,6 +214,7 @@ agent rules.
 | `--think` | reasoning mode; the reasoning is shown dimmed |
 | `--search` | web search (not tested yet) |
 | `--expert` | the "expert" model instead of the fast one (not tested yet) |
+| `--session=<code>` | continue an earlier conversation; `dsc` prints the code when it exits |
 
 | Command | Meaning |
 |---|---|

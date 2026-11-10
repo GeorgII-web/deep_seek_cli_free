@@ -11,7 +11,7 @@ Entry `main()` in `src/main.rs`: `Cli::parse` → `Paths::new` → `Settings::lo
 
 | Input | Handler |
 |---|---|
-| `dsc <task words>` + `--yes`, `--think`, `--search`, `--expert` (`RunArgs`) | `conversation()` + `agent::run::run` with `protocol::first_prompt` and `ui::Terminal` |
+| `dsc <task words>` + `--yes`, `--think`, `--search`, `--expert`, `--session=<code>` (`RunArgs`) | `conversation()` + `agent::run::run` with `protocol::first_prompt` and `ui::Terminal` |
 | `dsc` without a task (flags allowed), `dsc chat` (no flags) | `chat()` |
 | `dsc login` | `login()`: without a flag the token window (`Terminal::token_dialog`), `--token` a hidden prompt, `--import <file>` a file |
 | `dsc logout` | `Auth::remove` |
@@ -52,7 +52,13 @@ answer (`Conversation::state`), `title` = the first task, `cwd`, `tasks`, `updat
 DeepSeek; switching only points the next prompt at that session, so the model has the whole history and the
 rules of the first prompt. Only conversations started here are listed. After every task the screen output (`Terminal::output`) is saved
 to `<home>/sessions/<id>.log` (`Paths::transcript`); a switch shows it again (`Terminal::show_output`). `/new` and
-`/model` clear `current` and the screen. A session
+`/model` clear `current` and the screen.
+
+`--session=<code>` (the session id): the chat starts in that conversation like a switch (`resume`, saved screen,
+`first = false`); a single task continues it with `next_prompt`; an unknown code is an error line (chat) or an
+error exit (single task). When the chat ends with a conversation in use, it prints
+`dsc --session=<id>` after the terminal is restored. The tab title (`Terminal::set_title`) is `dsc`, or
+`dsc · <title>` once the conversation has a session. A session
 deleted on the website fails at the next task with DeepSeek's error.
 
 No local transcript (`TASKS.md`). Inputs are kept in `<home>/history.json` (`Paths::history`).

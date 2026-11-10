@@ -13,7 +13,8 @@ Keys: \\r Enter, \\n Ctrl-J (new line), \\x1b[A up, \\x1b[B down, \\x1b[5~ PgUp,
 \\x1b[<64;1;1M wheel up, \\x1b[<65;1;1M wheel down, \\x1b Esc, \\x03 Ctrl-C, \\x04 Ctrl-D, \\x1b[Z Shift+Tab.
 Mock tasks: see scripts/mock-deepseek.py (`!<cmd>`, `run <cmd>`, `long`, `slow`, `code`, `dead`, ...).
 Home: DSC_HOME, default var/mock-home (made here: a mock token and a config without throttle).
-MOCK_TOKEN sets the token of a new home (`dead...` = the mock rejects it). target/debug/dsc is run.
+MOCK_TOKEN sets the token of a new home (`dead...` = the mock rejects it). target/debug/dsc is run,
+with the arguments in DSC_ARGS (e.g. DSC_ARGS=--session=mock-1).
 Default screen: 24 rows, 60 columns. The output shows the lines that scrolled off the top, then the
 screen (`-` output area, `#` dock), the cursor, and what the mock was asked.
 """
@@ -49,7 +50,7 @@ else:
 pid, fd = pty.fork()
 if pid == 0:
     os.environ['DSC_HOME'] = home
-    os.execv('./target/debug/dsc', ['dsc'])
+    os.execv('./target/debug/dsc', ['dsc'] + os.environ.get('DSC_ARGS', '').split())
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', H, W, 0, 0))
 
 # A small terminal: enough of VT100 for what dsc writes.

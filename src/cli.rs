@@ -32,6 +32,10 @@ pub struct RunArgs {
     /// The "expert" model instead of the fast one
     #[arg(long)]
     pub expert: bool,
+
+    /// Continue an earlier conversation: the code that `dsc` prints when it exits (also in `/sessions`)
+    #[arg(long, value_name = "CODE")]
+    pub session: Option<String>,
 }
 
 #[derive(Subcommand, Debug)]
