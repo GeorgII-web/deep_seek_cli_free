@@ -103,7 +103,8 @@ There is 809G free on / (out of 1007G, 16% used).
 ```
 
 While `dsc` works, the line under the box shows what it waits for and for how long
-(`⠹ Waiting for DeepSeek… 3s · Esc to stop · ⏵ ask`). The last line of a task shows the seconds it took. The box grows
+(`⠹ Waiting for DeepSeek… 3s · Esc to stop · ⏵ ask`). The last line of a task shows the seconds it took, drawn as a rule across the screen; your prompts stand out on a background
+bar. The box grows
 with your text, up to ten rows. A single task (`dsc "<task>"`) does not clear the screen: it prints below your
 shell prompt.
 

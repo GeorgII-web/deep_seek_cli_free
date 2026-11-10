@@ -379,19 +379,21 @@ impl Terminal {
         self.line(&format!("{}  {mark} {line}{}", s.gray(), s.reset()));
     }
 
-    /// The submitted input as part of the scrollback.
+    /// The submitted input as part of the scrollback: with colors, a bar with its
+    /// own background over the whole width, so a prompt is easy to find.
     fn echo(&mut self, text: &str) {
         let s = self.style;
         self.blank();
         for (i, line) in text.lines().enumerate() {
             let mark = if i == 0 { ">" } else { " " };
+            // `ESC[K` fills the rest of the row with the background.
+            let fill = if s.on() { "\x1b[K" } else { "" };
             self.line(&format!(
-                "{}{}{mark}{} {}{line}{}",
-                s.bold(),
-                s.accent(),
-                s.reset(),
-                s.bold(),
-                s.reset()
+                "{bg}{bold}{accent} {mark} {reset}{bg}{bold}{line} {fill}{reset}",
+                bg = s.prompt_bg(),
+                bold = s.bold(),
+                accent = s.accent(),
+                reset = s.reset(),
             ));
         }
         self.gap = false;
@@ -427,21 +429,24 @@ impl Terminal {
             plural(self.answers, "answer"),
             plural(self.actions, "action")
         );
-        match result {
-            Ok(()) => self.line(&format!(
-                "{}✓{} {}{stats}{}",
-                s.ok(),
-                s.reset(),
-                s.gray(),
-                s.reset()
-            )),
-            Err(err) => self.line(&format!(
-                "{}✗ {err:#}{} {}· {stats}{}",
-                s.err(),
-                s.reset(),
-                s.gray(),
-                s.reset()
-            )),
+        let (mark, color, text) = match result {
+            Ok(()) => ("✓", s.ok(), stats),
+            Err(err) => ("✗", s.err(), format!("{err:#} · {stats}")),
+        };
+        if s.on() {
+            // A rule over the whole width with the outcome in it: the end of a task is easy to find.
+            let columns = crossterm::terminal::size().map_or(80, |(columns, _)| columns as usize);
+            let used = 3 + 2 + text.chars().count() + 1;
+            let rule = "─".repeat(columns.saturating_sub(used + 1));
+            self.line(&format!(
+                "{faint}── {reset}{color}{bold}{mark}{reset} {key}{text}{reset} {faint}{rule}{reset}",
+                faint = s.faint(),
+                reset = s.reset(),
+                bold = s.bold(),
+                key = s.key(),
+            ));
+        } else {
+            self.line(&format!("{mark} {text}"));
         }
         self.gap = false;
         // In the chat the next thing is the box or another task: keep a gap.

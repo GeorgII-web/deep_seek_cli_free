@@ -55,7 +55,7 @@ Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_i
 ## What a task looks like
 
 ```
-> how much disk space is free on / ?        echo of the input (bold)
+ > how much disk space is free on / ?       echo of the input (bold, on a background bar)
 
 ⠹ Waiting for DeepSeek… 3s                  spinner (inline: replaced by the output; screen: last row)
 
@@ -66,7 +66,7 @@ Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_i
     Filesystem  Size ...
 
 There is 810G free.                         the answer, markdown styled
-✓ 8.1s · 2 answers · 1 action               Terminal::finish; ✗ <error> on a failure
+── ✓ 8.1s · 2 answers · 1 action ───────    Terminal::finish (rule to the row end); ✗ <error> on a failure
 ```
 
 | Piece | Code | Detail |
@@ -76,7 +76,8 @@ There is 810G free.                         the answer, markdown styled
 | answer | `Markdown` | the `dsc` block is never shown; blank lines at the edges dropped, at most one inside; with colors: inline code colored (backticks removed), code blocks colored with a gray bar `  │ ` in front of each line and the fence lines dropped, `**bold**`, heading lines, links (`http://`, `https://` at a word start, up to whitespace or a closing mark, punctuation at the end left out; not inside code): the URL is collected, then printed blue inside an OSC 8 hyperlink (`Style::hyperlink`); the terminal underlines it under the mouse and opens it on click, which is why `Style::link` has no underline of its own (it would hide the hover effect; an app cannot see the mouse or change its pointer without taking over mouse selection); a line start is held back until it cannot be a fence |
 | question | `approve` | `read_choice`; Esc, Ctrl-C, Ctrl-D = no; `e` opens the box with the command (`remember = false`); the question line is erased after the key |
 | result | `result` | `Result: ` prefix and `--- stdout ---` dropped, `--- stderr ---` → `stderr:`; a text starting with `Denied` is not repeated; the lines beyond `RESULT_LINES` are kept in `hidden_result` and printed by `result_is_answer` (the model's `done`), replacing the `… +N lines` line |
-| finish | `finish` | seconds since `begin`, answers of the model, actions that ran; `✗ stopped` or `✗ quit` after an interrupt |
+| prompt | `echo` | the submitted input on a bar with its own background (`Style::prompt_bg`, filled to the row end with `ESC[K`); plain `> text` without colors |
+| finish | `finish` | a rule over the whole width with the outcome in it: `── ✓ 6.4s · 2 answers · 1 action ────`; seconds since `begin`, answers of the model, actions that ran; `✗ stopped` or `✗ quit` after an interrupt; without colors just `✓ 6.4s · …` |
 | spacing | `blank()` | one empty line between the echo, each action block, the answer, the finish line and the next input |
 | chrome text | `info`, `error`, `note`, the `why` line, the banner | `code` spans colored through `Style::inline`; `help` prints commands and keys in columns |
 

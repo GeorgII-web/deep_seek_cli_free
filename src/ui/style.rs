@@ -80,6 +80,10 @@ impl Style {
         out
     }
 
+    /// Background of the user's prompt in the output
+    pub fn prompt_bg(&self) -> &'static str {
+        self.code("\x1b[48;5;237m")
+    }
     /// Keys in a hint line: the lighter of the two grays
     pub fn key(&self) -> &'static str {
         self.code("\x1b[38;5;252m")
