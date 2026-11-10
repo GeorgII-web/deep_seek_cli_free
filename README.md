@@ -125,8 +125,8 @@ work here too (`dsc --think`). What you allowed with `a` holds until you quit. I
 `~/.config/deep_seek_cli_free/history.json`; the conversation itself is not saved, after a restart the model starts from zero.
 
 In answers, `inline code` is colored, code blocks are shown with a bar on the left, and links (`https://…`) are
-blue, underlined and real terminal links: the terminal highlights them on hover and opens them on click
-(Ctrl+click in most terminals). Colors switch off with
+blue and real terminal links: the terminal underlines one under the mouse and opens it on click (Ctrl+click in
+Windows Terminal and most others). Colors switch off with
 `NO_COLOR=1` or when the output is not a terminal.
 
 ### Flags

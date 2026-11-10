@@ -115,9 +115,10 @@ impl Style {
             false => (String::new(), String::new()),
         }
     }
-    /// URLs: underlined blue
+    /// URLs: blue, not underlined. The terminal underlines a hyperlink under the
+    /// mouse; an underline of our own would hide that hover effect.
     pub fn link(&self) -> &'static str {
-        self.code("\x1b[4;38;5;39m")
+        self.code("\x1b[38;5;39m")
     }
     /// `text` in the color `base` with every `http(s)://` URL in the link color.
     /// A URL ends at whitespace or a closing mark; punctuation at its end stays outside.
