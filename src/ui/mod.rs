@@ -30,7 +30,16 @@ use tokio::sync::mpsc::UnboundedSender;
 
 /// Lines of a result shown to the user (the model gets the capped full text).
 const RESULT_LINES: usize = 8;
-const INPUT_HINT: &str = "Enter send · Alt+Enter new line · ↑↓ history · /help · Ctrl-C twice quit";
+/// Hints under the input box: key, what it does. As many as fit are shown.
+const INPUT_HINTS: &[(&str, &str)] = &[
+    ("Shift+Tab", "mode"),
+    ("Enter", "send"),
+    ("Alt+Enter", "new line"),
+    ("Ctrl-C twice", "quit"),
+    ("↑↓", "history"),
+    ("/help", ""),
+];
+const EDIT_HINTS: &[(&str, &str)] = &[("Enter", "run"), ("Ctrl-D", "cancel")];
 
 static SCREEN: Mutex<()> = Mutex::new(());
 
@@ -78,20 +87,32 @@ pub struct Terminal {
     /// Where the key watcher sends what the keys mean; set by `interrupts`
     interrupt_tx: Option<UnboundedSender<Interrupt>>,
     watch: Option<Watch>,
+    /// The approval mode: true = allow all (run without asking), false = ask.
+    /// Shared with the box, the progress line, the key watcher and the agent loop.
+    allow_all: Arc<AtomicBool>,
 }
 
 impl Terminal {
-    /// `history_file` keeps the chat inputs between runs.
-    pub fn new(history_file: Option<PathBuf>) -> Self {
+    /// `history_file` keeps the chat inputs between runs. `allow_all` = the approval
+    /// mode at the start (`--yes`).
+    pub fn new(history_file: Option<PathBuf>, allow_all: bool) -> Self {
         let style = Style::detect();
         let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
+        let allow_all = Arc::new(AtomicBool::new(allow_all));
+        let mut spinner = Spinner::new(std::io::stderr().is_terminal(), style);
+        let mut editor = Editor::new(style, history_file);
+        if interactive {
+            // The mode can only be switched with keys, so it is only shown with a terminal.
+            spinner.set_mode(allow_all.clone());
+            editor.set_mode(allow_all.clone());
+        }
         Self {
             style,
             interactive,
             screen: false,
-            spinner: Spinner::new(std::io::stderr().is_terminal(), style),
+            spinner,
             markdown: Markdown::new(style),
-            editor: Editor::new(style, history_file),
+            editor,
             text_open: false,
             thinking_open: false,
             gap: false,
@@ -100,7 +121,24 @@ impl Terminal {
             actions: 0,
             interrupt_tx: None,
             watch: None,
+            allow_all,
         }
+    }
+
+    /// The approval mode flag for the agent loop.
+    pub fn mode(&self) -> Arc<AtomicBool> {
+        self.allow_all.clone()
+    }
+
+    /// Switches between ask and allow all (`/mode`; Shift+Tab does the same in the
+    /// box and while a task runs) and says what is on now.
+    pub fn toggle_mode(&mut self) {
+        let allow_all = !self.allow_all.fetch_xor(true, Ordering::Relaxed);
+        let text = match allow_all {
+            true => "Mode `allow all`: actions run without asking; the deny list still applies.",
+            false => "Mode `ask`: actions outside the allow list need your yes.",
+        };
+        self.info(text);
     }
 
     /// The interrupts of this terminal for the agent loop: keys when there is a
@@ -111,7 +149,7 @@ impl Terminal {
         }
         let (sender, interrupts) = Interrupts::channel();
         self.interrupt_tx = Some(sender);
-        self.spinner.set_hint("Esc to stop");
+        self.spinner.set_hint("Esc", "to stop");
         interrupts
     }
 
@@ -133,6 +171,7 @@ impl Terminal {
             self.style,
             self.screen,
         );
+        let mode = self.allow_all.clone();
         let thread = std::thread::spawn(move || {
             let mut armed: Option<Instant> = None;
             while !flag.load(Ordering::Relaxed) {
@@ -150,6 +189,10 @@ impl Terminal {
                 match key.code {
                     KeyCode::Esc => {
                         let _ = sender.send(Interrupt::Stop);
+                    }
+                    // The progress line shows the mode, so the switch is visible at once.
+                    KeyCode::BackTab => {
+                        mode.fetch_xor(true, Ordering::Relaxed);
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         if armed.is_some_and(|at| at.elapsed() < AGAIN) {
@@ -257,7 +300,7 @@ impl Terminal {
         self.line(&format!("{}  {cwd}{}", s.gray(), s.reset()));
         self.line("");
         self.line(&s.inline(
-            "  `/help` commands and keys · `Esc` stops a task · `Ctrl-C` twice quits",
+            "  `/help` commands and keys · `Shift+Tab` ask / allow all · `Esc` stops a task · `Ctrl-C` twice quits",
             s.gray(),
         ));
         self.line("");
@@ -284,7 +327,7 @@ impl Terminal {
         if !self.screen {
             self.blank();
         }
-        match self.editor.read("", INPUT_HINT, true) {
+        match self.editor.read("", INPUT_HINTS, true) {
             Ok(Input::Submit(text)) => {
                 self.echo(&text);
                 Some(text)
@@ -390,7 +433,7 @@ impl Terminal {
         let s = self.style;
         let heading = |text: &str| format!("{}{}{text}{}", s.bold(), s.accent(), s.reset());
         let row = |key: &str, what: &str| {
-            let pad = " ".repeat(26usize.saturating_sub(key.chars().count()));
+            let pad = " ".repeat(30usize.saturating_sub(key.chars().count()));
             format!(
                 "  {}{key}{}{pad}{}{what}{}",
                 s.code_text(),
@@ -406,6 +449,7 @@ impl Terminal {
                 "/new",
                 "start a fresh conversation (the model forgets the earlier tasks)",
             ),
+            row("/mode", "switch between ask and allow all (also Shift+Tab)"),
             row("/help", "this text"),
             row("/exit", "quit"),
             String::new(),
@@ -424,6 +468,10 @@ impl Terminal {
             row("Esc", "stop the task"),
             String::new(),
             heading("Anywhere"),
+            row(
+                "Shift+Tab",
+                "mode: ask (confirm actions) or allow all (run without asking)",
+            ),
             row("Ctrl-C twice", "quit"),
             row("Ctrl-D", "quit (empty box)"),
         ];
@@ -505,7 +553,7 @@ impl Terminal {
                 let Action::Shell { cmd, .. } = action else {
                     return Decision::No;
                 };
-                match self.editor.read(cmd, "Enter run · Ctrl-D cancel", false) {
+                match self.editor.read(cmd, EDIT_HINTS, false) {
                     Ok(Input::Submit(edited)) => Decision::Edit(edited),
                     _ => {
                         self.line(&denied);

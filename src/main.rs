@@ -46,7 +46,8 @@ async fn main() -> Result<()> {
         None => {
             let mut conversation = conversation(&paths, &settings, &cli.run)?;
             let prompt = protocol::first_prompt(&cli.run.task.join(" "), &cwd());
-            let mut terminal = ui::Terminal::new(None);
+            let mut terminal = ui::Terminal::new(None, cli.run.yes);
+            let mode = terminal.mode();
             let mut interrupts = terminal.interrupts();
             let mut always = HashSet::new();
             terminal.begin();
@@ -55,7 +56,7 @@ async fn main() -> Result<()> {
                 &mut terminal,
                 prompt,
                 &settings,
-                cli.run.yes,
+                &mode,
                 &mut always,
                 &mut interrupts,
             )
@@ -82,7 +83,8 @@ fn cwd() -> String {
 /// remembers the earlier ones. What the user allowed with "always" holds until the exit.
 async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<()> {
     let mut conversation = conversation(paths, settings, run)?;
-    let mut terminal = ui::Terminal::new(Some(paths.history()));
+    let mut terminal = ui::Terminal::new(Some(paths.history()), run.yes);
+    let mode = terminal.mode();
     let mut interrupts = terminal.interrupts();
     let mut always = HashSet::new();
     let mut first = true;
@@ -98,6 +100,10 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             "/exit" | "/quit" => break,
             "/help" => {
                 terminal.help();
+                continue;
+            }
+            "/mode" => {
+                terminal.toggle_mode();
                 continue;
             }
             "/new" => {
@@ -122,7 +128,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             &mut terminal,
             prompt,
             settings,
-            run.yes,
+            &mode,
             &mut always,
             &mut interrupts,
         )

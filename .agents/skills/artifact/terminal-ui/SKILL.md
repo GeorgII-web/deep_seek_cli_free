@@ -6,15 +6,15 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 # Terminal UI
 
 `ui::Terminal` implements `agent::run::Ui` (see `../agent-loop/SKILL.md`) and adds what only `src/main.rs` calls:
-`open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `interrupts`.
+`open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `interrupts`, `mode`, `toggle_mode`.
 
 | File | Content |
 |---|---|
 | `src/ui/mod.rs` | `Terminal` (`line`, `partial`, `text` = the only print paths); `screen_lock`, `screen_write`; constants `RESULT_LINES` (8), `INPUT_HINT` |
 | `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history), `Dock`, `Input`, `read_choice`, `RawMode` |
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
-| `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`; `Notifier` (a 2 s notice in place of the key hint) |
-| `src/ui/style.rs` | `Style`: every escape code; `detect()`; `inline(text, base)` colors `code` spans in chrome lines |
+| `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`, `set_mode`; `Notifier` (a 2 s notice in place of the key hint) |
+| `src/ui/style.rs` | `Style`: every escape code; `detect()`; `inline(text, base)` colors `code` spans in chrome lines; `hint(key, what)` and `mode_label` for hint lines |
 
 ## Layouts
 
@@ -87,7 +87,21 @@ after) and `drop` → `watch_stop`: thread joined, raw mode off.
 |---|---|
 | Esc | `Interrupt::Stop`: the loop ends the task, a running command is killed |
 | Ctrl-C | first: "Press Ctrl-C again to exit" on the progress line (`Notifier::show`; a line of its own when no progress line is drawn); second within `AGAIN`: `Interrupt::Quit` |
+| Shift+Tab | switches the mode flag; the progress line shows it |
 | other keys | swallowed (no type-ahead) |
+
+## Mode and hint lines
+
+`Terminal::allow_all` (`Arc<AtomicBool>`, false = ask) is shared with the box, the progress thread, the key
+watcher and the agent loop (`Terminal::mode`). With a terminal it is shown as `Style::mode_label`: `⏵ ask` in the
+key gray, `⏵⏵ allow all` in the action color.
+
+| Line | Content |
+|---|---|
+| under the box (`Editor::hint_line`) | mode label, then the `(key, meaning)` pairs of `INPUT_HINTS` (or `EDIT_HINTS`) that fit the width, most important first |
+| progress line (`Spinner`) | spinner, label, clock, then the hint `Esc to stop` or a 2 s notice, then the mode label |
+
+Two grays: `Style::key` (lighter) for the key, `Style::faint` (darker) for what it does and the ` · ` separators.
 
 ## Input box (`Editor::read`)
 
@@ -102,6 +116,7 @@ at the box width (wide characters count two columns); a box taller than the scre
 | Up, Down | move a row; at the first or last row go through the history (the draft is kept) |
 | Left, Right, Home, End, Ctrl-A, Ctrl-E | move |
 | Backspace, Delete, Ctrl-W or Alt+Backspace (word), Ctrl-U, Ctrl-K | delete |
+| Shift+Tab | switch the mode (ask ⇄ allow all) |
 | Esc | clear the box |
 | Ctrl-C | clear the box and show "Press Ctrl-C again to exit" for `AGAIN` (2 s); a second one in that time quits |
 | Ctrl-D | quit on an empty box, else delete |

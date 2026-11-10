@@ -13,6 +13,8 @@ use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{execute, queue};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use unicode_width::UnicodeWidthChar;
 
@@ -244,6 +246,8 @@ pub struct Editor {
     cursor_line: u16,
     /// Set while the box is docked at the bottom (chat)
     dock: Option<Dock>,
+    /// The approval mode (true = allow all): shown in the hint line, Shift+Tab switches it
+    mode: Option<Arc<AtomicBool>>,
 }
 
 impl Editor {
@@ -260,7 +264,36 @@ impl Editor {
             history_file,
             cursor_line: 0,
             dock: None,
+            mode: None,
         }
+    }
+
+    pub fn set_mode(&mut self, mode: Arc<AtomicBool>) {
+        self.mode = Some(mode);
+    }
+
+    /// The line under the box: the mode, then as many `(key, meaning)` hints as fit in `max` columns.
+    fn hint_line(&self, hints: &[(&str, &str)], max: usize) -> String {
+        let s = self.style;
+        let dot = format!("{} · {}", s.faint(), s.reset());
+        let (mut line, mut used) = (String::new(), 0);
+        if let Some(mode) = &self.mode {
+            let allow_all = mode.load(Ordering::Relaxed);
+            line.push_str(&s.mode_label(allow_all));
+            used += if allow_all { 12 } else { 5 };
+        }
+        for (key, what) in hints {
+            let columns = key.chars().count() + what.chars().count() + 4;
+            if used + columns > max {
+                break;
+            }
+            if !line.is_empty() {
+                line.push_str(&dot);
+            }
+            line.push_str(&s.hint(key, what));
+            used += columns;
+        }
+        line
     }
 
     /// The cursor as row and column, 1-based; `None` when the terminal does not answer.
@@ -343,7 +376,6 @@ impl Editor {
     }
 
     fn draw_docked(&mut self, buffer: &Buffer, width: usize, hint: &str) -> io::Result<()> {
-        let s = self.style;
         let (_, height) = terminal::size()?;
         let rows = buffer.rows(width);
         let (cursor_row, cursor_column) = buffer.locate(&rows);
@@ -361,12 +393,7 @@ impl Editor {
         for (i, line) in lines.iter().enumerate() {
             frame.push_str(&format!("\x1b[{};1H{line}", top + i));
         }
-        let hint: String = hint.chars().take(width + FRAME_COLS - 2).collect();
-        frame.push_str(&format!(
-            "\x1b[{height};1H{}  {hint}{}",
-            s.gray(),
-            s.reset()
-        ));
+        frame.push_str(&format!("\x1b[{height};1H  {hint}"));
         frame.push_str(&format!(
             "\x1b[{};{}H",
             top + 1 + cursor_row - first,
@@ -406,7 +433,12 @@ impl Editor {
 
     /// Shows the box with `initial` in it and reads until Enter. `remember` = the
     /// input goes into the history (not for an edited command).
-    pub fn read(&mut self, initial: &str, hint: &str, remember: bool) -> io::Result<Input> {
+    pub fn read(
+        &mut self,
+        initial: &str,
+        hints: &[(&str, &str)],
+        remember: bool,
+    ) -> io::Result<Input> {
         let _raw = RawMode::enter()?;
         let mut buffer = Buffer::new(initial);
         let mut position = self.history.len();
@@ -421,7 +453,11 @@ impl Editor {
         loop {
             let width = Self::inner_width();
             let armed_now = armed.is_some_and(|at| at.elapsed() < AGAIN);
-            self.draw(&buffer, width, if armed_now { AGAIN_HINT } else { hint })?;
+            let hint = match armed_now {
+                true => format!("{}{AGAIN_HINT}{}", self.style.action(), self.style.reset()),
+                false => self.hint_line(hints, width + FRAME_COLS - 4),
+            };
+            self.draw(&buffer, width, &hint)?;
             // The "again" hint disappears by itself.
             if let Some(at) = armed.filter(|_| armed_now)
                 && !event::poll(AGAIN.saturating_sub(at.elapsed()))?
@@ -500,6 +536,11 @@ impl Editor {
                         buffer = Buffer::new(self.history.get(position).unwrap_or(&draft));
                     }
                 }
+                KeyCode::BackTab => {
+                    if let Some(mode) = &self.mode {
+                        mode.fetch_xor(true, Ordering::Relaxed);
+                    }
+                }
                 KeyCode::Tab => buffer.insert_str("\t"),
                 KeyCode::Char(c) if !ctrl && !alt => buffer.insert(c),
                 _ => {}
@@ -548,7 +589,6 @@ impl Editor {
         if self.dock.is_some() {
             return self.draw_docked(buffer, width, hint);
         }
-        let s = self.style;
         let rows = buffer.rows(width);
         let (cursor_row, cursor_column) = buffer.locate(&rows);
         // A box taller than the screen shows the rows around the cursor.
@@ -556,8 +596,7 @@ impl Editor {
         let visible = rows.len().min(screen.saturating_sub(4).max(1));
         let first = (cursor_row + 1).saturating_sub(visible);
         let mut frame = self.box_lines(buffer, width, first, visible).join("\r\n");
-        let hint: String = hint.chars().take(width + FRAME_COLS - 2).collect();
-        frame.push_str(&format!("\r\n{}  {hint}{}", s.gray(), s.reset()));
+        frame.push_str(&format!("\r\n  {hint}"));
 
         let _screen = screen_lock();
         let mut out = io::stderr().lock();

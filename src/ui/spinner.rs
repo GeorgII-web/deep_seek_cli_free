@@ -3,6 +3,7 @@
 use super::style::Style;
 use super::{screen_lock, screen_write};
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -40,8 +41,10 @@ pub struct Spinner {
     enabled: bool,
     /// Draw on the last screen row (below the docked box) instead of the current line
     docked: bool,
-    /// Key hint after the clock, e.g. "Esc to stop"
-    hint: &'static str,
+    /// Key hint after the clock: key and what it does, e.g. ("Esc", "to stop")
+    hint: Option<(&'static str, &'static str)>,
+    /// The approval mode shown at the end of the line (true = allow all)
+    mode: Option<Arc<AtomicBool>>,
     style: Style,
     started: bool,
 }
@@ -63,7 +66,8 @@ impl Spinner {
             state: Arc::new(Mutex::new(state)),
             enabled,
             docked: false,
-            hint: "",
+            hint: None,
+            mode: None,
             style,
             started: false,
         }
@@ -80,8 +84,13 @@ impl Spinner {
     }
 
     /// Call before the first `start`.
-    pub fn set_hint(&mut self, hint: &'static str) {
-        self.hint = hint;
+    pub fn set_hint(&mut self, key: &'static str, what: &'static str) {
+        self.hint = Some((key, what));
+    }
+
+    /// Call before the first `start`.
+    pub fn set_mode(&mut self, mode: Arc<AtomicBool>) {
+        self.mode = Some(mode);
     }
 
     pub fn notifier(&self) -> Notifier {
@@ -104,6 +113,7 @@ impl Spinner {
             return;
         }
         let (state, style, docked, hint) = (self.state.clone(), self.style, self.docked, self.hint);
+        let mode = self.mode.clone();
         // A plain thread: it must tick also while the async runtime is busy.
         std::thread::spawn(move || {
             loop {
@@ -115,13 +125,20 @@ impl Spinner {
                 state.frame = (state.frame + 1) % FRAMES.len();
                 state.drawn = true;
                 let secs = state.since.elapsed().as_secs();
-                let suffix = match &state.notice {
-                    Some((text, at)) if at.elapsed() < NOTICE => {
-                        format!(" · {}{text}{}", style.action(), style.reset())
+                let dot = format!("{} · {}", style.faint(), style.reset());
+                let mut suffix = match (&state.notice, hint) {
+                    (Some((text, at)), _) if at.elapsed() < NOTICE => {
+                        format!("{dot}{}{text}{}", style.action(), style.reset())
                     }
-                    _ if hint.is_empty() => String::new(),
-                    _ => format!("{} · {hint}{}", style.gray(), style.reset()),
+                    (_, Some((key, what))) => format!("{dot}{}", style.hint(key, what)),
+                    _ => String::new(),
                 };
+                if let Some(mode) = &mode {
+                    suffix.push_str(&format!(
+                        "{dot}{}",
+                        style.mode_label(mode.load(Ordering::Relaxed))
+                    ));
+                }
                 let line = format!(
                     "{}{}{} {label}… {}{secs}s{}{suffix}",
                     style.accent(),

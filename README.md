@@ -92,11 +92,11 @@ There is 809G free on / (out of 1007G, 16% used).
 ╭──────────────────────────────────────────────────────────────╮
 │ > which command did you run for that?                        │
 ╰──────────────────────────────────────────────────────────────╯
-  Enter send · Alt+Enter new line · ↑↓ history · /help · Ctrl-C twice quit
+  ⏵ ask · Shift+Tab mode · Enter send · Alt+Enter new line · Ctrl-C twice quit · ↑↓ history · /help
 ```
 
 While `dsc` works, the line under the box shows what it waits for and for how long
-(`⠹ Waiting for DeepSeek… 3s · Esc to stop`). The last line of a task shows the seconds it took. The box grows
+(`⠹ Waiting for DeepSeek… 3s · Esc to stop · ⏵ ask`). The last line of a task shows the seconds it took. The box grows
 with your text, up to ten rows. A single task (`dsc "<task>"`) does not clear the screen: it prints below your
 shell prompt.
 
@@ -106,11 +106,13 @@ shell prompt.
 | Alt+Enter, Ctrl-J, or `\` then Enter | new line |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
+| Shift+Tab | switch the mode: `ask` ⇄ `allow all`, also while a task runs |
 | Esc | clear the box; while a task runs: stop the task |
 | Ctrl-C | clears the box and asks to press it again; twice within two seconds quits, also while a task runs |
 | Ctrl-D | quit (empty box) |
 
-Pasting several lines works. `/new` starts a fresh conversation, `/help` lists the commands, `/exit` quits. Flags
+Pasting several lines works. `/new` starts a fresh conversation, `/mode` switches the mode, `/help` lists the
+commands and keys, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
 `~/.config/dsc/history.json`; the conversation itself is not saved, after a restart the model starts from zero.
 
@@ -121,7 +123,7 @@ In answers, `inline code` is colored and code blocks are shown with a bar on the
 
 | Flag | Meaning |
 |---|---|
-| `-y`, `--yes` | run actions without asking (the deny list still applies) |
+| `-y`, `--yes` | start in the mode `allow all`: actions run without asking (the deny list still applies) |
 | `--think` | reasoning mode; the reasoning is shown dimmed |
 | `--search` | web search (not tested yet) |
 | `--expert` | the "expert" model instead of the fast one (not tested yet) |
@@ -133,12 +135,22 @@ In answers, `inline code` is colored and code blocks are shown with a bar on the
 | `dsc logout` | remove it |
 | `dsc doctor` | check paths, token and proof of work; sends no prompt |
 
+### Modes
+
+| Mode | Shown as | Meaning |
+|---|---|---|
+| ask (default) | `⏵ ask` | actions outside the allow list need your yes |
+| allow all | `⏵⏵ allow all` | every action runs without a question; only the deny list stops one |
+
+The mode is shown under the input box and on the progress line. Shift+Tab or `/mode` switches it at any time,
+also in the middle of a task; `--yes` starts in allow all.
+
 ### Approvals
 
 The model can ask for three actions: run a shell command, read a file, write a file. Before each one `dsc` decides:
 
 1. It matches `policy.deny` → never runs, also with `--yes`.
-2. `--yes` is set, or the command is on `policy.allow` → runs.
+2. The mode is `allow all`, or the command is on `policy.allow` → runs.
 3. Otherwise you are asked:
 
 ```console
@@ -160,7 +172,7 @@ stops the task.
   not print file content (`ls`, `df`, `stat`, `git status`, ...). Think before you approve `cat` on a private file.
 - The deny list is a plain substring check on the command or path. It stops obvious mistakes (`rm -rf /`, SSH
   keys, the token file); it is **not a sandbox**.
-- `--yes` lets a free chat model run anything not on the deny list. Use it only for tasks and folders where that
+- The mode `allow all` (`--yes`, Shift+Tab, `/mode`) lets a free chat model run anything not on the deny list. Use it only for tasks and folders where that
   is acceptable, ideally in a container or VM.
 - The model sees only what you send: the task, the working directory and the results of approved actions.
 

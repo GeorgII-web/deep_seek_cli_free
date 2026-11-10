@@ -8,6 +8,12 @@ description: The approval rules of `src/agent/policy.rs` and the approval questi
 `policy::check(action, policy, yes, always) -> Verdict` is the only gate; `agent::run::act` calls it before every
 action and again after an edit. Lists come from `[policy]` in `config.toml` (`config::Policy`).
 
+## Modes
+
+`yes` is the mode flag `Terminal::mode()` (an `Arc<AtomicBool>`): false = ask, true = allow all. `--yes` sets the
+start value; Shift+Tab (input box and while a task runs) and `/mode` switch it. `agent::run::act` reads it before
+every action, so a switch in the middle of a task counts for the next action. The deny list holds in both modes.
+
 ## Rules
 
 `check` order: deny list → `--yes` → allowed "always" in this run → allow list → ask.

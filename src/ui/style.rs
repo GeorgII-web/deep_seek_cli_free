@@ -80,6 +80,32 @@ impl Style {
         out
     }
 
+    /// Keys in a hint line: the lighter of the two grays
+    pub fn key(&self) -> &'static str {
+        self.code("\x1b[38;5;252m")
+    }
+    /// What a key does, in a hint line: the darker gray
+    pub fn faint(&self) -> &'static str {
+        self.code("\x1b[38;5;242m")
+    }
+    /// `⏵ ask` or `⏵⏵ allow all`, colored, for the hint and progress lines.
+    pub fn mode_label(&self, allow_all: bool) -> String {
+        match allow_all {
+            true => format!("{}⏵⏵ allow all{}", self.action(), self.reset()),
+            false => format!("{}⏵ ask{}", self.key(), self.reset()),
+        }
+    }
+    /// A hint: the key light, its meaning darker.
+    pub fn hint(&self, key: &str, what: &str) -> String {
+        let space = if what.is_empty() { "" } else { " " };
+        format!(
+            "{}{key}{}{}{space}{what}{}",
+            self.key(),
+            self.reset(),
+            self.faint(),
+            self.reset()
+        )
+    }
     /// Borders, hints, meta lines
     pub fn gray(&self) -> &'static str {
         self.code("\x1b[38;5;245m")

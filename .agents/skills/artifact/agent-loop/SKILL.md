@@ -6,7 +6,8 @@ description: The agent in `src/agent/` — the text protocol that emulates tool 
 # Agent loop
 
 Entry `agent::run::run(backend, ui, prompt, settings, yes, always, interrupts)` = one task; called from `src/main.rs` once for
-`dsc "<task>"` and once per line in the chat. `always` (what the user allowed for the session) belongs to the caller.
+`dsc "<task>"` and once per line in the chat. `always` (what the user allowed for the session) belongs to the caller; `yes` is the mode flag (`&AtomicBool`,
+see `../approval-policy/SKILL.md`).
 
 | File | Content |
 |---|---|

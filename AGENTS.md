@@ -10,7 +10,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; no task or `chat` → `chat()` (tasks in one conversation, `/new`, `/help`, `/exit`; ends on `Interrupt::Quit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
+| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; no task or `chat` → `chat()` (tasks in one conversation, `/new`, `/mode`, `/help`, `/exit`; ends on `Interrupt::Quit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
 | `src/backend.rs` | `Backend` trait (`ask(prompt, sink) -> answer text`, one value = one conversation) and `Event` (`Thinking`, `Text`, `Status`); the agent knows only this |
 | `src/cli.rs` | clap: `Cli` = optional `Command` (`chat`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
 | `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/dsc`; `config()`, `auth()`, `cache()`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing |
@@ -24,11 +24,11 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/agent/policy.rs` | `check` → `Allow` / `Ask` / `Deny`, `always_key` (what "always" covers) |
 | `src/agent/interrupt.rs` | `Interrupt` (`Stop`, `Quit`), `Interrupts` (keys from the UI, or the Ctrl-C signal without a terminal) |
 | `src/agent/tools.rs` | `shell` (bash, own process group, timeout, interrupt, output collected), `cap`, `read_file`, `write_file` |
-| `src/agent/run.rs` | `run` (the loop for one task; takes the prompt, the session's "always" set and the interrupts), `act` (show, check, ask, edit), `execute`; `Ui` trait and `Decision`; loop tests with a scripted backend |
-| `src/ui/mod.rs` | `Terminal` = `Ui` on the terminal plus `open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `interrupts` (key watcher: Esc stops a task, Ctrl-C twice quits); two layouts: inline (single task) and screen (chat: cleared screen, box docked at the bottom); `screen_lock`, `screen_write` |
+| `src/agent/run.rs` | `run` (the loop for one task; takes the prompt, the mode flag `yes` read before every action, the session's "always" set and the interrupts), `act` (show, check, ask, edit), `execute`; `Ui` trait and `Decision`; loop tests with a scripted backend |
+| `src/ui/mod.rs` | `Terminal` = `Ui` on the terminal plus `open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `interrupts` (key watcher: Esc stops a task, Ctrl-C twice quits, Shift+Tab switches the mode), `mode`, `toggle_mode`; two layouts: inline (single task) and screen (chat: cleared screen, box docked at the bottom); `screen_lock`, `screen_write` |
 | `src/ui/editor.rs` | `Buffer`, `Editor` (multiline input box inline or docked with a scroll region above, history), `read_choice` (one key) |
 | `src/ui/render.rs` | `Markdown`: hides the `dsc` block, trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings |
-| `src/ui/spinner.rs`, `style.rs` | progress line with a clock; every color code |
+| `src/ui/spinner.rs`, `style.rs` | progress line with a clock, key hint and mode; every color code, two grays for hints (`key`, `faint`) |
 | `scripts/pty-drive.py` | drives the chat in a pseudo-terminal with scripted keys and prints scrollback, screen and cursor |
 
 ## Skills (`.agents/skills`, read the one that matches before working)

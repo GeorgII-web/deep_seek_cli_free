@@ -8,6 +8,7 @@ use crate::backend::{Backend, Event};
 use crate::config::Settings;
 use anyhow::Result;
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -39,13 +40,14 @@ pub trait Ui {
 }
 
 /// Runs one task: `prompt` is `protocol::first_prompt` or `next_prompt`. `always`
-/// holds what the user allowed for the rest of the session.
+/// holds what the user allowed for the rest of the session. `yes` = run without
+/// asking; it is read before every action, so the mode can change mid-task.
 pub async fn run<B: Backend, U: Ui>(
     backend: &mut B,
     ui: &mut U,
     mut prompt: String,
     settings: &Settings,
-    yes: bool,
+    yes: &AtomicBool,
     always: &mut HashSet<String>,
     interrupts: &mut Interrupts,
 ) -> Result<()> {
@@ -89,13 +91,18 @@ async fn act<U: Ui>(
     mut action: Action,
     ui: &mut U,
     settings: &Settings,
-    yes: bool,
+    yes: &AtomicBool,
     always: &mut HashSet<String>,
     interrupts: &mut Interrupts,
 ) -> Result<String, Interrupt> {
     ui.action(&action);
     loop {
-        match policy::check(&action, &settings.policy, yes, always) {
+        match policy::check(
+            &action,
+            &settings.policy,
+            yes.load(Ordering::Relaxed),
+            always,
+        ) {
             Verdict::Deny(pattern) => {
                 ui.note(&format!(
                     "denied by policy.deny (`{pattern}`): {}",
@@ -246,7 +253,7 @@ mod tests {
             ui,
             prompt,
             settings,
-            yes,
+            &AtomicBool::new(yes),
             &mut HashSet::new(),
             &mut Interrupts::signal(),
         )
@@ -385,7 +392,7 @@ mod tests {
             &mut FakeUi::default(),
             prompt,
             &cfg,
-            false,
+            &AtomicBool::new(false),
             &mut HashSet::new(),
             &mut interrupts,
         )
@@ -412,7 +419,7 @@ mod tests {
             &mut ui,
             protocol::first_prompt("a", "/work"),
             &cfg,
-            false,
+            &AtomicBool::new(false),
             &mut always,
             &mut Interrupts::signal(),
         )
@@ -423,7 +430,7 @@ mod tests {
             &mut ui,
             protocol::next_prompt("b"),
             &cfg,
-            false,
+            &AtomicBool::new(false),
             &mut always,
             &mut Interrupts::signal(),
         )
