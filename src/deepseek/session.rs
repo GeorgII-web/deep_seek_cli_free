@@ -1,9 +1,12 @@
 //! One conversation with DeepSeek: session id, message chain, proof of work per turn.
 
 use super::client::{ApiError, Client, TurnOpts};
+use super::stream::Parser;
 use super::{pow, throttle};
+use crate::backend::{Backend, Event};
 use crate::config::{Paths, Throttle};
 use anyhow::{Context, Result};
+use futures_util::StreamExt;
 use std::fs;
 use std::time::Duration;
 
@@ -11,18 +14,20 @@ pub struct Conversation {
     client: Client,
     paths: Paths,
     throttle: Throttle,
+    opts: TurnOpts,
     wasm: Option<Vec<u8>>,
     session_id: Option<String>,
     /// Id of the last answer; the next prompt hangs below it
-    pub parent_message_id: Option<u64>,
+    parent_message_id: Option<u64>,
 }
 
 impl Conversation {
-    pub fn new(client: Client, paths: Paths, throttle: Throttle) -> Self {
+    pub fn new(client: Client, paths: Paths, throttle: Throttle, opts: TurnOpts) -> Self {
         Self {
             client,
             paths,
             throttle,
+            opts,
             wasm: None,
             session_id: None,
             parent_message_id: None,
@@ -69,11 +74,11 @@ impl Conversation {
 
     /// Sends `prompt` as the next message; the response body is the SSE stream.
     /// Throttled; HTTP 429 is retried as the settings say.
-    pub async fn send(&mut self, prompt: &str, opts: &TurnOpts) -> Result<reqwest::Response> {
+    async fn send(&mut self, prompt: &str) -> Result<reqwest::Response> {
         let mut retries = self.throttle.retries_on_429;
         loop {
             throttle::acquire(&self.paths, &self.throttle).await;
-            match self.send_once(prompt, opts).await {
+            match self.send_once(prompt).await {
                 Err(err) => match err.downcast_ref::<ApiError>() {
                     Some(ApiError::RateLimited(after)) if retries > 0 => {
                         retries -= 1;
@@ -88,7 +93,7 @@ impl Conversation {
         }
     }
 
-    async fn send_once(&mut self, prompt: &str, opts: &TurnOpts) -> Result<reqwest::Response> {
+    async fn send_once(&mut self, prompt: &str) -> Result<reqwest::Response> {
         let session_id = match &self.session_id {
             Some(id) => id.clone(),
             None => {
@@ -99,7 +104,35 @@ impl Conversation {
         };
         let pow = self.pow_header().await?;
         self.client
-            .completion(&session_id, self.parent_message_id, prompt, opts, &pow)
+            .completion(
+                &session_id,
+                self.parent_message_id,
+                prompt,
+                &self.opts,
+                &pow,
+            )
             .await
+    }
+}
+
+impl Backend for Conversation {
+    async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
+        let mut body = self.send(prompt).await?.bytes_stream();
+        let mut parser = Parser::new();
+        let mut answer = String::new();
+        while let Some(chunk) = body.next().await {
+            for event in parser.feed(&chunk.context("the answer stream broke")?) {
+                if let Event::Text(text) = &event {
+                    answer.push_str(text);
+                }
+                sink(&event);
+            }
+        }
+        // The id is kept even for a cut answer, so the next prompt follows it.
+        if let Some(id) = parser.response_message_id {
+            self.parent_message_id = Some(id);
+        }
+        parser.finish()?;
+        Ok(answer)
     }
 }

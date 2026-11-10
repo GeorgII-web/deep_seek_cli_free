@@ -1,0 +1,33 @@
+event: ready
+data: {"request_message_id":1,"response_message_id":2,"model_type":"default"}
+
+event: update_session
+data: {"updated_at":1794343331.943475}
+
+data: {"v":{"response":{"message_id":2,"parent_id":1,"model":"","role":"ASSISTANT","thinking_enabled":false,"ban_edit":false,"ban_regenerate":false,"status":"WIP","incomplete_message":null,"accumulated_token_usage":0,"feedback":null,"inserted_at":1794343331.929337,"search_enabled":false,"fragments":[{"id":2,"type":"RESPONSE","content":"2","references":[],"stage_id":1}],"conversation_mode":"DEFAULT","has_pending_fragment":false,"auto_continue":false,"search_triggered":false,"extra_search_providers":[]}}}
+
+data: {"p":"response/fragments/-1/content","o":"APPEND","v":"+"}
+
+data: {"v":"2"}
+
+data: {"v":" equals"}
+
+data: {"v":" "}
+
+data: {"v":"4"}
+
+data: {"v":"."}
+
+data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":52},{"p":"quasi_status","v":"FINISHED"}]}
+
+data: {"p":"response/status","o":"SET","v":"FINISHED"}
+
+event: update_session
+data: {"updated_at":1794343332.209481}
+
+event: title
+data: {"content":"Simple arithmetic"}
+
+event: close
+data: {"click_behavior":"none","auto_resume":false}
+

@@ -5,7 +5,7 @@ description: Architecture of deep_seek_cli_free (binary `dsc`) — the layers (C
 
 # Architecture
 
-State: config, auth, DeepSeek client, proof of work, conversation and throttle exist; stream parser and agent are design (`TASKS.md`).
+State: config, auth, the whole DeepSeek backend (client, proof of work, stream parser, conversation, throttle) work live; the agent is design (`TASKS.md`).
 
 ## Decisions
 
@@ -30,8 +30,9 @@ cli  →  agent::run (loop)  →  Backend trait  →  deepseek::{client, pow, st
               └─ ui                stream print, approval prompt
 ```
 
-`Backend`: `async fn send(&mut self, text: &str, opts: &TurnOpts) -> Result<EventStream>`;
-`Event` = `Thinking(String) | Text(String) | Done | Error`. One `Backend` value = one conversation.
+`Backend` (`src/backend.rs`): `async fn ask(&mut self, prompt, sink: &mut dyn FnMut(&Event)) -> Result<String>`;
+`Event` = `Thinking(String) | Text(String)`. One `Backend` value = one conversation; the returned string is the
+answer without the reasoning.
 
 ## DeepSeek web protocol (reference: `~/projects/dsfree/FreeDeepseekAPI/client.js`, `server.js`)
 
@@ -45,7 +46,23 @@ Base `https://chat.deepseek.com`. Headers on every call: `Authorization: Bearer 
 | 2 | `POST /api/v0/chat/create_pow_challenge` `{"target_path":"/api/v0/chat/completion"}` | per turn → `algorithm, challenge, salt, difficulty, expire_at, signature` |
 | 3 | solve (`pow::solve`: own thread with a 64 MB stack; `wasmi` with feature `portable-dispatch`, because its default tail-call dispatch overflows the stack in debug builds; worst case 1.8 s release, 3.6 s debug with dependencies at `opt-level = 3`) | wasm export `wasm_solve(sp, challenge, len, prefix, len, difficulty)`, prefix = `<salt>_<expire_at>_`; answer = f64 at `sp+8` |
 | 4 | `POST /api/v0/chat/completion` + header `X-DS-PoW-Response` = base64 of JSON `{algorithm, challenge, salt, answer, signature, target_path}` | body: `chat_session_id, parent_message_id, model_type, prompt, ref_file_ids: [], thinking_enabled, search_enabled` |
-| 5 | SSE `data: {..}` | JSON patches: `p` = path (sticky until the next `p`), `v` = value; `response/content` = answer text, `response/thinking_content` = reasoning; the response message id becomes the next `parent_message_id` |
+| 5 | SSE, see below | the `ready` event carries `response_message_id` = the next `parent_message_id` |
+
+SSE (`stream::Parser`, recorded samples in `src/deepseek/fixtures/`): `event: <name>` applies to the next
+`data:` line; events `ready`, `update_session`, `title`, `close`; data lines without an event are patches to one
+`response` object: `p` = path (kept until the next `p`), `o` = operation (`APPEND`, `SET`, `BATCH`), `v` = value.
+
+| Patch | Meaning |
+|---|---|
+| no `p`, `v.response` | the whole object at the start: `status: WIP`, `fragments: [{id, type, content}]` |
+| `response/fragments/-1/content` + `APPEND`, then bare `{"v":"text"}` | text appended to the last fragment |
+| `response/fragments` with a list | repeats the old fragments and adds new ones (thinking → answer); only unseen ids count |
+| `response` + `BATCH`, `response/status` + `SET` | `FINISHED` at the end; anything else at the end of the body is an error |
+
+Fragment `type`: `THINK` → `Event::Thinking`, `RESPONSE` → `Event::Text`, others (search) are dropped.
+
+Verified live on 2026-11-10: the token alone is enough (no cookie); plain and thinking answers parse. Not yet
+verified live: a second turn in one conversation, search mode, the `expert` model.
 
 `model_type`: `default` (fast), `expert`; `thinking_enabled` and `search_enabled` are flags on top.
 Answers of the JSON calls are an envelope `{code, msg, data: {biz_code, biz_msg, biz_data}}` (`client::biz_data`):

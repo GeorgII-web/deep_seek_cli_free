@@ -1,0 +1,107 @@
+event: ready
+data: {"request_message_id":1,"response_message_id":2,"model_type":"default"}
+
+event: update_session
+data: {"updated_at":1794343342.194628}
+
+data: {"v":{"response":{"message_id":2,"parent_id":1,"model":"","role":"ASSISTANT","thinking_enabled":true,"ban_edit":false,"ban_regenerate":false,"status":"WIP","incomplete_message":null,"accumulated_token_usage":0,"feedback":null,"inserted_at":1794343342.1835768,"search_enabled":false,"fragments":[{"id":2,"type":"THINK","content":"We","elapsed_secs":null,"references":[],"stage_id":1}],"conversation_mode":"DEFAULT","has_pending_fragment":false,"auto_continue":false,"search_triggered":false,"extra_search_providers":[]}}}
+
+data: {"p":"response/fragments/-1/content","o":"APPEND","v":" need"}
+
+data: {"v":" answer"}
+
+data: {"v":" compare"}
+
+data: {"v":" "}
+
+data: {"v":"17"}
+
+data: {"v":"*"}
+
+data: {"v":"3"}
+
+data: {"v":"="}
+
+data: {"v":"51"}
+
+data: {"v":","}
+
+data: {"v":" "}
+
+data: {"v":"7"}
+
+data: {"v":"*"}
+
+data: {"v":"8"}
+
+data: {"v":"="}
+
+data: {"v":"56"}
+
+data: {"v":","}
+
+data: {"v":" so"}
+
+data: {"v":" "}
+
+data: {"v":"7"}
+
+data: {"v":"*"}
+
+data: {"v":"8"}
+
+data: {"v":" bigger"}
+
+data: {"v":"."}
+
+data: {"v":" One"}
+
+data: {"v":" short"}
+
+data: {"v":" sentence"}
+
+data: {"v":"."}
+
+data: {"p":"response/fragments/-1/elapsed_secs","o":"SET","v":0.819011018}
+
+data: {"p":"response/fragments","v":[{"id":2,"type":"THINK","content":"We need answer compare 17*3=51, 7*8=56, so 7*8 bigger. One short sentence.","elapsed_secs":0.819011018,"references":[],"stage_id":1},{"id":3,"type":"RESPONSE","content":"7","references":[],"stage_id":1}]}
+
+data: {"p":"response/fragments/-1/content","o":"APPEND","v":"*"}
+
+data: {"v":"8"}
+
+data: {"v":" is"}
+
+data: {"v":" bigger"}
+
+data: {"v":" because"}
+
+data: {"v":" "}
+
+data: {"v":"56"}
+
+data: {"v":" is"}
+
+data: {"v":" greater"}
+
+data: {"v":" than"}
+
+data: {"v":" "}
+
+data: {"v":"51"}
+
+data: {"v":"."}
+
+data: {"p":"response","o":"BATCH","v":[{"p":"accumulated_token_usage","v":89},{"p":"quasi_status","v":"FINISHED"}]}
+
+data: {"p":"response/status","o":"SET","v":"FINISHED"}
+
+event: update_session
+data: {"updated_at":1794343342.4890149}
+
+event: title
+data: {"content":"Compare products"}
+
+event: close
+data: {"click_behavior":"none","auto_resume":false}
+

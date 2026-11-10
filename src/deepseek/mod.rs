@@ -3,4 +3,5 @@
 pub mod client;
 pub mod pow;
 pub mod session;
+pub mod stream;
 pub mod throttle;

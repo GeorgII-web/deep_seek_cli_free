@@ -5,7 +5,6 @@ when done.
 
 | # | Task | Done when |
 |---|---|---|
-| 5 | needs a live token (`dsc login --token`); confirm `doctor` shows token, wasm, pow ok; record a raw SSE (`dsc "2+2"` prints it now); `deepseek::stream` + `Backend` impl: SSE patches → `Event`, `parent_message_id`; replace `raw()` in `main.rs` | `dsc ask "2+2"` streams the answer; a second turn in the same session remembers the first; parser unit tests on recorded SSE |
 | 6 | `agent::protocol`: instruction text, action block parser | unit tests: plain answer, one block, broken JSON, several blocks |
 | 7 | `agent::tools`: `shell` (bash -lc, timeout, process group kill, output cap), `read_file`, `write_file` | unit tests incl. timeout and cap |
 | 8 | `agent::policy` + `ui`: allow/deny lists, ask prompt (`y/a/n/e`), `--yes` | deny wins over `--yes`; tests on the matcher |
@@ -17,5 +16,4 @@ when done.
 ## Open questions
 
 - Binary name `dsc` ok?
-- Proof of work is only checked against a made-up challenge (module loads, full search runs); a real pair needs a live token.
-- Is the token alone enough, or is the cookie needed too? Check with the first live token.
+- Not verified live yet: a second turn in one conversation (comes with task 9), search mode, the `expert` model.
