@@ -79,6 +79,7 @@ pub struct Settings {
     pub deepseek: Deepseek,
     pub throttle: Throttle,
     pub agent: Agent,
+    pub ui: Ui,
     pub policy: Policy,
 }
 
@@ -146,6 +147,21 @@ pub struct Agent {
     /// Cap of stdout and of stderr sent back to the model (head + tail kept)
     pub max_output_bytes: usize,
     pub command_timeout_secs: u64,
+}
+
+/// Look and feel of the chat.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct Ui {
+    /// The mouse wheel scrolls the output. The terminal then gives mouse clicks
+    /// to the app: hold Shift to select text. Off: scroll with PgUp / PgDn only.
+    pub mouse_scroll: bool,
+}
+
+impl Default for Ui {
+    fn default() -> Self {
+        Self { mouse_scroll: true }
+    }
 }
 
 /// How actions outside the allow list are handled.

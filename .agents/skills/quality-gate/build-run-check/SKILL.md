@@ -36,6 +36,9 @@ DSC_TEST_WASM=$PWD/var/tmp/sha3.wasm cargo test -- --ignored --nocapture
 | approval question | a task that needs an unlisted command, in a real terminal or with `scripts/pty-drive.py` | without a terminal every question is a no |
 | input box, drawn screen | `scripts/pty-drive.py '["/help\r", "abc", "\x1b\r", "def"]'` | pseudo-terminal, scripted keys; optional rows and columns; prints scrollback, screen and cursor; sends a request only when a task line is submitted |
 
+- Drive the UI offline: `DSC_SKIP_TOKEN_CHECK=1 DSC_HOME=var/home7 scripts/pty-drive.py …` with any text as the
+  token in `var/home7/auth.json`. Without that variable every start of the chat asks DeepSeek once; a series of
+  test starts killed the user's token twice on 2026-11-10.
 - Never run `dsc --yes` against the live account from an agent session.
 - Every live prompt counts against the user's account, and many in a day got it blocked once: at most one or
   two live tasks per change, none when the scripted tests and the pseudo-terminal cover it; the throttle stays on.

@@ -3,18 +3,20 @@
 //! `Buffer` and the wrapping are pure and tested; `Editor` draws them with
 //! crossterm in raw mode, on stderr, below the scrollback (no full-screen mode).
 
+use super::scrollback::View;
 use super::style::Style;
 use super::{screen_lock, screen_write};
 use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{execute, queue};
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use unicode_width::UnicodeWidthChar;
 
@@ -203,14 +205,24 @@ pub(super) struct RawMode;
 impl RawMode {
     pub(super) fn enter() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
-        let _ = execute!(io::stderr(), EnableBracketedPaste);
+        // The keyboard flags make terminals that know them report Shift+Enter
+        // apart from Enter; the others ignore the request.
+        let _ = execute!(
+            io::stderr(),
+            EnableBracketedPaste,
+            PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES)
+        );
         Ok(Self)
     }
 }
 
 impl Drop for RawMode {
     fn drop(&mut self) {
-        let _ = execute!(io::stderr(), DisableBracketedPaste);
+        let _ = execute!(
+            io::stderr(),
+            PopKeyboardEnhancementFlags,
+            DisableBracketedPaste
+        );
         let _ = terminal::disable_raw_mode();
     }
 }
@@ -250,6 +262,9 @@ pub struct Editor {
     mode: Option<Arc<AtomicBool>>,
     /// Slash commands offered in a menu while the input is the start of one: name, meaning
     commands: &'static [Command],
+    /// Docked: the scrollable output above the dock; the box tells it the size of
+    /// its area and passes it the scroll keys
+    view: Option<Arc<Mutex<View>>>,
 }
 
 /// A slash command: name with the slash, what it does.
@@ -298,7 +313,12 @@ impl Editor {
             dock: None,
             mode: None,
             commands: &[],
+            view: None,
         }
+    }
+
+    pub fn set_view(&mut self, view: Arc<Mutex<View>>) {
+        self.view = Some(view);
     }
 
     pub fn set_commands(&mut self, commands: &'static [Command]) {
@@ -418,8 +438,9 @@ impl Editor {
     }
 
     /// Reserves `area` rows at the bottom of a terminal `height` rows high and
-    /// clears them. Growing pushes the output up first, so nothing is covered.
-    fn set_area(dock: &mut Dock, area: usize, height: u16, frame: &mut String) {
+    /// clears them. With `push`, growing moves the output up first, so nothing is
+    /// covered; without it the caller draws the output again (`sync_view`).
+    fn set_area(dock: &mut Dock, area: usize, height: u16, push: bool, frame: &mut String) {
         let rows = height as usize;
         let area = area.min(rows.saturating_sub(1));
         let bottom = (rows - area) as u16;
@@ -429,7 +450,7 @@ impl Editor {
             dock.out.0 = dock.out.0.min(bottom);
         } else {
             let old_bottom = (rows - dock.area) as u16;
-            if dock.out.0 > bottom {
+            if push && dock.out.0 > bottom {
                 let lines = (dock.out.0 - bottom) as usize;
                 frame.push_str(&format!("\x1b[{old_bottom};1H{}", "\n".repeat(lines)));
                 dock.out.0 = bottom;
@@ -444,14 +465,27 @@ impl Editor {
         dock.height = height;
     }
 
-    /// Sets the scroll region again after something else used the whole screen
-    /// (the alternate screen restores the content and the cursor, but a terminal
-    /// may drop the region). The cursor stays where it is.
-    pub fn refresh_dock(&mut self) {
-        if let Some(dock) = &self.dock {
-            let bottom = dock.height as usize - dock.area;
-            screen_write(&format!("\x1b7\x1b[1;{bottom}r\x1b8"));
+    /// Draws the dock again from nothing, after the screen was cleared.
+    pub fn redraw_dock(&mut self) {
+        if let Some(dock) = &mut self.dock {
+            // An unknown height makes the layout start over: region, cleared rows, box.
+            dock.height = 0;
         }
+        let _ = self.dock_idle();
+    }
+
+    /// Tells the scrollable output the size of its area (the screen above the
+    /// dock), draws it again when that changed, and takes from it where output continues.
+    fn sync_view(&mut self) {
+        let (Some(view), Some(dock)) = (&self.view, &mut self.dock) else {
+            return;
+        };
+        let columns = terminal::size().map_or(80, |(columns, _)| columns as usize);
+        let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if view.resize(columns, dock.height as usize - dock.area) {
+            view.repaint();
+        }
+        dock.out = view.out();
     }
 
     /// The docked box, empty, with the cursor back in the output.
@@ -459,17 +493,31 @@ impl Editor {
         let width = Self::inner_width();
         let lines = self.box_lines(&Buffer::default(), width, 0, 1);
         let (_, height) = terminal::size()?;
+        let push = self.view.is_none();
         let Some(dock) = &mut self.dock else {
             return Ok(());
         };
+        // The area first, then the output above it, then the box: each step may
+        // clear rows the next one draws.
         let mut frame = String::new();
-        Self::set_area(dock, 1 + DOCK_EXTRA, height, &mut frame);
+        Self::set_area(dock, 1 + DOCK_EXTRA, height, push, &mut frame);
+        screen_write(&frame);
+        self.sync_view();
+        let Some(dock) = &self.dock else {
+            return Ok(());
+        };
         let top = height as usize - dock.area + 1;
+        let mut frame = String::new();
         for (i, line) in lines.iter().enumerate() {
             frame.push_str(&format!("\x1b[{};1H{line}", top + i));
         }
         frame.push_str(&format!("\x1b[{};{}H", dock.out.0, dock.out.1));
         screen_write(&frame);
+        if let Some(view) = &self.view {
+            view.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .indicator();
+        }
         Ok(())
     }
 
@@ -488,11 +536,24 @@ impl Editor {
             .min((height as usize / 3).clamp(1, DOCK_MAX_ROWS));
         let first = (cursor_row + 1).saturating_sub(visible);
         let lines = self.box_lines(buffer, width, first, visible);
+        let push = self.view.is_none();
         let Some(dock) = &mut self.dock else {
             return Ok(());
         };
         let mut frame = String::new();
-        Self::set_area(dock, visible + DOCK_EXTRA + menu.len(), height, &mut frame);
+        Self::set_area(
+            dock,
+            visible + DOCK_EXTRA + menu.len(),
+            height,
+            push,
+            &mut frame,
+        );
+        screen_write(&frame);
+        self.sync_view();
+        let Some(dock) = &self.dock else {
+            return Ok(());
+        };
+        let mut frame = String::new();
         let top = height as usize - dock.area + 1;
         // Box, then the command menu, then the hint on the last row.
         for (i, line) in lines.iter().chain(menu).enumerate() {
@@ -505,6 +566,11 @@ impl Editor {
             5 + cursor_column
         ));
         screen_write(&frame);
+        if let Some(view) = &self.view {
+            view.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .indicator();
+        }
         Ok(())
     }
 
@@ -555,8 +621,10 @@ impl Editor {
         let mut closed_for: Option<String> = None;
         let mut menu_text = String::new();
         self.cursor_line = 0;
-        if let Some(dock) = &mut self.dock {
-            // Output moved the cursor since the last draw.
+        if let Some(dock) = &mut self.dock
+            && self.view.is_none()
+        {
+            // Output moved the cursor since the last draw (with a view, `sync_view` knows it).
             dock.out = Self::cursor().unwrap_or(dock.out);
         }
         loop {
@@ -593,8 +661,20 @@ impl Editor {
                     buffer.insert_str(&text);
                     continue;
                 }
+                // The wheel scrolls the output; the box is drawn again by the loop.
+                Event::Mouse(mouse) => {
+                    if let Some(view) = &self.view {
+                        super::scroll_by_wheel(view, mouse.kind);
+                    }
+                    continue;
+                }
                 _ => continue,
             };
+            if let Some(view) = &self.view
+                && super::scroll_by_key(view, key.code, key.modifiers)
+            {
+                continue;
+            }
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             let alt = key.modifiers.contains(KeyModifiers::ALT);
             let shift = key.modifiers.contains(KeyModifiers::SHIFT);
@@ -726,6 +806,12 @@ impl Editor {
     /// Removes the box (inline) or empties it (docked) when the input ends.
     fn erase(&mut self) -> io::Result<()> {
         if self.dock.is_some() {
+            // What follows the input is printed at the end of the output.
+            if let Some(view) = &self.view {
+                view.lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .bottom();
+            }
             return self.dock_idle();
         }
         let _screen = screen_lock();

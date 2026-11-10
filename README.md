@@ -77,7 +77,8 @@ cargo install --path .        # installs `dsc` into ~/.cargo/bin
 The token is stored in `~/.config/deep_seek_cli_free/auth.json` with mode 0600. Treat it like a password: it gives full access
 to your DeepSeek account. `dsc logout` removes it.
 
-The chat checks the token when it starts and opens the same window when it is missing or dead. When the token
+The chat checks the token when it starts (at most once in 15 minutes) and opens the same window when it is
+missing or dead. When the token
 dies in the middle of a chat, the window opens by itself and with the new token the task runs again;
 `/login` opens it at any time. The token is saved in `auth.json` only: it is never printed, never kept in the
 input history and never sent as a message to the model.
@@ -97,9 +98,12 @@ dsc --yes "create a .gitignore for a Rust project"
 
 ### Chat
 
-`dsc` without a task (or `dsc chat`) opens a chat: the screen is cleared, the input box stays at the bottom and
-the output scrolls above it. Earlier output is in your terminal's scrollback (mouse wheel, Shift+PgUp). Every
-input is a task in the same conversation, so the model remembers what it did before:
+`dsc` without a task (or `dsc chat`) opens a chat on its own screen: nothing of your terminal's earlier history
+is visible, the input box stays fixed at the bottom, and only the output above it scrolls: mouse wheel, PgUp /
+PgDn, Ctrl+Home, Ctrl+End. A mark on the box shows when you are scrolled up; new output does not move the
+view until you go back down. When you quit, the conversation is printed into your normal terminal, so it is
+still there afterwards. Every input is a task in the same conversation, so the model remembers what it did
+before:
 
 ```console
 $ dsc
@@ -126,7 +130,7 @@ There is 809G free on / (out of 1007G, 16% used).
 ╭──────────────────────────────────────────────────────────────╮
 │ > which command did you run for that?                        │
 ╰──────────────────────────────────────────────────────────────╯
-  ⏵ ask · Shift+Tab mode   Enter send · Alt+Enter new line · Ctrl-C twice quit · ↑↓ history · /help
+  ⏵ ask · Shift+Tab mode   Enter send · Shift+Enter new line · Ctrl-C twice quit · ↑↓ history · /help
 ```
 
 While `dsc` works, the line under the box shows what it waits for and for how long
@@ -139,7 +143,8 @@ shell prompt.
 |---|---|
 | Enter | send |
 | `/` | list the commands: Up / Down choose, Enter runs the chosen one at once, Tab only completes it in the box, Esc closes the list |
-| Alt+Enter, Ctrl-J, or `\` then Enter | new line |
+| Shift+Enter, Ctrl-J, or `\` then Enter | new line (Shift+Enter needs a terminal that reports it; Ctrl-J always works) |
+| PgUp / PgDn, mouse wheel | scroll the output; Ctrl+Home = top, Ctrl+End = bottom |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
 | Shift+Tab | switch the mode: `ask` ⇄ `allow all`, also while a task runs |
@@ -254,6 +259,9 @@ wait_on_429_secs = 120      # pause before the first retry; doubled for each fur
 max_steps = 25              # answers of the model per task
 max_output_bytes = 8000     # cap of stdout and of stderr sent back (head + tail kept)
 command_timeout_secs = 120
+
+[ui]
+mouse_scroll = true         # the wheel scrolls the output; hold Shift to select text with the mouse
 
 [policy]
 mode = "ask"                # or "allow_all"; the last mode you chose is saved here and used on the next start

@@ -15,7 +15,7 @@ trait (`src/backend.rs`), implemented by `session::Conversation`. Reference for 
 | `pow.rs` | `solve`, `header` |
 | `stream.rs` | `Parser` (`feed`, `finish`, `response_message_id`) |
 | `session.rs` | `Conversation` (`wasm`, `pow_header`, `send`, `send_once`, `ask`); reports progress to the sink as `Event::Status` ("Pausing N s (throttle)" for a wait of a second or more, "Opening conversation", "Solving proof of work", "Waiting for DeepSeek", "Rate limited by DeepSeek, retry in N s") |
-| `throttle.rs` | `delay_ms` and `window_wait` (pure rules), `acquire` (calls `on_wait` before it sleeps), `cooldown` |
+| `throttle.rs` | `delay_ms` and `window_wait` (pure rules), `acquire` (calls `on_wait` before it sleeps), `cooldown`, `token_ok` / `token_ok_within` (when the token last worked: after every answer and every passed start check) |
 | `fixtures/` | recorded SSE bodies used by the parser tests |
 
 ## Calls

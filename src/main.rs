@@ -147,6 +147,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         (false, true) => format!("{} + thinking", settings.deepseek.model_type),
         (false, false) => settings.deepseek.model_type.clone(),
     };
+    terminal.set_mouse(settings.ui.mouse_scroll);
     terminal.open_chat(&model, &cwd());
     if let Some(note) = token_note {
         terminal.error(&note);
@@ -332,18 +333,32 @@ fn login(paths: &Paths, import: Option<PathBuf>, token: bool) -> Result<()> {
     Ok(())
 }
 
-/// Checks the saved token against DeepSeek before the chat starts (the same call
-/// as `doctor`: no prompt is sent, it is not throttled). A dead token opens the
-/// login window until a token works or the user cancels. Returns a note for the
-/// user when the chat starts without a working token.
+/// How long a token that worked is trusted without asking DeepSeek again.
+const TOKEN_TRUST_SECS: u64 = 15 * 60;
+
+/// Checks the saved token against DeepSeek before the chat starts: one call
+/// that sends no prompt. It counts as a request for the throttle, and it is
+/// skipped when the token worked in the last `TOKEN_TRUST_SECS` (starting the
+/// app often must not hammer DeepSeek) or with `DSC_SKIP_TOKEN_CHECK` set
+/// (driving the UI in tests). A dead token opens the login window until a token
+/// works or the user cancels. Returns a note for the user when the chat starts
+/// without a working token.
 async fn check_token(
     paths: &Paths,
     settings: &Settings,
     terminal: &mut ui::Terminal,
 ) -> Result<Option<String>> {
+    if std::env::var_os("DSC_SKIP_TOKEN_CHECK").is_some() {
+        return Ok(None);
+    }
     loop {
+        if deepseek::throttle::token_ok_within(paths, TOKEN_TRUST_SECS) {
+            return Ok(None);
+        }
         let client = Client::new(&Auth::require(paths)?, &settings.deepseek)?;
+        deepseek::throttle::acquire(paths, &settings.throttle, &mut |_| {}).await;
         let Err(err) = client.create_challenge().await else {
+            deepseek::throttle::token_ok(paths);
             return Ok(None);
         };
         if !matches!(err.downcast_ref(), Some(ApiError::TokenDead(_))) {

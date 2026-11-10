@@ -69,6 +69,7 @@ when the user switched it; a mode that only comes from `--yes` is never written.
 | `[deepseek]` | `Deepseek` | `model_type`, `thinking`, `search`, `locale`, `timeout_secs` |
 | `[throttle]` | `Throttle` | see `../deepseek-client/SKILL.md` |
 | `[agent]` | `Agent` | `max_steps`, `max_output_bytes`, `command_timeout_secs` |
+| `[ui]` | `Ui` | `mouse_scroll` (the wheel scrolls the output; `Terminal::set_mouse`) |
 | `[policy]` | `Policy` | `mode`, `allow`, `deny`, see `../approval-policy/SKILL.md` |
 
 A new key: the struct field, its default, the README config block, the skill of its section.
@@ -90,7 +91,8 @@ empty. The browser mode is not written yet.
 `relogin(paths, settings, terminal, reason)` in `src/main.rs`: `Terminal::token_dialog` → `Auth::new(token, "", old wasm_url)` →
 `Auth::save` → a `Client` for it; `None` when the user cancelled. It runs in the chat when there is no token at
 the start (cancel = exit), when `check_token` finds the saved one dead at the start (one `create_challenge`
-call, no prompt, not throttled; cancel = the chat opens with a note; a network error only gives a note), on
+call, no prompt; it goes through `throttle::acquire`, and it is skipped when the token worked in the last
+`TOKEN_TRUST_SECS` = 15 minutes, see `throttle::token_ok`, or when `DSC_SKIP_TOKEN_CHECK` is set; cancel = the chat opens with a note; a network error only gives a note), on
 `/login`, and after a task failed with `ApiError::TokenDead`: with a new token
 `Conversation::set_client` keeps the conversation and the same prompt runs again, until it works or the user
 cancels. The token never reaches the input history (`Editor`) or a prompt.

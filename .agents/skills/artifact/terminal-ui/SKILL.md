@@ -15,6 +15,7 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 | `src/ui/banner.rs` | `art(style, columns)`: the start picture; `glyph` holds the 5-row letters (`#` = filled cell) |
 | `src/ui/dialog.rs` | `ask_token(style, reason)`: the token window; `rows` builds it (tested for width and masking) |
 | `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history, command menu), `command_matches`, `Dock`, `Input`, `read_choice`, `RawMode` |
+| `src/ui/scrollback.rs` | `View`: the output kept by the app (lines, wrapped rows, scroll offset), `wrap`, `columns_of` |
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
 | `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`, `set_mode`; `Notifier` (a 2 s notice in place of the key hint) |
 | `src/ui/style.rs` | `Style`: every escape code; `detect()`; `inline(text, base)` colors `code` spans and links in chrome lines; `links(text, base)` colors only the links (result preview); `link()`, `hyperlink(url)` (OSC 8 open and close); `hint(key, what)` and `mode_label` for hint lines |
@@ -24,7 +25,7 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 | Layout | When | Behaviour |
 |---|---|---|
 | inline | a single task; the chat without a terminal | output follows the shell prompt; answer text on stdout, everything else on stderr; the spinner shares the output line and is removed before any output; the box (only for editing a command) is drawn in place |
-| screen | the chat with stdin, stdout and stderr on a terminal (`Terminal::open_chat`) | screen cleared, banner at the top, the box docked at the bottom, output above it; everything on stdout; the spinner lives on the last row and keeps running while text streams ("Thinking", "Answering") |
+| screen | the chat with stdin, stdout and stderr on a terminal (`Terminal::open_chat`) | the alternate screen (no terminal history), banner at the top, the box docked at the bottom, output above it kept and scrolled by the app (`View`); everything on stdout; the spinner lives on the last row and keeps running while text streams ("Thinking", "Answering") |
 
 Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_idle`, `close_dock`):
 
@@ -40,7 +41,31 @@ Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_i
 - Growing the dock: when `out` would be covered, line feeds at the old region bottom push the output up first.
   Shrinking and resizing clear the freed rows; a new terminal height starts the layout over.
 - The spinner writes the last row between save and restore cursor (`ESC7`, `ESC8`), under `screen_lock`.
-- `Terminal::drop` → `close_dock`: scroll region reset, dock rows cleared, cursor after the output.
+- `Terminal::drop` → `close_dock` (scroll region reset), mouse reports off, back to the normal screen, then
+  `View::transcript` is printed once so the conversation stays in the terminal.
+
+## Scrollback (`scrollback::View`, screen layout only)
+
+The app keeps its own output: complete lines plus one open line, wrapped to the screen width (`wrap` knows
+escape sequences and carries colors over a break). The view is the last rows of that; `offset` = rows below it.
+
+| Case | What happens |
+|---|---|
+| at the bottom | `Terminal::emit` records the text (`View::push`) and writes it to the terminal, which wraps and scrolls inside the scroll region exactly like the model |
+| scrolled up | `push` only records; the view stays on the same rows (`offset` grows), nothing is written |
+| scroll (PgUp, PgDn, wheel 3 rows, Ctrl+Home, Ctrl+End) | `View::scroll` / `top` / `bottom` → `repaint`: every row of the area cleared and drawn from the model, cursor at `out()` |
+| dock grows or shrinks, terminal resized | `Editor::sync_view` → `View::resize` (rewrap on a new width) → `repaint`; `Dock::out` comes from `View::out`, no cursor query |
+| input sent | `Editor::erase` → `View::bottom` first |
+| a window (`token_dialog`, `pick`) | drawn over the screen (no second alternate screen), then `Terminal::redraw`: clear, `Editor::redraw_dock`, `repaint` |
+
+- Everything printed in the screen layout must go through `emit` (`line`, `partial`, `text`), `erase_partial`
+  (removes the open line: the approval question) or `drop_lines(n)` (removes complete lines: the `… +N lines`
+  mark). A direct write would put the model and the screen out of step.
+- The scroll mark (`View::indicator`) sits on the dock's top border, right side; the box redraws it after itself.
+- Keys reach the view from two places: `Editor::read` (while typing) and the key watcher (while a task runs).
+- Mouse reports (`ESC[?1000h`, `ESC[?1006h`) are on when `ui.mouse_scroll` is true: the terminal then gives
+  clicks to the app, so selecting text needs Shift.
+- `KEEP_LINES` (20000) lines are kept.
 
 ## Rules
 
@@ -140,7 +165,8 @@ at the box width (wide characters count two columns); a box taller than the scre
 | Key | Effect |
 |---|---|
 | Enter | send (empty input is ignored); after a `\` at the cursor: new line |
-| Alt+Enter, Shift+Enter (where the terminal reports it), Ctrl-J | new line |
+| Shift+Enter (where the terminal reports it: `RawMode` asks for the keyboard flags), Alt+Enter, Ctrl-J | new line |
+| PgUp, PgDn, Ctrl+Home, Ctrl+End, mouse wheel | scroll the output (`scroll_by_key`, `scroll_by_wheel`) |
 | Up, Down | move a row; at the first or last row go through the history (the draft is kept) |
 | Left, Right, Home, End, Ctrl-A, Ctrl-E | move |
 | Backspace, Delete, Ctrl-W or Alt+Backspace (word), Ctrl-U, Ctrl-K | delete |

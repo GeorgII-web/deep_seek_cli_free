@@ -182,6 +182,8 @@ impl Backend for Conversation {
             self.parent_message_id = Some(id);
         }
         parser.finish()?;
+        // An answer proves the token: the next start skips its check.
+        throttle::token_ok(&self.paths);
         Ok(answer)
     }
 }

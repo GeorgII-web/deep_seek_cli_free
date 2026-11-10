@@ -24,6 +24,9 @@ struct State {
     /// After a "too many requests" answer: no request before this time (ms)
     #[serde(default)]
     cooldown_until: u64,
+    /// When the token last proved to work (ms): a check or an answered request
+    #[serde(default)]
+    token_ok_at: u64,
 }
 
 fn file(paths: &Paths) -> std::path::PathBuf {
@@ -37,7 +40,7 @@ fn load(paths: &Paths) -> State {
         .or_else(|_| {
             serde_json::from_str::<Vec<u64>>(&text).map(|sent| State {
                 sent,
-                cooldown_until: 0,
+                ..State::default()
             })
         })
         .unwrap_or_default()
@@ -100,6 +103,19 @@ pub async fn acquire(paths: &Paths, settings: &Settings, on_wait: &mut dyn FnMut
     }
     state.sent.push(now_ms());
     save(paths, &state);
+}
+
+/// Notes that the token just worked, so the next start need not ask DeepSeek again.
+pub fn token_ok(paths: &Paths) {
+    let mut state = load(paths);
+    state.token_ok_at = now_ms();
+    save(paths, &state);
+}
+
+/// Whether the token worked within the last `secs` seconds.
+pub fn token_ok_within(paths: &Paths, secs: u64) -> bool {
+    let at = load(paths).token_ok_at;
+    at > 0 && now_ms().saturating_sub(at) < secs * 1000
 }
 
 /// Remembers that DeepSeek asked to slow down: no request for `secs`, also in a later run.
@@ -178,6 +194,10 @@ mod tests {
         assert_eq!(state.sent, [1, 2, 3]);
         let left = state.cooldown_until - now_ms();
         assert!((80_000..=90_000).contains(&left), "{left}");
+        assert!(!token_ok_within(&paths, 60));
+        token_ok(&paths);
+        assert!(token_ok_within(&paths, 60));
+        assert_eq!(load(&paths).sent, [1, 2, 3]);
         fs::remove_dir_all(paths.home).unwrap();
     }
 }

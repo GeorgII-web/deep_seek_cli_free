@@ -67,9 +67,9 @@ def feed(text):
                     y, x = saved
                 i += 2
                 continue
-            m = re.match(r'\x1b\[(\??)([0-9;]*)([A-Za-z])', s[i:])
+            m = re.match(r'\x1b\[([?><=]?)([0-9;]*)([A-Za-z])', s[i:])
             if not m:
-                if re.fullmatch(r'\x1b\[\??[0-9;]*', s[i:]):
+                if re.fullmatch(r'\x1b\[[?><=]?[0-9;]*', s[i:]):
                     pending = s[i:]
                     return
                 i += 1
@@ -77,7 +77,9 @@ def feed(text):
             private, args, kind = m.groups()
             nums = [int(n) if n else None for n in args.split(';')] if args else [None]
             first = nums[0]
-            if private:
+            if private in ('>', '<', '='):
+                pass
+            elif private:
                 # Alternate screen: its own content; the main screen and cursor come back after.
                 if first == 1049 and kind == 'h':
                     main_screen = ([r[:] for r in rows], y, x)

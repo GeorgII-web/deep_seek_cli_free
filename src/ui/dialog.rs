@@ -1,6 +1,7 @@
 //! Modal windows: the login token (a masked field and the buttons OK and
-//! Cancel) and a list to pick from. They are drawn on the terminal's alternate screen, so the chat comes
-//! back untouched when it closes. The token goes only to the caller: it is
+//! Cancel) and a list to pick from. Inline they are drawn on the terminal's
+//! alternate screen, so what was there comes back; in the chat (which runs on
+//! the alternate screen itself) they are drawn over it and the caller redraws. The token goes only to the caller: it is
 //! never printed, never put into the input history, never sent as a message.
 
 use super::editor::RawMode;
@@ -109,12 +110,16 @@ fn rows(style: Style, width: usize, reason: &str, token_len: usize, focus: Focus
 }
 
 /// Opens the window and waits. `Some(token)` = OK with a token, `None` = Cancel.
-pub fn ask_token(style: Style, reason: &str) -> io::Result<Option<String>> {
+pub fn ask_token(style: Style, reason: &str, alternate: bool) -> io::Result<Option<String>> {
     let _raw = RawMode::enter()?;
     // Alternate screen: the chat below is not overwritten and returns as it was.
-    screen_write("\x1b[?1049h");
+    if alternate {
+        screen_write("\x1b[?1049h");
+    }
     let result = run(style, reason);
-    screen_write("\x1b[?1049l");
+    if alternate {
+        screen_write("\x1b[?1049l");
+    }
     result
 }
 
@@ -234,14 +239,23 @@ fn list_rows(
 
 /// Opens a list window and waits. `Some(index)` = the item chosen with Enter,
 /// `None` = closed with Esc.
-pub fn pick(style: Style, title: &str, items: &[String]) -> io::Result<Option<usize>> {
+pub fn pick(
+    style: Style,
+    title: &str,
+    items: &[String],
+    alternate: bool,
+) -> io::Result<Option<usize>> {
     if items.is_empty() {
         return Ok(None);
     }
     let _raw = RawMode::enter()?;
-    screen_write("\x1b[?1049h");
+    if alternate {
+        screen_write("\x1b[?1049h");
+    }
     let result = run_pick(style, title, items);
-    screen_write("\x1b[?1049l");
+    if alternate {
+        screen_write("\x1b[?1049l");
+    }
     result
 }
 

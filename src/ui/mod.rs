@@ -11,6 +11,7 @@ pub mod banner;
 pub mod dialog;
 pub mod editor;
 pub mod render;
+pub mod scrollback;
 pub mod spinner;
 pub mod style;
 
@@ -18,9 +19,12 @@ use crate::agent::interrupt::{Interrupt, Interrupts};
 use crate::agent::protocol::Action;
 use crate::agent::run::{Decision, Ui};
 use crate::backend::Event;
-use crossterm::event::{self, Event as TermEvent, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{
+    self, Event as TermEvent, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
+};
 use editor::{AGAIN, AGAIN_HINT, Editor, Input, RawMode};
 use render::Markdown;
+use scrollback::View;
 use spinner::Spinner;
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
@@ -36,7 +40,7 @@ const RESULT_LINES: usize = 8;
 const INPUT_HINTS: &[(&str, &str)] = &[
     ("Shift+Tab", "mode"),
     ("Enter", "send"),
-    ("Alt+Enter", "new line"),
+    ("Shift+Enter", "new line"),
     ("Ctrl-C twice", "quit"),
     ("↑↓", "history"),
     ("/help", ""),
@@ -82,6 +86,39 @@ struct Watch {
     _raw: RawMode,
 }
 
+/// Rows the mouse wheel moves the output per notch.
+const WHEEL_ROWS: isize = 3;
+
+/// Scrolls the output for a wheel event. Shared by the key watcher and the input box.
+pub(crate) fn scroll_by_wheel(view: &Mutex<View>, kind: MouseEventKind) {
+    let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    match kind {
+        MouseEventKind::ScrollUp => view.scroll(WHEEL_ROWS),
+        MouseEventKind::ScrollDown => view.scroll(-WHEEL_ROWS),
+        _ => {}
+    }
+}
+
+/// Scrolls the output for PgUp, PgDn, Ctrl+Home and Ctrl+End. Returns true when the key was one of them.
+pub(crate) fn scroll_by_key(view: &Mutex<View>, code: KeyCode, modifiers: KeyModifiers) -> bool {
+    let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let ctrl = modifiers.contains(KeyModifiers::CONTROL);
+    match code {
+        KeyCode::PageUp => {
+            let page = view.page();
+            view.scroll(page);
+        }
+        KeyCode::PageDown => {
+            let page = view.page();
+            view.scroll(-page);
+        }
+        KeyCode::Home if ctrl => view.top(),
+        KeyCode::End if ctrl => view.bottom(),
+        _ => return false,
+    }
+    true
+}
+
 pub struct Terminal {
     style: Style,
     /// Keys can be read one by one: stdin and stderr are a terminal
@@ -102,6 +139,10 @@ pub struct Terminal {
     /// Where the key watcher sends what the keys mean; set by `interrupts`
     interrupt_tx: Option<UnboundedSender<Interrupt>>,
     watch: Option<Watch>,
+    /// Screen layout: the output kept for scrolling; shared with the box and the key watcher
+    view: Option<Arc<Mutex<View>>>,
+    /// Screen layout: the mouse wheel scrolls the output (the terminal reports the mouse to the app)
+    mouse: bool,
     /// Lines of the last result that the preview left out; printed when the model
     /// says the result is the answer
     hidden_result: Vec<String>,
@@ -140,6 +181,8 @@ impl Terminal {
             actions: 0,
             interrupt_tx: None,
             watch: None,
+            view: None,
+            mouse: true,
             hidden_result: Vec::new(),
             allow_all,
         }
@@ -192,6 +235,7 @@ impl Terminal {
             self.screen,
         );
         let mode = self.allow_all.clone();
+        let view = self.view.clone();
         let thread = std::thread::spawn(move || {
             let mut armed: Option<Instant> = None;
             while !flag.load(Ordering::Relaxed) {
@@ -200,10 +244,19 @@ impl Terminal {
                     Ok(false) => continue,
                     Err(_) => break,
                 }
-                let Ok(TermEvent::Key(key)) = event::read() else {
-                    continue;
+                let key = match event::read() {
+                    Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => key,
+                    Ok(TermEvent::Mouse(mouse)) => {
+                        if let Some(view) = &view {
+                            scroll_by_wheel(view, mouse.kind);
+                        }
+                        continue;
+                    }
+                    _ => continue,
                 };
-                if key.kind == KeyEventKind::Release {
+                if let Some(view) = &view
+                    && scroll_by_key(view, key.code, key.modifiers)
+                {
                     continue;
                 }
                 match key.code {
@@ -219,7 +272,8 @@ impl Terminal {
                             let _ = sender.send(Interrupt::Quit);
                         } else {
                             armed = Some(Instant::now());
-                            if !notifier.show(AGAIN_HINT) {
+                            // In the screen layout nothing may be printed past the scrollback.
+                            if !notifier.show(AGAIN_HINT) && !screen {
                                 // No progress line right now: a line of its own.
                                 let _screen = screen_lock();
                                 let text = format!(
@@ -266,37 +320,108 @@ impl Terminal {
         }
     }
 
+    /// Screen layout: records output in the scrollback and, when the view is at
+    /// the bottom, writes it to the terminal. Returns false in the inline layout.
+    fn emit(&self, text: &str) -> bool {
+        let Some(view) = &self.view else {
+            return false;
+        };
+        let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        if view.push(text) {
+            screen_write(&self.eol(text));
+        }
+        true
+    }
+
     /// A line of chrome: stderr inline, the output area in the screen layout.
     fn line(&self, text: &str) {
+        if self.emit(&format!("{text}\n")) {
+            return;
+        }
         let text = self.eol(&format!("{text}\n"));
         let _screen = screen_lock();
-        if self.screen {
-            print!("{text}");
-            let _ = std::io::stdout().flush();
-        } else {
-            eprint!("{text}");
-        }
+        eprint!("{text}");
     }
 
     /// Chrome without a line end (a question that waits for a key).
     fn partial(&self, text: &str) {
+        if self.emit(text) {
+            return;
+        }
         let text = self.eol(text);
         let _screen = screen_lock();
-        if self.screen {
-            print!("{text}");
-            let _ = std::io::stdout().flush();
-        } else {
-            eprint!("{text}");
-            let _ = std::io::stderr().flush();
+        eprint!("{text}");
+        let _ = std::io::stderr().flush();
+    }
+
+    /// Removes what `partial` wrote on the current line.
+    fn erase_partial(&self) {
+        match &self.view {
+            Some(view) => {
+                if view
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .erase_open()
+                {
+                    screen_write("\r\x1b[2K");
+                }
+            }
+            None => {
+                let _screen = screen_lock();
+                eprint!("\r\x1b[2K");
+                let _ = std::io::stderr().flush();
+            }
+        }
+    }
+
+    /// Removes the last `count` printed lines (the cursor is at the start of a line).
+    /// Inline this needs a terminal that can move the cursor up.
+    fn drop_lines(&self, count: usize) {
+        match &self.view {
+            Some(view) => {
+                if view
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .drop_lines(count)
+                {
+                    screen_write(&format!("\x1b[{count}A\r\x1b[2K"));
+                }
+            }
+            None if self.style.on() => {
+                let _screen = screen_lock();
+                eprint!("\x1b[{count}A\r\x1b[2K");
+                let _ = std::io::stderr().flush();
+            }
+            None => {}
         }
     }
 
     /// Answer text: always stdout.
     fn text(&self, text: &str) {
+        if self.emit(text) {
+            return;
+        }
         let text = self.eol(text);
         let _screen = screen_lock();
         print!("{text}");
         let _ = std::io::stdout().flush();
+    }
+
+    /// Whether the mouse wheel scrolls the output (config `ui.mouse_scroll`). Call before `open_chat`.
+    pub fn set_mouse(&mut self, on: bool) {
+        self.mouse = on;
+    }
+
+    /// Screen layout: clears the screen and draws output area and dock again,
+    /// after a window covered them.
+    fn redraw(&mut self) {
+        if let Some(view) = &self.view {
+            screen_write("\x1b[2J");
+            self.editor.redraw_dock();
+            view.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .repaint();
+        }
     }
 
     /// Starts the chat: on a terminal the screen is cleared and the input box is
@@ -305,7 +430,18 @@ impl Terminal {
         let s = self.style;
         let docked = self.interactive && std::io::stdout().is_terminal();
         if docked {
-            screen_write("\x1b[2J\x1b[H");
+            // The alternate screen: nothing of the terminal's earlier history is
+            // reachable, and the app scrolls its own output.
+            screen_write("\x1b[?1049h\x1b[2J\x1b[H");
+            if self.mouse {
+                // Button and wheel reports, in the SGR form.
+                screen_write("\x1b[?1000h\x1b[?1006h");
+            }
+            let (columns, rows) =
+                crossterm::terminal::size().map_or((80, 24), |(c, r)| (c as usize, r as usize));
+            let view = Arc::new(Mutex::new(View::new(s, columns, rows.saturating_sub(4))));
+            self.editor.set_view(view.clone());
+            self.view = Some(view);
             self.screen = true;
         }
         // The picture needs a terminal; a piped chat gets the plain lines only.
@@ -412,11 +548,12 @@ impl Terminal {
         self.close_output();
         self.spinner.stop();
         self.watch_stop();
-        let token = dialog::ask_token(self.style, reason).ok().flatten();
-        // The alternate screen may have dropped the scroll region: lay the dock out again.
-        if self.screen {
-            self.editor.refresh_dock();
-        }
+        // In the screen layout the app is on the alternate screen already: the
+        // window is drawn over it and everything is drawn again after.
+        let token = dialog::ask_token(self.style, reason, !self.screen)
+            .ok()
+            .flatten();
+        self.redraw();
         token
     }
 
@@ -430,10 +567,10 @@ impl Terminal {
         self.close_output();
         self.spinner.stop();
         self.watch_stop();
-        let chosen = dialog::pick(self.style, title, items).ok().flatten();
-        if self.screen {
-            self.editor.refresh_dock();
-        }
+        let chosen = dialog::pick(self.style, title, items, !self.screen)
+            .ok()
+            .flatten();
+        self.redraw();
         chosen
     }
 
@@ -545,8 +682,15 @@ impl Terminal {
                 "list the commands: arrows choose, Enter runs, Tab completes",
             ),
             row("Enter", "send"),
-            row("Alt+Enter, Ctrl-J, \\ Enter", "new line"),
+            row(
+                "Shift+Enter, Ctrl-J, \\ Enter",
+                "new line (Ctrl-J works in every terminal)",
+            ),
             row("Up, Down", "move in the text, then through earlier inputs"),
+            row(
+                "PgUp, PgDn, mouse wheel",
+                "scroll the output; Ctrl+Home top, Ctrl+End bottom",
+            ),
             row("Ctrl-A, Ctrl-E", "start, end of the line"),
             row(
                 "Ctrl-W, Ctrl-U, Ctrl-K",
@@ -634,7 +778,7 @@ impl Terminal {
         self.partial(&format!("{}  Allow?{} {choices} ", s.accent(), s.reset()));
         let choice = editor::read_choice(&keys).ok().flatten();
         // The question is replaced by its outcome.
-        self.partial("\r\x1b[2K");
+        self.erase_partial();
         let denied = format!("{}  ✗ denied{}", s.err(), s.reset());
         match choice {
             Some('y') => Decision::Yes,
@@ -665,7 +809,19 @@ impl Drop for Terminal {
         self.spinner.stop();
         if self.screen {
             self.editor.close_dock();
-            self.text("\n");
+            if self.mouse {
+                screen_write("\x1b[?1006l\x1b[?1000l");
+            }
+            // Back on the normal screen the conversation is printed once, so it
+            // stays in the terminal after the chat closed.
+            screen_write("\x1b[?1049l");
+            if let Some(view) = self.view.take() {
+                let transcript = view
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .transcript();
+                println!("{transcript}");
+            }
         }
     }
 }
@@ -789,9 +945,7 @@ impl Ui for Terminal {
             return;
         }
         // The "… +N lines" line and the blank line after it are replaced by the lines themselves.
-        if self.style.on() {
-            self.partial("\x1b[2A\r\x1b[2K");
-        }
+        self.drop_lines(2);
         for line in &hidden {
             self.result_line(" ", line);
         }
