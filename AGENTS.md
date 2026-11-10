@@ -30,11 +30,17 @@ The repo is public: no personal paths, names or data in any tracked file.
 
 | Skill | Read when |
 |---|---|
-| [architecture](.agents/skills/general/architecture/SKILL.md) | orienting, any new module, the DeepSeek web protocol, the agent protocol, approval rules |
+| [architecture](.agents/skills/general/architecture/SKILL.md) | orienting, decisions and their reasons, layers, `Backend` and `Ui` traits, runtime files, which skill covers which module |
+| [cli-config-auth](.agents/skills/artifact/cli-config-auth/SKILL.md) | commands and flags, `main.rs` dispatch, `doctor`, `config.toml` sections and defaults, `auth.json`, login |
+| [deepseek-client](.agents/skills/artifact/deepseek-client/SKILL.md) | DeepSeek calls and headers, error envelope, proof of work, SSE format and parser, conversation, throttle, what to do when the site changes |
+| [agent-loop](.agents/skills/artifact/agent-loop/SKILL.md) | action block protocol, first prompt, tools, loop steps, terminal output, adding a tool |
+| [approval-policy](.agents/skills/artifact/approval-policy/SKILL.md) | allow, deny, ask, "always", edit, default lists |
+| [build-run-check](.agents/skills/quality-gate/build-run-check/SKILL.md) | gates, solver test, live checks, recording a fixture, build profiles, public repo rules |
 
 ## Rules
 
-- Every code piece is described in a skill; update the skill in the same change.
+- Every code piece is described in a skill. A code change updates its skill, this file and `README.md` in the same
+  commit, pushed right away; a new module gets a row here and a skill (or a section in one).
 - DeepSeek specifics (URLs, headers, wasm URL, model types) live only in `src/deepseek/`; the agent talks to the
   `Backend` trait.
 - No action runs without passing `agent::policy`; the default is ask.
