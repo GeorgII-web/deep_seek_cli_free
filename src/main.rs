@@ -130,6 +130,8 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
     {
         bail!("not logged in; run `dsc login`");
     }
+    // One cheap call tells whether the saved token still works; a dead one opens the login window now.
+    let token_note = check_token(paths, settings, &mut terminal).await?;
     let mut conversation = conversation(paths, settings, run)?;
     let mode = terminal.mode();
     let mut saver = ModeSaver::new(paths, settings, mode.clone());
@@ -142,6 +144,9 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         (false, false) => settings.deepseek.model_type.clone(),
     };
     terminal.open_chat(&model, &cwd());
+    if let Some(note) = token_note {
+        terminal.error(&note);
+    }
     loop {
         let line = terminal.input();
         // Shift+Tab in the box may have switched the mode.
@@ -275,6 +280,39 @@ fn login(paths: &Paths, import: Option<PathBuf>, token: bool) -> Result<()> {
         paths.auth().display()
     );
     Ok(())
+}
+
+/// Checks the saved token against DeepSeek before the chat starts (the same call
+/// as `doctor`: no prompt is sent, it is not throttled). A dead token opens the
+/// login window until a token works or the user cancels. Returns a note for the
+/// user when the chat starts without a working token.
+async fn check_token(
+    paths: &Paths,
+    settings: &Settings,
+    terminal: &mut ui::Terminal,
+) -> Result<Option<String>> {
+    loop {
+        let client = Client::new(&Auth::require(paths)?, &settings.deepseek)?;
+        let Err(err) = client.create_challenge().await else {
+            return Ok(None);
+        };
+        if !matches!(err.downcast_ref(), Some(ApiError::TokenDead(_))) {
+            // No network, a block page: not a reason to ask for a token.
+            return Ok(Some(format!("the token could not be checked: {err:#}")));
+        }
+        if relogin(
+            paths,
+            settings,
+            terminal,
+            "The saved token is dead or expired.",
+        )?
+        .is_none()
+        {
+            return Ok(Some(
+                "the token is dead: tasks will fail until you enter a new one with `/login`".into(),
+            ));
+        }
+    }
 }
 
 /// Asks for a new token in the login window, saves it and returns a client that

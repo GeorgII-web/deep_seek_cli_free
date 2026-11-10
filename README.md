@@ -77,7 +77,8 @@ cargo install --path .        # installs `dsc` into ~/.cargo/bin
 The token is stored in `~/.config/deep_seek_cli_free/auth.json` with mode 0600. Treat it like a password: it gives full access
 to your DeepSeek account. `dsc logout` removes it.
 
-When the token dies, the chat opens the same window by itself, and with the new token the task runs again;
+The chat checks the token when it starts and opens the same window when it is missing or dead. When the token
+dies in the middle of a chat, the window opens by itself and with the new token the task runs again;
 `/login` opens it at any time. The token is saved in `auth.json` only: it is never printed, never kept in the
 input history and never sent as a message to the model.
 
