@@ -1,5 +1,5 @@
-//! A modal window for the login token: a masked field and the buttons OK and
-//! Cancel. It is drawn on the terminal's alternate screen, so the chat comes
+//! Modal windows: the login token (a masked field and the buttons OK and
+//! Cancel) and a list to pick from. They are drawn on the terminal's alternate screen, so the chat comes
 //! back untouched when it closes. The token goes only to the caller: it is
 //! never printed, never put into the input history, never sent as a message.
 
@@ -183,6 +183,121 @@ fn run(style: Style, reason: &str) -> io::Result<Option<String>> {
     }
 }
 
+/// The rows of a list window `width` columns wide: title, `visible` items
+/// starting at `first`, the selected one marked. Items longer than the window are cut.
+fn list_rows(
+    style: Style,
+    width: usize,
+    title: &str,
+    items: &[String],
+    selected: usize,
+    first: usize,
+    visible: usize,
+) -> Vec<String> {
+    let s = style;
+    let inner = width - 4;
+    let (gray, reset) = (s.gray(), s.reset());
+    let title = format!(" {title} ");
+    let mut rows = vec![format!(
+        "{gray}╭─{reset}{}{}{title}{reset}{gray}{}╮{reset}",
+        s.bold(),
+        s.accent(),
+        "─".repeat(width - 3 - title.chars().count())
+    )];
+    for (i, item) in items.iter().enumerate().skip(first).take(visible) {
+        let text: String = item.chars().take(inner - 2).collect();
+        let pad = " ".repeat(inner - 2 - text.chars().count());
+        rows.push(match i == selected {
+            true => format!(
+                "{gray}│{reset} {}{}{}❯ {text}{pad}{reset} {gray}│{reset}",
+                s.bold(),
+                s.accent(),
+                s.inverse()
+            ),
+            false => format!(
+                "{gray}│{reset}   {}{text}{reset}{pad} {gray}│{reset}",
+                s.key()
+            ),
+        });
+    }
+    let more = items.len().saturating_sub(first + visible);
+    let below = match more {
+        0 => String::new(),
+        n => format!(" {n} more below "),
+    };
+    rows.push(format!(
+        "{gray}╰{}{below}╯{reset}",
+        "─".repeat(width - 2 - below.chars().count())
+    ));
+    rows
+}
+
+/// Opens a list window and waits. `Some(index)` = the item chosen with Enter,
+/// `None` = closed with Esc.
+pub fn pick(style: Style, title: &str, items: &[String]) -> io::Result<Option<usize>> {
+    if items.is_empty() {
+        return Ok(None);
+    }
+    let _raw = RawMode::enter()?;
+    screen_write("\x1b[?1049h");
+    let result = run_pick(style, title, items);
+    screen_write("\x1b[?1049l");
+    result
+}
+
+fn run_pick(style: Style, title: &str, items: &[String]) -> io::Result<Option<usize>> {
+    let s = style;
+    let (mut selected, mut first) = (0usize, 0usize);
+    loop {
+        let (columns, lines) = terminal::size()
+            .map(|(c, l)| (c as usize, l as usize))
+            .unwrap_or((80, 24));
+        let longest = items
+            .iter()
+            .map(|item| item.chars().count())
+            .max()
+            .unwrap_or(0);
+        let width = (longest + 6).clamp(30, columns.saturating_sub(2).max(30));
+        let visible = items.len().min(lines.saturating_sub(6).max(1));
+        // Keep the selection inside the visible part.
+        first = first
+            .min(selected)
+            .max((selected + 1).saturating_sub(visible));
+        let window = list_rows(s, width, title, items, selected, first, visible);
+        let top = lines.saturating_sub(window.len() + 2) / 2 + 1;
+        let left = columns.saturating_sub(width) / 2 + 1;
+        let mut frame = String::from("\x1b[2J");
+        for (i, row) in window.iter().enumerate() {
+            frame.push_str(&format!("\x1b[{};{left}H{row}", top + i));
+        }
+        let hint = [("↑↓", "choose"), ("Enter", "switch"), ("Esc", "close")]
+            .map(|(key, what)| s.hint(key, what))
+            .join(&format!("{} · {}", s.faint(), s.reset()));
+        frame.push_str(&format!("\x1b[{};{left}H  {hint}", top + window.len() + 1));
+        screen_write(&frame);
+
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind == KeyEventKind::Release {
+            continue;
+        }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => return Ok(None),
+            KeyCode::Char('c') | KeyCode::Char('d') if ctrl => return Ok(None),
+            KeyCode::Enter => return Ok(Some(selected)),
+            KeyCode::Up => selected = selected.saturating_sub(1),
+            KeyCode::Down => selected = (selected + 1).min(items.len() - 1),
+            KeyCode::PageUp => selected = selected.saturating_sub(visible),
+            KeyCode::PageDown => selected = (selected + visible).min(items.len() - 1),
+            KeyCode::Home => selected = 0,
+            KeyCode::End => selected = items.len() - 1,
+            _ => {}
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -222,5 +337,19 @@ mod tests {
         let cancel = rows(s, WIDTH, "r", 1, Focus::Cancel).join("\n");
         assert!(ok.contains("\x1b[7m[ OK ]") && !ok.contains("\x1b[7m[ Cancel ]"));
         assert!(cancel.contains("\x1b[7m[ Cancel ]") && !cancel.contains("\x1b[7m[ OK ]"));
+    }
+
+    #[test]
+    fn list_window_marks_the_selection_and_cuts_long_items() {
+        let items: Vec<String> = vec!["one".into(), "x".repeat(100), "three".into(), "four".into()];
+        let rows = list_rows(Style::new(false), 40, "Sessions", &items, 1, 0, 3);
+        assert_eq!(rows.len(), 5);
+        assert!(rows.iter().all(|row| row.chars().count() == 40), "{rows:?}");
+        assert!(rows[0].contains(" Sessions "));
+        assert!(rows[1].contains("  one") && rows[2].contains("❯ xxx"));
+        assert!(rows[4].contains(" 1 more below "));
+        // Scrolled: the window starts at the second item.
+        let scrolled = list_rows(Style::new(false), 40, "Sessions", &items, 3, 1, 3);
+        assert!(scrolled[3].contains("❯ four") && !scrolled[4].contains("more"));
     }
 }

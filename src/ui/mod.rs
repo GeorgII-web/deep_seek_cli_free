@@ -50,6 +50,7 @@ const COMMANDS: &[editor::Command] = &[
         "start a fresh conversation (the model forgets the earlier tasks)",
     ),
     ("/mode", "switch between ask and allow all (also Shift+Tab)"),
+    ("/sessions", "list earlier conversations and switch to one"),
     ("/login", "enter a new DeepSeek token"),
     ("/help", "commands and keys"),
     ("/exit", "quit"),
@@ -417,6 +418,23 @@ impl Terminal {
             self.editor.refresh_dock();
         }
         token
+    }
+
+    /// Opens a list window (see `dialog::pick`) and returns the chosen index.
+    /// Without a terminal the list is printed and nothing is chosen.
+    pub fn pick(&mut self, title: &str, items: &[String]) -> Option<usize> {
+        if !self.interactive {
+            self.info(&format!("{title}:\n{}", items.join("\n")));
+            return None;
+        }
+        self.close_output();
+        self.spinner.stop();
+        self.watch_stop();
+        let chosen = dialog::pick(self.style, title, items).ok().flatten();
+        if self.screen {
+            self.editor.refresh_dock();
+        }
+        chosen
     }
 
     /// One blank line, unless the last thing printed was one.

@@ -55,9 +55,9 @@ two traits, so its tests script both.
 | `<home>/config.toml` | `deepseek.*` (model type, thinking, search, locale, timeout), `throttle.*`, `agent.*`, `policy.*` (the saved mode, allow, deny); rewritten when the mode is switched |
 | `<home>/auth.json` | secret, 0600 |
 | `<home>/history.json` | the last 200 chat inputs |
+| `<home>/sessions.json` | the last 50 conversations started here: remote session id, last answer id, title, folder |
 | `<home>/cache/sha3.wasm`, `sha3.url` | proof-of-work module and the URL it came from; refetched when `wasm_url` differs |
 | `<home>/cache/throttle.json` | send times of the last hour |
-| `<home>/sessions/<id>.jsonl` | planned: transcript of each run for `dsc chat --resume` |
 
 ## Risks
 

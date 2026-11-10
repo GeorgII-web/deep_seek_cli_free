@@ -32,6 +32,7 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 | `/new` | new `Conversation`, the next task gets the rules again |
 | `/mode` | `Terminal::toggle_mode` (ask ⇄ allow all) |
 | `/login` | `relogin`: token window, save, `Conversation::set_client` |
+| `/sessions` | `Terminal::pick` over `Store::rows`; the chosen one: new `Conversation` + `resume(id, parent)`, `first = false` |
 | `/help` | `Terminal::help` |
 | `/exit`, `/quit`, Ctrl-D on an empty box, Ctrl-C twice | leave |
 | other `/word` | "unknown command"; a text with a second `/` or a space (a path, a sentence) is a task |
@@ -39,13 +40,20 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 
 A new command: a row in `COMMANDS` (`src/ui/mod.rs`; feeds the menu and `/help`) and an arm in `chat()`.
 
-Not saved: no transcript, no resume (`TASKS.md`). Inputs are kept in `<home>/history.json` (`Paths::history`).
+Sessions (`src/sessions.rs`): after every task `chat()` writes the conversation in use to `<home>/sessions.json`
+(`Store::upsert`: newest first, 50 kept): `id` = DeepSeek's chat session id, `parent_message_id` = the last
+answer (`Conversation::state`), `title` = the first task, `cwd`, `tasks`, `updated`. The messages stay at
+DeepSeek; switching only points the next prompt at that session, so the model has the whole history and the
+rules of the first prompt. Only conversations started here are listed. `/new` clears `current`. A session
+deleted on the website fails at the next task with DeepSeek's error.
+
+No local transcript (`TASKS.md`). Inputs are kept in `<home>/history.json` (`Paths::history`).
 A single task (`dsc "<task>"`) uses `Terminal::new(None, yes)` and exits with code 1 when the run failed, 130 when it
 was interrupted. Both modes take their `Interrupts` from `Terminal::interrupts`.
 
 ## Config (`src/config.rs`)
 
-`Paths`: home = `$DSC_HOME`, else `~/.config/deep_seek_cli_free` (created); `config()`, `auth()`, `history()`, `cache()`.
+`Paths`: home = `$DSC_HOME`, else `~/.config/deep_seek_cli_free` (created); `config()`, `auth()`, `history()`, `sessions()`, `cache()`.
 `Paths::new` calls `migrate`: a folder `~/.config/dsc` of the first versions is renamed to the new one, once,
 only when the new one does not exist; `$DSC_HOME` skips that. `Settings::load_or_create` writes the defaults when
 `config.toml` is missing; unknown keys fail (`deny_unknown_fields`), missing keys take defaults; a deny list

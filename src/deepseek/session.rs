@@ -38,6 +38,21 @@ impl Conversation {
         &self.client
     }
 
+    /// What is needed to continue this conversation later: the remote session id
+    /// and the id of the last answer. `None` before the first request.
+    pub fn state(&self) -> Option<(String, Option<u64>)> {
+        self.session_id
+            .clone()
+            .map(|id| (id, self.parent_message_id))
+    }
+
+    /// Continues an earlier conversation: the next prompt goes into that remote
+    /// session, below that answer.
+    pub fn resume(&mut self, session_id: String, parent_message_id: Option<u64>) {
+        self.session_id = Some(session_id);
+        self.parent_message_id = parent_message_id;
+    }
+
     /// Continues the same conversation with another login (a new token of the same account).
     pub fn set_client(&mut self, client: Client) {
         self.client = client;

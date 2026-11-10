@@ -47,6 +47,11 @@ impl Paths {
         self.home.join("history.json")
     }
 
+    /// The conversations of this app that can be continued (JSON list)
+    pub fn sessions(&self) -> PathBuf {
+        self.home.join("sessions.json")
+    }
+
     pub fn cache(&self) -> PathBuf {
         self.home.join("cache")
     }

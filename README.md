@@ -147,15 +147,26 @@ shell prompt.
 | Ctrl-C | clears the box and asks to press it again; twice within two seconds quits, also while a task runs |
 | Ctrl-D | quit (empty box) |
 
-Pasting several lines works. `/new` starts a fresh conversation, `/mode` switches the mode, `/login` asks for a new token, `/help` lists the
+Pasting several lines works. `/new` starts a fresh conversation, `/sessions` lists the earlier ones and switches to the one you pick, `/mode`
+switches the mode, `/login` asks for a new token, `/help` lists the
 commands and keys, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
-`~/.config/deep_seek_cli_free/history.json`; the conversation itself is not saved, after a restart the model starts from zero.
+`~/.config/deep_seek_cli_free/history.json`. After a restart the chat begins a new conversation; `/sessions` goes back to an
+earlier one.
 
 In answers, `inline code` is colored, code blocks are shown with a bar on the left, and links (`https://…`) are
 blue and real terminal links: the terminal underlines one under the mouse and opens it on click (Ctrl+click in
 Windows Terminal and most others). Colors switch off with
 `NO_COLOR=1` or when the output is not a terminal.
+
+### Sessions
+
+Every conversation you start is remembered after its first task. `/sessions` opens a list (title = the first
+task, number of tasks, age, folder); Up / Down choose, Enter switches, Esc closes. After a switch the model
+remembers that conversation, also after a restart of `dsc`, because the messages themselves are kept by DeepSeek:
+`sessions.json` holds only the session id, the place to continue at and the title. The list contains the
+conversations started with `dsc`, the last 50; chats from the DeepSeek website are not in it, since they lack the
+agent rules.
 
 ### Flags
 
@@ -217,7 +228,8 @@ stops the task.
 
 ## Configuration
 
-Everything lives in `~/.config/deep_seek_cli_free/`: `config.toml`, `auth.json`, `history.json`, `cache/`
+Everything lives in `~/.config/deep_seek_cli_free/`: `config.toml`, `auth.json`, `history.json`, `sessions.json`,
+`cache/`
 (`$DSC_HOME` changes the folder; a folder `~/.config/dsc` of an earlier version is moved there on the first start).
 `config.toml` is written with the defaults on the first run. `dsc` rewrites it when you switch the mode, so
 comments in it are not kept.

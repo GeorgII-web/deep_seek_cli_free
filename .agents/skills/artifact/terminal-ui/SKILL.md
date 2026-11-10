@@ -6,7 +6,7 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 # Terminal UI
 
 `ui::Terminal` implements `agent::run::Ui` (see `../agent-loop/SKILL.md`) and adds what only `src/main.rs` calls:
-`open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `token_dialog`, `interrupts`, `mode`,
+`open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `token_dialog`, `pick`, `interrupts`, `mode`,
 `toggle_mode`.
 
 | File | Content |
@@ -126,6 +126,10 @@ focused one inverted), a hint line below.
 | Esc, Ctrl-C, Ctrl-D | Cancel |
 
 The token leaves the function only as the return value: it is never printed, logged or put into `Editor` history.
+
+`dialog::pick(style, title, items)` is the list window of `/sessions`, drawn the same way: one row per item (cut
+to the window), the selected one inverted with `❯`, "N more below" in the border when the list is longer than
+the screen. Up, Down, PgUp, PgDn, Home, End move; Enter returns the index; Esc, `q`, Ctrl-C close.
 
 ## Input box (`Editor::read`)
 

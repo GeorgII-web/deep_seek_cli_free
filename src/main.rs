@@ -4,6 +4,7 @@ mod backend;
 mod cli;
 mod config;
 mod deepseek;
+mod sessions;
 mod ui;
 
 use agent::interrupt::Interrupt;
@@ -138,6 +139,9 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
     let mut interrupts = terminal.interrupts();
     let mut always = HashSet::new();
     let mut first = true;
+    // The conversations that can be continued, and the entry of the one in use.
+    let mut store = sessions::Store::load(paths);
+    let mut current: Option<sessions::Session> = None;
     let model = match (run.expert, run.think || settings.deepseek.thinking) {
         (true, _) => "expert".to_string(),
         (false, true) => format!("{} + thinking", settings.deepseek.model_type),
@@ -182,9 +186,39 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 }
                 continue;
             }
+            "/sessions" => {
+                if store.sessions.is_empty() {
+                    terminal
+                        .info("No earlier conversations yet: one is saved after its first task.");
+                    continue;
+                }
+                let rows = store.rows(
+                    sessions::now(),
+                    current.as_ref().map(|session| session.id.as_str()),
+                );
+                if let Some(chosen) = terminal
+                    .pick("Sessions", &rows)
+                    .and_then(|index| store.sessions.get(index).cloned())
+                {
+                    // The messages live at DeepSeek: the next task continues below the last answer.
+                    conversation = self::conversation(paths, settings, run)?;
+                    conversation.resume(chosen.id.clone(), chosen.parent_message_id);
+                    first = false;
+                    terminal.info(&format!(
+                        "Switched to `{}` ({} task{}, {}). The model remembers that conversation.",
+                        chosen.title,
+                        chosen.tasks,
+                        if chosen.tasks == 1 { "" } else { "s" },
+                        sessions::age(sessions::now(), chosen.updated)
+                    ));
+                    current = Some(chosen);
+                }
+                continue;
+            }
             "/new" => {
                 conversation = self::conversation(paths, settings, run)?;
                 first = true;
+                current = None;
                 terminal.info("New conversation: the model starts from zero.");
                 continue;
             }
@@ -247,6 +281,22 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                     break;
                 }
             }
+        }
+        // Remember where this conversation stands, so `/sessions` can come back to it.
+        if let Some((id, parent_message_id)) = conversation.state() {
+            let entry = current.get_or_insert_with(|| sessions::Session {
+                id: id.clone(),
+                parent_message_id: None,
+                title: sessions::title(&line),
+                cwd: cwd(),
+                tasks: 0,
+                updated: 0,
+            });
+            entry.id = id;
+            entry.parent_message_id = parent_message_id;
+            entry.tasks += 1;
+            entry.updated = sessions::now();
+            store.upsert(entry.clone());
         }
         if quit {
             break;
