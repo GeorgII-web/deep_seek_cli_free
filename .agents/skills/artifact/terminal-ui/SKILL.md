@@ -15,7 +15,7 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 | `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history, command menu), `command_matches`, `Dock`, `Input`, `read_choice`, `RawMode` |
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
 | `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`, `set_mode`; `Notifier` (a 2 s notice in place of the key hint) |
-| `src/ui/style.rs` | `Style`: every escape code; `detect()`; `inline(text, base)` colors `code` spans in chrome lines; `hint(key, what)` and `mode_label` for hint lines |
+| `src/ui/style.rs` | `Style`: every escape code; `detect()`; `inline(text, base)` colors `code` spans and links in chrome lines; `links(text, base)` colors only the links (result preview); `link()`; `hint(key, what)` and `mode_label` for hint lines |
 
 ## Layouts
 
@@ -73,7 +73,7 @@ There is 810G free.                         the answer, markdown styled
 |---|---|---|
 | progress | `Event::Status` → `Spinner::start` | labels come from `deepseek::session` ("Pausing N s (throttle)", "Opening conversation", "Solving proof of work", "Waiting for DeepSeek") and `Ui::running` ("Running"); a status is ignored while answer text is open; own thread, 90 ms tick, clock runs from the first label after a stop |
 | reasoning | `Event::Thinking` | printed dim, a blank line before the answer |
-| answer | `Markdown` | the `dsc` block is never shown; blank lines at the edges dropped, at most one inside; with colors: inline code colored (backticks removed), code blocks colored with a gray bar `  │ ` in front of each line and the fence lines dropped, `**bold**`, heading lines; a line start is held back until it cannot be a fence |
+| answer | `Markdown` | the `dsc` block is never shown; blank lines at the edges dropped, at most one inside; with colors: inline code colored (backticks removed), code blocks colored with a gray bar `  │ ` in front of each line and the fence lines dropped, `**bold**`, heading lines, links (`http://`, `https://` at a word start, underlined blue up to whitespace or a closing mark, punctuation at the end left out; not inside code); a line start is held back until it cannot be a fence |
 | question | `approve` | `read_choice`; Esc, Ctrl-C, Ctrl-D = no; `e` opens the box with the command (`remember = false`); the question line is erased after the key |
 | result | `result` | `Result: ` prefix and `--- stdout ---` dropped, `--- stderr ---` → `stderr:`; a text starting with `Denied` is not repeated |
 | finish | `finish` | seconds since `begin`, answers of the model, actions that ran; `✗ stopped` or `✗ quit` after an interrupt |

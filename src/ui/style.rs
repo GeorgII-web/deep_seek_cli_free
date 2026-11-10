@@ -73,7 +73,7 @@ impl Style {
                     self.reset()
                 ));
             } else {
-                out.push_str(part);
+                out.push_str(&self.links(part, base));
             }
         }
         out.push_str(self.reset());
@@ -106,6 +106,49 @@ impl Style {
             self.reset()
         )
     }
+    /// URLs: underlined blue
+    pub fn link(&self) -> &'static str {
+        self.code("\x1b[4;38;5;39m")
+    }
+    /// `text` in the color `base` with every `http(s)://` URL in the link color.
+    /// A URL ends at whitespace or a closing mark; punctuation at its end stays outside.
+    pub fn links(&self, text: &str, base: &'static str) -> String {
+        if !self.on {
+            return text.to_string();
+        }
+        let mut out = String::new();
+        let mut rest = text;
+        while let Some(start) = ["https://", "http://"]
+            .iter()
+            .filter_map(|scheme| rest.find(scheme))
+            .min()
+        {
+            // Not in the middle of a word.
+            let inside = rest[..start]
+                .chars()
+                .next_back()
+                .is_some_and(char::is_alphanumeric);
+            let tail = &rest[start..];
+            let end = tail
+                .find(|c: char| c.is_whitespace() || ")>]\"'`".contains(c))
+                .unwrap_or(tail.len());
+            let url = tail[..end].trim_end_matches(['.', ',', ';', ':', '!', '?']);
+            out.push_str(&rest[..start]);
+            if inside || url.ends_with("://") {
+                out.push_str(url);
+            } else {
+                out.push_str(&format!(
+                    "{}{}{url}{}{base}",
+                    self.reset(),
+                    self.link(),
+                    self.reset()
+                ));
+            }
+            rest = &tail[url.len()..];
+        }
+        out.push_str(rest);
+        out
+    }
     /// Borders, hints, meta lines
     pub fn gray(&self) -> &'static str {
         self.code("\x1b[38;5;245m")
@@ -127,6 +170,30 @@ mod tests {
         assert_eq!(
             s.inline("see `/help` now", gray),
             format!("{gray}see {reset}{code}/help{reset}{gray} now{reset}")
+        );
+    }
+
+    #[test]
+    fn links_colors_urls_and_leaves_the_rest() {
+        let s = Style::new(true);
+        let (link, reset) = (s.link(), s.reset());
+        assert_eq!(
+            s.links("go to https://a.org/x, then", "B"),
+            format!("go to {reset}{link}https://a.org/x{reset}B, then")
+        );
+        assert_eq!(
+            s.links("(http://a.org) xhttp://b no", "B"),
+            format!("({reset}{link}http://a.org{reset}B) xhttp://b no")
+        );
+        assert_eq!(s.links("no link here", "B"), "no link here");
+        assert_eq!(
+            Style::new(false).links("https://a.org", "B"),
+            "https://a.org"
+        );
+        // Inside `inline` too.
+        assert!(
+            s.inline("see https://a.org", s.gray())
+                .contains(&format!("{link}https://a.org{reset}"))
         );
     }
 }

@@ -124,7 +124,8 @@ commands and keys, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
 `~/.config/dsc/history.json`; the conversation itself is not saved, after a restart the model starts from zero.
 
-In answers, `inline code` is colored and code blocks are shown with a bar on the left. Colors switch off with
+In answers, `inline code` is colored, code blocks are shown with a bar on the left, and links (`https://…`) are
+blue and underlined. Colors switch off with
 `NO_COLOR=1` or when the output is not a terminal.
 
 ### Flags

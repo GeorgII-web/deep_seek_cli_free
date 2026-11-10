@@ -699,6 +699,7 @@ impl Ui for Terminal {
             .collect();
         for (i, line) in lines.iter().take(RESULT_LINES).enumerate() {
             let mark = if i == 0 { "⎿" } else { " " };
+            let line = s.links(line, s.gray());
             self.line(&format!("{}  {mark} {line}{}", s.gray(), s.reset()));
         }
         if lines.len() > RESULT_LINES {

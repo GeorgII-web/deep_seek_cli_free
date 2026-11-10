@@ -13,6 +13,7 @@ enum Look {
     Bold,
     Heading,
     Dim,
+    Link,
 }
 
 pub struct Markdown {
@@ -31,6 +32,14 @@ pub struct Markdown {
     heading: bool,
     /// A `*` that may be the first of `**`
     star: bool,
+    /// Start of a word that may become `http://` or `https://`
+    url_held: String,
+    /// Inside a URL: colored until whitespace or a closing mark
+    in_url: bool,
+    /// Punctuation after URL characters: part of the link only when more of it follows
+    url_punct: String,
+    /// The last character printed was a letter or digit (a URL starts only at a word start)
+    prev_word: bool,
     current: Look,
 }
 
@@ -49,6 +58,10 @@ impl Markdown {
             bold: false,
             heading: false,
             star: false,
+            url_held: String::new(),
+            in_url: false,
+            url_punct: String::new(),
+            prev_word: false,
             current: Look::Plain,
         }
     }
@@ -77,6 +90,7 @@ impl Markdown {
                 }
             }
         }
+        self.flush_url(&mut out);
         self.flush_star(&mut out);
         self.set_look(Look::Plain, &mut out);
         *self = Self::new(self.style);
@@ -140,6 +154,7 @@ impl Markdown {
     }
 
     fn end_line(&mut self, out: &mut String) {
+        self.flush_url(out);
         self.flush_star(out);
         self.set_look(Look::Plain, out);
         self.inline_code = false;
@@ -147,11 +162,15 @@ impl Markdown {
         self.heading = false;
         self.pending_newlines += 1;
         self.line_start = true;
+        self.prev_word = false;
     }
 
     /// A character of an ordinary line; markdown marks are consumed when colors are on.
     fn visible(&mut self, c: char, out: &mut String) {
         if self.style.on() && !self.in_code {
+            if !self.inline_code && self.url_step(c, out) {
+                return;
+            }
             if c == '`' {
                 self.flush_star(out);
                 self.inline_code = !self.inline_code;
@@ -167,6 +186,11 @@ impl Markdown {
             }
             self.flush_star(out);
         }
+        self.styled(c, out);
+    }
+
+    /// Prints `c` in the look of the place it stands in.
+    fn styled(&mut self, c: char, out: &mut String) {
         let look = if self.in_code || self.inline_code {
             Look::Code
         } else if self.heading {
@@ -177,6 +201,54 @@ impl Markdown {
             Look::Plain
         };
         self.put(c, look, out);
+        self.prev_word = c.is_alphanumeric();
+    }
+
+    /// URL coloring, one character at a time. Returns true when `c` was consumed.
+    /// A word that starts like `http://` or `https://` is held back until it is
+    /// one; then everything up to whitespace or a closing mark is the link.
+    fn url_step(&mut self, c: char, out: &mut String) -> bool {
+        if self.in_url {
+            if c.is_whitespace() || matches!(c, ')' | '>' | ']' | '"' | '\'' | '`' | '*') {
+                self.flush_url(out);
+                return false;
+            }
+            if matches!(c, '.' | ',' | ';' | ':' | '!' | '?') {
+                // "see https://x.org." - the last dot is not part of the link.
+                self.url_punct.push(c);
+                return true;
+            }
+            for held in std::mem::take(&mut self.url_punct).chars() {
+                self.put(held, Look::Link, out);
+            }
+            self.put(c, Look::Link, out);
+            return true;
+        }
+        let candidate = format!("{}{c}", self.url_held);
+        let starts = !self.url_held.is_empty() || !self.prev_word;
+        if starts && (candidate == "http://" || candidate == "https://") {
+            self.url_held.clear();
+            self.in_url = true;
+            for held in candidate.chars() {
+                self.put(held, Look::Link, out);
+            }
+            return true;
+        }
+        if starts && ("http://".starts_with(&candidate) || "https://".starts_with(&candidate)) {
+            self.url_held = candidate;
+            return true;
+        }
+        self.flush_url(out);
+        false
+    }
+
+    /// Ends a URL or gives up a held word start; what was held is printed as ordinary text.
+    fn flush_url(&mut self, out: &mut String) {
+        self.in_url = false;
+        let held = std::mem::take(&mut self.url_held) + &std::mem::take(&mut self.url_punct);
+        for c in held.chars() {
+            self.styled(c, out);
+        }
     }
 
     fn code_bar(&mut self, out: &mut String) {
@@ -221,6 +293,7 @@ impl Markdown {
                 out.push_str(self.style.accent());
             }
             Look::Dim => out.push_str(self.style.gray()),
+            Look::Link => out.push_str(self.style.link()),
         }
         self.current = look;
     }
@@ -289,5 +362,36 @@ mod tests {
             block,
             format!("x\n{bar}{code}a*b `c`{reset}\n{bar}\n{bar}{code}d{reset}\ny")
         );
+    }
+
+    #[test]
+    fn links_are_colored_up_to_their_end() {
+        let s = Style::new(true);
+        let (link, reset, code) = (s.link(), s.reset(), s.code_text());
+        for chunk in [1, 5, 1000] {
+            assert_eq!(
+                render("see https://a.org/x?y=1.", true, chunk),
+                format!("see {link}https://a.org/x?y=1{reset}.")
+            );
+            assert_eq!(
+                render("[docs](http://a.org/b) and more", true, chunk),
+                format!("[docs]({link}http://a.org/b{reset}) and more")
+            );
+            // A word that only starts like a scheme, and a scheme inside a word, stay text.
+            assert_eq!(
+                render("http is old, xhttps://a no", true, chunk),
+                "http is old, xhttps://a no"
+            );
+            assert_eq!(
+                render("end https://a.org", true, chunk),
+                format!("end {link}https://a.org{reset}")
+            );
+            // In code the code color wins.
+            assert_eq!(
+                render("`https://a.org`", true, chunk),
+                format!("{code}https://a.org{reset}")
+            );
+        }
+        assert_eq!(render("see https://a.org.", false, 1), "see https://a.org.");
     }
 }
