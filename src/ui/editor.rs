@@ -13,8 +13,12 @@ use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{execute, queue};
 use std::io::{self, Write};
 use std::path::PathBuf;
+use std::time::{Duration, Instant};
 use unicode_width::UnicodeWidthChar;
 
+/// A second Ctrl-C within this time leaves the app.
+pub const AGAIN: Duration = Duration::from_secs(2);
+pub const AGAIN_HINT: &str = "Press Ctrl-C again to exit";
 /// Entries kept in the history file.
 const HISTORY_MAX: usize = 200;
 /// Columns taken by the frame: `│ > ` on the left, ` │` on the right.
@@ -192,10 +196,10 @@ impl Buffer {
 }
 
 /// Raw mode for the time a key is awaited; restored on drop, also on an error.
-struct RawMode;
+pub(super) struct RawMode;
 
 impl RawMode {
-    fn enter() -> io::Result<Self> {
+    pub(super) fn enter() -> io::Result<Self> {
         terminal::enable_raw_mode()?;
         let _ = execute!(io::stderr(), EnableBracketedPaste);
         Ok(Self)
@@ -211,7 +215,7 @@ impl Drop for RawMode {
 
 pub enum Input {
     Submit(String),
-    /// Ctrl-D or Ctrl-C on an empty box
+    /// Ctrl-C twice, or Ctrl-D on an empty box
     Exit,
 }
 
@@ -277,16 +281,18 @@ impl Editor {
         self.dock_idle()
     }
 
-    /// Gives the whole screen back: no scroll region, no box.
+    /// Gives the whole screen back: no scroll region, no box. The cursor stays
+    /// where the output ended.
     pub fn close_dock(&mut self) {
         let Some(dock) = self.dock.take() else {
             return;
         };
-        let mut frame = String::from("\x1b[r");
+        // Resetting the region moves the cursor home, so it is saved around it.
+        let mut frame = String::from("\x1b7\x1b[r");
         for row in (dock.height as usize - dock.area + 1)..=dock.height as usize {
             frame.push_str(&format!("\x1b[{row};1H\x1b[2K"));
         }
-        frame.push_str(&format!("\x1b[{};{}H", dock.out.0, dock.out.1));
+        frame.push_str("\x1b8");
         screen_write(&frame);
     }
 
@@ -405,6 +411,8 @@ impl Editor {
         let mut buffer = Buffer::new(initial);
         let mut position = self.history.len();
         let mut draft = String::new();
+        // Time of a Ctrl-C that a second one within `AGAIN` turns into an exit
+        let mut armed: Option<Instant> = None;
         self.cursor_line = 0;
         if let Some(dock) = &mut self.dock {
             // Output moved the cursor since the last draw.
@@ -412,7 +420,15 @@ impl Editor {
         }
         loop {
             let width = Self::inner_width();
-            self.draw(&buffer, width, hint)?;
+            let armed_now = armed.is_some_and(|at| at.elapsed() < AGAIN);
+            self.draw(&buffer, width, if armed_now { AGAIN_HINT } else { hint })?;
+            // The "again" hint disappears by itself.
+            if let Some(at) = armed.filter(|_| armed_now)
+                && !event::poll(AGAIN.saturating_sub(at.elapsed()))?
+            {
+                armed = None;
+                continue;
+            }
             let key = match event::read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => key,
                 Event::Paste(text) => {
@@ -442,8 +458,17 @@ impl Editor {
                     }
                     return Ok(Input::Submit(text));
                 }
-                KeyCode::Char('c') if ctrl && !buffer.is_empty() => buffer = Buffer::default(),
-                KeyCode::Char('c') | KeyCode::Char('d') if ctrl && buffer.is_empty() => {
+                KeyCode::Char('c') if ctrl && !armed_now => {
+                    buffer = Buffer::default();
+                    armed = Some(Instant::now());
+                    continue;
+                }
+                KeyCode::Char('c') if ctrl => {
+                    self.erase()?;
+                    return Ok(Input::Exit);
+                }
+                KeyCode::Esc => buffer = Buffer::default(),
+                KeyCode::Char('d') if ctrl && buffer.is_empty() => {
                     self.erase()?;
                     return Ok(Input::Exit);
                 }
@@ -479,6 +504,7 @@ impl Editor {
                 KeyCode::Char(c) if !ctrl && !alt => buffer.insert(c),
                 _ => {}
             }
+            armed = None;
         }
     }
 

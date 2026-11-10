@@ -6,15 +6,15 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 # Terminal UI
 
 `ui::Terminal` implements `agent::run::Ui` (see `../agent-loop/SKILL.md`) and adds what only `src/main.rs` calls:
-`open_chat`, `input`, `begin`, `finish`, `info`, `error`.
+`open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `interrupts`.
 
 | File | Content |
 |---|---|
 | `src/ui/mod.rs` | `Terminal` (`line`, `partial`, `text` = the only print paths); `screen_lock`, `screen_write`; constants `RESULT_LINES` (8), `INPUT_HINT` |
 | `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history), `Dock`, `Input`, `read_choice`, `RawMode` |
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
-| `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock` |
-| `src/ui/style.rs` | `Style`: every escape code; `detect()` |
+| `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`; `Notifier` (a 2 s notice in place of the key hint) |
+| `src/ui/style.rs` | `Style`: every escape code; `detect()`; `inline(text, base)` colors `code` spans in chrome lines |
 
 ## Layouts
 
@@ -42,8 +42,8 @@ Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_i
   they pick the stream of the layout and hold `screen_lock`, which the spinner thread takes too.
 - Without a terminal (`Style::detect`, `Terminal::interactive`) there are no colors, no spinner, no box: `input`
   reads plain lines, a question counts as no. `NO_COLOR` or `TERM=dumb` switch colors off.
-- Raw mode only while a key is awaited (`RawMode` guard in `Editor::read`, `read_choice`), so Ctrl-C is a real
-  signal while the model or a command works.
+- Raw mode while a key is awaited: `Editor::read`, `read_choice`, and for the whole task (`Watch`, see Keys while a
+  task runs). In raw mode a line must end with `\r\n`: `Terminal::eol` does that inside `line`, `partial`, `text`.
 - Before chrome is printed call `close_output` (ends an open answer line; inline it also removes the spinner). `blank()` prints
   one empty line unless `gap` says the last line was one.
 - A color is never written as a literal escape outside `style.rs`.
@@ -69,10 +69,25 @@ There is 810G free.                         the answer, markdown styled
 |---|---|---|
 | progress | `Event::Status` → `Spinner::start` | labels come from `deepseek::session` ("Pausing N s (throttle)", "Opening conversation", "Solving proof of work", "Waiting for DeepSeek") and `Ui::running` ("Running"); a status is ignored while answer text is open; own thread, 90 ms tick, clock runs from the first label after a stop |
 | reasoning | `Event::Thinking` | printed dim, a blank line before the answer |
-| answer | `Markdown` | the `dsc` block is never shown; blank lines at the edges dropped, at most one inside; with colors: inline code and code blocks colored (backticks removed inline), `**bold**`, heading lines; a line start is held back until it cannot be a fence |
+| answer | `Markdown` | the `dsc` block is never shown; blank lines at the edges dropped, at most one inside; with colors: inline code colored (backticks removed), code blocks colored with a gray bar `  │ ` in front of each line and the fence lines dropped, `**bold**`, heading lines; a line start is held back until it cannot be a fence |
 | question | `approve` | `read_choice`; Esc, Ctrl-C, Ctrl-D = no; `e` opens the box with the command (`remember = false`); the question line is erased after the key |
 | result | `result` | `Result: ` prefix and `--- stdout ---` dropped, `--- stderr ---` → `stderr:`; a text starting with `Denied` is not repeated |
-| finish | `finish` | seconds since `begin`, answers of the model, actions that ran |
+| finish | `finish` | seconds since `begin`, answers of the model, actions that ran; `✗ stopped` or `✗ quit` after an interrupt |
+| spacing | `blank()` | one empty line between the echo, each action block, the answer, the finish line and the next input |
+| chrome text | `info`, `error`, `note`, the `why` line, the banner | `code` spans colored through `Style::inline`; `help` prints commands and keys in columns |
+
+## Keys while a task runs (`Watch`)
+
+`Terminal::interrupts` creates the channel of `agent::interrupt::Interrupts` (without a terminal it returns the
+signal variant and nothing below applies). `begin` → `watch_start`: raw mode on, a thread polls
+`crossterm::event` every 50 ms. `finish`, `approve` (the question reads keys itself; it restarts the watcher
+after) and `drop` → `watch_stop`: thread joined, raw mode off.
+
+| Key | Effect |
+|---|---|
+| Esc | `Interrupt::Stop`: the loop ends the task, a running command is killed |
+| Ctrl-C | first: "Press Ctrl-C again to exit" on the progress line (`Notifier::show`; a line of its own when no progress line is drawn); second within `AGAIN`: `Interrupt::Quit` |
+| other keys | swallowed (no type-ahead) |
 
 ## Input box (`Editor::read`)
 
@@ -87,7 +102,8 @@ at the box width (wide characters count two columns); a box taller than the scre
 | Up, Down | move a row; at the first or last row go through the history (the draft is kept) |
 | Left, Right, Home, End, Ctrl-A, Ctrl-E | move |
 | Backspace, Delete, Ctrl-W or Alt+Backspace (word), Ctrl-U, Ctrl-K | delete |
-| Ctrl-C | clear the box; on an empty box quit |
+| Esc | clear the box |
+| Ctrl-C | clear the box and show "Press Ctrl-C again to exit" for `AGAIN` (2 s); a second one in that time quits |
 | Ctrl-D | quit on an empty box, else delete |
 | paste | bracketed paste keeps line ends; tabs become spaces, control characters are dropped |
 

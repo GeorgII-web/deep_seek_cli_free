@@ -8,6 +8,8 @@ use std::time::{Duration, Instant};
 
 const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TICK: Duration = Duration::from_millis(90);
+/// How long a notice stays.
+const NOTICE: Duration = Duration::from_secs(2);
 
 struct State {
     label: Option<String>,
@@ -15,6 +17,21 @@ struct State {
     frame: usize,
     /// The line is on the screen and must be erased
     drawn: bool,
+    /// A short message shown instead of the key hint, with the time it was set
+    notice: Option<(String, Instant)>,
+}
+
+/// Lets another thread put a notice on the progress line.
+#[derive(Clone)]
+pub struct Notifier(Arc<Mutex<State>>);
+
+impl Notifier {
+    /// Returns false when no progress line is shown, so the caller prints the text itself.
+    pub fn show(&self, text: &str) -> bool {
+        let mut state = self.0.lock().unwrap();
+        state.notice = Some((text.to_string(), Instant::now()));
+        state.label.is_some()
+    }
 }
 
 pub struct Spinner {
@@ -23,6 +40,8 @@ pub struct Spinner {
     enabled: bool,
     /// Draw on the last screen row (below the docked box) instead of the current line
     docked: bool,
+    /// Key hint after the clock, e.g. "Esc to stop"
+    hint: &'static str,
     style: Style,
     started: bool,
 }
@@ -38,11 +57,13 @@ impl Spinner {
             since: Instant::now(),
             frame: 0,
             drawn: false,
+            notice: None,
         };
         Self {
             state: Arc::new(Mutex::new(state)),
             enabled,
             docked: false,
+            hint: "",
             style,
             started: false,
         }
@@ -56,6 +77,15 @@ impl Spinner {
 
     pub fn docked(&self) -> bool {
         self.docked
+    }
+
+    /// Call before the first `start`.
+    pub fn set_hint(&mut self, hint: &'static str) {
+        self.hint = hint;
+    }
+
+    pub fn notifier(&self) -> Notifier {
+        Notifier(self.state.clone())
     }
 
     /// Shows `label` with a running clock. A new label keeps the clock when one runs.
@@ -73,7 +103,7 @@ impl Spinner {
         if std::mem::replace(&mut self.started, true) {
             return;
         }
-        let (state, style, docked) = (self.state.clone(), self.style, self.docked);
+        let (state, style, docked, hint) = (self.state.clone(), self.style, self.docked, self.hint);
         // A plain thread: it must tick also while the async runtime is busy.
         std::thread::spawn(move || {
             loop {
@@ -85,8 +115,15 @@ impl Spinner {
                 state.frame = (state.frame + 1) % FRAMES.len();
                 state.drawn = true;
                 let secs = state.since.elapsed().as_secs();
+                let suffix = match &state.notice {
+                    Some((text, at)) if at.elapsed() < NOTICE => {
+                        format!(" · {}{text}{}", style.action(), style.reset())
+                    }
+                    _ if hint.is_empty() => String::new(),
+                    _ => format!("{} · {hint}{}", style.gray(), style.reset()),
+                };
                 let line = format!(
-                    "{}{}{} {label}… {}{secs}s{}",
+                    "{}{}{} {label}… {}{secs}s{}{suffix}",
                     style.accent(),
                     FRAMES[state.frame],
                     style.reset(),
@@ -95,12 +132,7 @@ impl Spinner {
                 );
                 if docked {
                     // Save cursor, write the last row, restore: the output is not touched.
-                    screen_write(&format!(
-                        "\x1b7\x1b[{};1H\x1b[2K  {line}{} · Ctrl-C to stop{}\x1b8",
-                        last_row(),
-                        style.gray(),
-                        style.reset()
-                    ));
+                    screen_write(&format!("\x1b7\x1b[{};1H\x1b[2K  {line}\x1b8", last_row()));
                 } else {
                     let _screen = screen_lock();
                     let mut err = std::io::stderr().lock();

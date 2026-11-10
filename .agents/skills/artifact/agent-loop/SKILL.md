@@ -5,12 +5,13 @@ description: The agent in `src/agent/` — the text protocol that emulates tool 
 
 # Agent loop
 
-Entry `agent::run::run(backend, ui, prompt, settings, yes, always)` = one task; called from `src/main.rs` once for
+Entry `agent::run::run(backend, ui, prompt, settings, yes, always, interrupts)` = one task; called from `src/main.rs` once for
 `dsc "<task>"` and once per line in the chat. `always` (what the user allowed for the session) belongs to the caller.
 
 | File | Content |
 |---|---|
 | `src/agent/protocol.rs` | `Action`, `FENCE`, `first_prompt`, `next_prompt`, `parse` → `Parsed`, `shell_result` |
+| `src/agent/interrupt.rs` | `Interrupt`, `Interrupts` (`signal`, `channel`, `clear`, `next`) |
 | `src/agent/tools.rs` | `shell` → `ShellOutput`, `cap`, `read_file`, `write_file`; constants `KEEP_BYTES`, `DRAIN` |
 | `src/agent/run.rs` | `run`, `act` (policy, question, edit), `execute`; `Ui`, `Decision`; tests with `Script` and `FakeUi` |
 
@@ -36,10 +37,13 @@ directory, the task. The model answers either plain text (final answer, the loop
   runs; further blocks are ignored and the model is told so. Broken JSON, an unknown tool or field → `Invalid`,
   its text goes back to the model.
 - Output is capped per stream to `agent.max_output_bytes` (`tools::cap`: head + tail, cut on character borders).
-- `tools::shell`: `bash -c`, stdin closed, own process group; timeout or Ctrl-C kills the group; output of a
+- `tools::shell`: `bash -c`, stdin closed, own process group; a timeout or an interrupt kills the group; output of a
   finished command is collected for 0.5 s more at most (a background child may hold the pipe).
-- The loop ends on a final answer, after `agent.max_steps` answers, or on Ctrl-C while waiting for the model
-  (Ctrl-C while a command runs only kills the command and tells the model).
+- The loop ends on a final answer, after `agent.max_steps` answers, or with an `Interrupt` as the error
+  (`interrupt::Interrupts::next` is raced against the model's answer and against a running command, which is
+  killed). `Stop` = end this task (Esc; Ctrl-C when there is no terminal), `Quit` = leave the app (Ctrl-C twice).
+  `run` calls `Interrupts::clear` first, so a key from before the task does not count. The stopped exchange is
+  not continued: the next prompt hangs below the last complete answer.
 - The loop knows only the `Backend` and `Ui` traits; `run.rs` tests script both.
 
 ## Loop steps

@@ -12,22 +12,25 @@ pub mod render;
 pub mod spinner;
 pub mod style;
 
+use crate::agent::interrupt::{Interrupt, Interrupts};
 use crate::agent::protocol::Action;
 use crate::agent::run::{Decision, Ui};
 use crate::backend::Event;
-use editor::{Editor, Input};
+use crossterm::event::{self, Event as TermEvent, KeyCode, KeyEventKind, KeyModifiers};
+use editor::{AGAIN, AGAIN_HINT, Editor, Input, RawMode};
 use render::Markdown;
 use spinner::Spinner;
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::{Duration, Instant};
 use style::Style;
+use tokio::sync::mpsc::UnboundedSender;
 
 /// Lines of a result shown to the user (the model gets the capped full text).
 const RESULT_LINES: usize = 8;
-const INPUT_HINT: &str =
-    "Enter send · Alt+Enter or \\ + Enter new line · ↑↓ history · /help · Ctrl-D quit";
+const INPUT_HINT: &str = "Enter send · Alt+Enter new line · ↑↓ history · /help · Ctrl-C twice quit";
 
 static SCREEN: Mutex<()> = Mutex::new(());
 
@@ -47,6 +50,14 @@ pub(crate) fn screen_write(text: &str) {
     let _ = out.flush();
 }
 
+/// Reads keys while a task runs: Esc stops the task, Ctrl-C twice leaves the app.
+/// The terminal is in raw mode for that time, so lines end with `\r\n`.
+struct Watch {
+    stop: Arc<AtomicBool>,
+    thread: Option<std::thread::JoinHandle<()>>,
+    _raw: RawMode,
+}
+
 pub struct Terminal {
     style: Style,
     /// Keys can be read one by one: stdin and stderr are a terminal
@@ -64,6 +75,9 @@ pub struct Terminal {
     started: Instant,
     answers: u32,
     actions: u32,
+    /// Where the key watcher sends what the keys mean; set by `interrupts`
+    interrupt_tx: Option<UnboundedSender<Interrupt>>,
+    watch: Option<Watch>,
 }
 
 impl Terminal {
@@ -84,21 +98,126 @@ impl Terminal {
             started: Instant::now(),
             answers: 0,
             actions: 0,
+            interrupt_tx: None,
+            watch: None,
+        }
+    }
+
+    /// The interrupts of this terminal for the agent loop: keys when there is a
+    /// terminal (Esc, Ctrl-C twice), else the Ctrl-C signal.
+    pub fn interrupts(&mut self) -> Interrupts {
+        if !self.interactive {
+            return Interrupts::signal();
+        }
+        let (sender, interrupts) = Interrupts::channel();
+        self.interrupt_tx = Some(sender);
+        self.spinner.set_hint("Esc to stop");
+        interrupts
+    }
+
+    /// Starts reading keys for the running task. No-op without a terminal.
+    fn watch_start(&mut self) {
+        let Some(sender) = self.interrupt_tx.clone() else {
+            return;
+        };
+        if self.watch.is_some() {
+            return;
+        }
+        let Ok(raw) = RawMode::enter() else {
+            return;
+        };
+        let stop = Arc::new(AtomicBool::new(false));
+        let (flag, notifier, style, screen) = (
+            stop.clone(),
+            self.spinner.notifier(),
+            self.style,
+            self.screen,
+        );
+        let thread = std::thread::spawn(move || {
+            let mut armed: Option<Instant> = None;
+            while !flag.load(Ordering::Relaxed) {
+                match event::poll(Duration::from_millis(50)) {
+                    Ok(true) => {}
+                    Ok(false) => continue,
+                    Err(_) => break,
+                }
+                let Ok(TermEvent::Key(key)) = event::read() else {
+                    continue;
+                };
+                if key.kind == KeyEventKind::Release {
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Esc => {
+                        let _ = sender.send(Interrupt::Stop);
+                    }
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        if armed.is_some_and(|at| at.elapsed() < AGAIN) {
+                            let _ = sender.send(Interrupt::Quit);
+                        } else {
+                            armed = Some(Instant::now());
+                            if !notifier.show(AGAIN_HINT) {
+                                // No progress line right now: a line of its own.
+                                let _screen = screen_lock();
+                                let text = format!(
+                                    "\r\n{}{AGAIN_HINT}{}\r\n",
+                                    style.action(),
+                                    style.reset()
+                                );
+                                if screen {
+                                    print!("{text}");
+                                    let _ = std::io::stdout().flush();
+                                } else {
+                                    eprint!("{text}");
+                                }
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        });
+        self.watch = Some(Watch {
+            stop,
+            thread: Some(thread),
+            _raw: raw,
+        });
+    }
+
+    /// Stops reading keys and leaves raw mode; needed before the box or a question reads keys.
+    fn watch_stop(&mut self) {
+        if let Some(mut watch) = self.watch.take() {
+            watch.stop.store(true, Ordering::Relaxed);
+            if let Some(thread) = watch.thread.take() {
+                let _ = thread.join();
+            }
+        }
+    }
+
+    /// The text with the line ends the terminal needs right now.
+    fn eol(&self, text: &str) -> String {
+        if self.watch.is_some() {
+            text.replace('\n', "\r\n")
+        } else {
+            text.to_string()
         }
     }
 
     /// A line of chrome: stderr inline, the output area in the screen layout.
     fn line(&self, text: &str) {
+        let text = self.eol(&format!("{text}\n"));
         let _screen = screen_lock();
         if self.screen {
-            println!("{text}");
+            print!("{text}");
+            let _ = std::io::stdout().flush();
         } else {
-            eprintln!("{text}");
+            eprint!("{text}");
         }
     }
 
     /// Chrome without a line end (a question that waits for a key).
     fn partial(&self, text: &str) {
+        let text = self.eol(text);
         let _screen = screen_lock();
         if self.screen {
             print!("{text}");
@@ -111,6 +230,7 @@ impl Terminal {
 
     /// Answer text: always stdout.
     fn text(&self, text: &str) {
+        let text = self.eol(text);
         let _screen = screen_lock();
         print!("{text}");
         let _ = std::io::stdout().flush();
@@ -135,7 +255,11 @@ impl Terminal {
             s.reset()
         ));
         self.line(&format!("{}  {cwd}{}", s.gray(), s.reset()));
-        self.line(&format!("{}  /help for commands{}", s.gray(), s.reset()));
+        self.line("");
+        self.line(&s.inline(
+            "  `/help` commands and keys · `Esc` stops a task · `Ctrl-C` twice quits",
+            s.gray(),
+        ));
         self.line("");
         self.gap = true;
         if docked {
@@ -204,12 +328,15 @@ impl Terminal {
         self.started = Instant::now();
         self.answers = 0;
         self.actions = 0;
+        self.watch_start();
     }
 
     /// End of a task: one line with the time it took.
     pub fn finish(&mut self, result: &anyhow::Result<()>) {
         self.close_output();
         self.spinner.stop();
+        self.watch_stop();
+        self.blank();
         let s = self.style;
         let secs = self.started.elapsed().as_secs_f32();
         let plural = |n: u32, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
@@ -235,27 +362,76 @@ impl Terminal {
             )),
         }
         self.gap = false;
+        // In the chat the next thing is the box or another task: keep a gap.
+        if self.screen {
+            self.blank();
+        }
     }
 
-    /// A message of the CLI itself that is not part of a task.
+    /// A message of the CLI itself that is not part of a task; `code` spans are colored.
     pub fn info(&mut self, text: &str) {
+        self.blank();
         for line in text.lines() {
-            self.line(&format!(
-                "{}{line}{}",
-                self.style.gray(),
-                self.style.reset()
-            ));
+            self.line(&self.style.inline(line, self.style.gray()));
         }
         self.gap = false;
+        self.blank();
     }
 
     pub fn error(&mut self, text: &str) {
-        self.line(&format!(
-            "{}✗ {text}{}",
-            self.style.err(),
-            self.style.reset()
-        ));
+        self.blank();
+        self.line(&self.style.inline(&format!("✗ {text}"), self.style.err()));
         self.gap = false;
+        self.blank();
+    }
+
+    /// The commands and keys of the chat.
+    pub fn help(&mut self) {
+        let s = self.style;
+        let heading = |text: &str| format!("{}{}{text}{}", s.bold(), s.accent(), s.reset());
+        let row = |key: &str, what: &str| {
+            let pad = " ".repeat(26usize.saturating_sub(key.chars().count()));
+            format!(
+                "  {}{key}{}{pad}{}{what}{}",
+                s.code_text(),
+                s.reset(),
+                s.gray(),
+                s.reset()
+            )
+        };
+        self.blank();
+        let lines = [
+            heading("Commands"),
+            row(
+                "/new",
+                "start a fresh conversation (the model forgets the earlier tasks)",
+            ),
+            row("/help", "this text"),
+            row("/exit", "quit"),
+            String::new(),
+            heading("Input box"),
+            row("Enter", "send"),
+            row("Alt+Enter, Ctrl-J, \\ Enter", "new line"),
+            row("Up, Down", "move in the text, then through earlier inputs"),
+            row("Ctrl-A, Ctrl-E", "start, end of the line"),
+            row(
+                "Ctrl-W, Ctrl-U, Ctrl-K",
+                "delete word, to the start, to the end",
+            ),
+            row("Esc", "clear the box"),
+            String::new(),
+            heading("While a task runs"),
+            row("Esc", "stop the task"),
+            String::new(),
+            heading("Anywhere"),
+            row("Ctrl-C twice", "quit"),
+            row("Ctrl-D", "quit (empty box)"),
+        ];
+        for line in lines {
+            self.line(&line);
+        }
+        self.gap = false;
+        self.blank();
     }
 
     /// Ends an open answer line before chrome is printed. Inline, the spinner
@@ -287,8 +463,67 @@ impl Terminal {
     }
 }
 
+impl Terminal {
+    /// Asks about an action with one key; `e` opens the box with the command.
+    fn question(&mut self, action: &Action, can_always: bool) -> Decision {
+        self.close_output();
+        self.spinner.stop();
+        let s = self.style;
+        if !self.interactive {
+            self.line(&format!(
+                "{}  no terminal to ask on: denied (use --yes or policy.allow){}",
+                s.gray(),
+                s.reset()
+            ));
+            return Decision::No;
+        }
+        let is_shell = matches!(action, Action::Shell { .. });
+        let mut keys = String::from("yn");
+        let mut choices = format!("{}y{} yes", s.bold(), s.reset());
+        if can_always {
+            keys.push('a');
+            choices.push_str(&format!(
+                " · {}a{} always in this session",
+                s.bold(),
+                s.reset()
+            ));
+        }
+        choices.push_str(&format!(" · {}n{} no", s.bold(), s.reset()));
+        if is_shell {
+            keys.push('e');
+            choices.push_str(&format!(" · {}e{} edit", s.bold(), s.reset()));
+        }
+        self.partial(&format!("{}  Allow?{} {choices} ", s.accent(), s.reset()));
+        let choice = editor::read_choice(&keys).ok().flatten();
+        // The question is replaced by its outcome.
+        self.partial("\r\x1b[2K");
+        let denied = format!("{}  ✗ denied{}", s.err(), s.reset());
+        match choice {
+            Some('y') => Decision::Yes,
+            Some('a') => Decision::Always,
+            Some('e') => {
+                let Action::Shell { cmd, .. } = action else {
+                    return Decision::No;
+                };
+                match self.editor.read(cmd, "Enter run · Ctrl-D cancel", false) {
+                    Ok(Input::Submit(edited)) => Decision::Edit(edited),
+                    _ => {
+                        self.line(&denied);
+                        Decision::No
+                    }
+                }
+            }
+            _ => {
+                self.line(&denied);
+                Decision::No
+            }
+        }
+    }
+}
+
 impl Drop for Terminal {
     fn drop(&mut self) {
+        self.watch_stop();
         self.spinner.stop();
         if self.screen {
             self.editor.close_dock();
@@ -357,63 +592,16 @@ impl Ui for Terminal {
             self.line(&format!("{}      {line}{}", s.action(), s.reset()));
         }
         if !action.why().is_empty() {
-            self.line(&format!("{}  {}{}", s.gray(), action.why(), s.reset()));
+            self.line(&s.inline(&format!("  {}", action.why()), s.gray()));
         }
     }
 
     fn approve(&mut self, action: &Action, can_always: bool) -> Decision {
-        self.close_output();
-        self.spinner.stop();
-        let s = self.style;
-        if !self.interactive {
-            self.line(&format!(
-                "{}  no terminal to ask on: denied (use --yes or policy.allow){}",
-                s.gray(),
-                s.reset()
-            ));
-            return Decision::No;
-        }
-        let is_shell = matches!(action, Action::Shell { .. });
-        let mut keys = String::from("yn");
-        let mut choices = format!("{}y{} yes", s.bold(), s.reset());
-        if can_always {
-            keys.push('a');
-            choices.push_str(&format!(
-                " · {}a{} always in this session",
-                s.bold(),
-                s.reset()
-            ));
-        }
-        choices.push_str(&format!(" · {}n{} no", s.bold(), s.reset()));
-        if is_shell {
-            keys.push('e');
-            choices.push_str(&format!(" · {}e{} edit", s.bold(), s.reset()));
-        }
-        self.partial(&format!("{}  Allow?{} {choices} ", s.accent(), s.reset()));
-        let choice = editor::read_choice(&keys).ok().flatten();
-        // The question is replaced by its outcome.
-        self.partial("\r\x1b[2K");
-        let denied = format!("{}  ✗ denied{}", s.err(), s.reset());
-        match choice {
-            Some('y') => Decision::Yes,
-            Some('a') => Decision::Always,
-            Some('e') => {
-                let Action::Shell { cmd, .. } = action else {
-                    return Decision::No;
-                };
-                match self.editor.read(cmd, "Enter run · Ctrl-D cancel", false) {
-                    Ok(Input::Submit(edited)) => Decision::Edit(edited),
-                    _ => {
-                        self.line(&denied);
-                        Decision::No
-                    }
-                }
-            }
-            _ => {
-                self.line(&denied);
-                Decision::No
-            }
-        }
+        // The question reads keys itself: the task's key watcher pauses.
+        self.watch_stop();
+        let decision = self.question(action, can_always);
+        self.watch_start();
+        decision
     }
 
     fn running(&mut self, _: &Action) {
@@ -456,11 +644,7 @@ impl Ui for Terminal {
 
     fn note(&mut self, text: &str) {
         self.close_output();
-        self.line(&format!(
-            "{}  {text}{}",
-            self.style.gray(),
-            self.style.reset()
-        ));
+        self.line(&self.style.inline(&format!("  {text}"), self.style.gray()));
         self.gap = false;
     }
 }

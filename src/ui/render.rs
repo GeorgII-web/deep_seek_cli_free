@@ -1,6 +1,7 @@
 //! Turns the streamed answer into what the user sees: the `dsc` action block is
 //! hidden (the action line shows it), blank lines at the edges are dropped, and
-//! with colors on a little markdown is styled (code, bold, headings).
+//! with colors on a little markdown is styled (inline code, code blocks with a
+//! bar instead of the fences, bold, headings).
 
 use super::style::Style;
 use crate::agent::protocol::FENCE;
@@ -65,9 +66,15 @@ impl Markdown {
     pub fn finish(&mut self) -> String {
         let mut out = String::new();
         let held = std::mem::take(&mut self.held);
-        if !self.in_action && held.trim() != FENCE {
+        // A fence as the very last line has no line end: with colors it is dropped like the others.
+        let fence = held.trim().starts_with("```");
+        if !self.in_action && held.trim() != FENCE && !(fence && self.style.on()) {
             for c in held.trim_end().chars() {
-                self.visible(c, &mut out);
+                if fence {
+                    self.put(c, Look::Dim, &mut out);
+                } else {
+                    self.visible(c, &mut out);
+                }
             }
         }
         self.flush_star(&mut out);
@@ -97,9 +104,16 @@ impl Markdown {
             }
             if fence.starts_with("```") {
                 self.in_code = !self.in_code;
+                if self.style.on() {
+                    // The bar in front of the code lines marks the block; the fence line is dropped.
+                    return;
+                }
                 for c in held.chars() {
                     self.put(c, Look::Dim, out);
                 }
+            } else if self.in_code && self.style.on() && self.line_start {
+                // An empty line inside a block keeps its bar.
+                self.code_bar(out);
             }
             self.end_line(out);
             return;
@@ -114,6 +128,9 @@ impl Markdown {
             let held = std::mem::take(&mut self.held);
             self.line_start = false;
             self.heading = !self.in_code && held.trim_start().starts_with('#');
+            if self.in_code && self.style.on() {
+                self.code_bar(out);
+            }
             for c in held.chars() {
                 self.visible(c, out);
             }
@@ -160,6 +177,12 @@ impl Markdown {
             Look::Plain
         };
         self.put(c, look, out);
+    }
+
+    fn code_bar(&mut self, out: &mut String) {
+        for c in "  │ ".chars() {
+            self.put(c, Look::Dim, out);
+        }
     }
 
     fn flush_star(&mut self, out: &mut String) {
@@ -255,11 +278,16 @@ mod tests {
             render("# T\nx", true, 2),
             format!("{bold}{}# T{reset}\nx", s.accent())
         );
-        // Inside a code block marks stay as they are.
-        let block = render("```\na*b `c`\n```", true, 1);
-        assert!(
-            block.contains(&format!("{code}a*b `c`{reset}")),
-            "{block:?}"
+        // Inside a code block marks stay as they are; the fences become a bar.
+        let block = render("x\n```bash\na*b `c`\n\nd\n```\ny", true, 1);
+        let bar = format!("{}  │ {reset}", s.gray());
+        assert_eq!(
+            render("```\nd\n```", true, 1),
+            format!("{bar}{code}d{reset}")
+        );
+        assert_eq!(
+            block,
+            format!("x\n{bar}{code}a*b `c`{reset}\n{bar}\n{bar}{code}d{reset}\ny")
         );
     }
 }

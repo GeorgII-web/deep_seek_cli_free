@@ -92,11 +92,11 @@ There is 809G free on / (out of 1007G, 16% used).
 ╭──────────────────────────────────────────────────────────────╮
 │ > which command did you run for that?                        │
 ╰──────────────────────────────────────────────────────────────╯
-  Enter send · Alt+Enter or \ + Enter new line · ↑↓ history · /help · Ctrl-D quit
+  Enter send · Alt+Enter new line · ↑↓ history · /help · Ctrl-C twice quit
 ```
 
 While `dsc` works, the line under the box shows what it waits for and for how long
-(`⠹ Waiting for DeepSeek… 3s · Ctrl-C to stop`). The last line of a task shows the seconds it took. The box grows
+(`⠹ Waiting for DeepSeek… 3s · Esc to stop`). The last line of a task shows the seconds it took. The box grows
 with your text, up to ten rows. A single task (`dsc "<task>"`) does not clear the screen: it prints below your
 shell prompt.
 
@@ -106,14 +106,16 @@ shell prompt.
 | Alt+Enter, Ctrl-J, or `\` then Enter | new line |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
-| Ctrl-C | clear the box (quit when it is empty) |
-| Ctrl-D | quit |
+| Esc | clear the box; while a task runs: stop the task |
+| Ctrl-C | clears the box and asks to press it again; twice within two seconds quits, also while a task runs |
+| Ctrl-D | quit (empty box) |
 
 Pasting several lines works. `/new` starts a fresh conversation, `/help` lists the commands, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
 `~/.config/dsc/history.json`; the conversation itself is not saved, after a restart the model starts from zero.
 
-Colors switch off with `NO_COLOR=1` or when the output is not a terminal.
+In answers, `inline code` is colored and code blocks are shown with a bar on the left. Colors switch off with
+`NO_COLOR=1` or when the output is not a terminal.
 
 ### Flags
 
@@ -148,8 +150,9 @@ The model can ask for three actions: run a shell command, read a file, write a f
 One key answers. `a` allows that program (or tool) until you quit; `e` lets you change the command first; `n` tells the
 model it was denied, so it can try another way. Without a terminal on stdin every question counts as no.
 
-Ctrl-C while a command runs kills only the command; Ctrl-C while waiting for the model ends the task (in a chat
-you are back at the prompt).
+Esc stops the running task: a running command is killed and you are back at the prompt (a single task ends).
+One Ctrl-C never closes `dsc`; press it twice within two seconds to quit. Without a terminal (piped input) Ctrl-C
+stops the task.
 
 ## Safety and privacy
 

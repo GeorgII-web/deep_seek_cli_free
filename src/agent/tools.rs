@@ -1,5 +1,6 @@
 //! The actions the model can ask for.
 
+use super::interrupt::{Interrupt, Interrupts};
 use anyhow::{Context, Result};
 use std::path::Path;
 use std::process::Stdio;
@@ -19,7 +20,8 @@ pub struct ShellOutput {
     /// `None` = ended by a signal
     pub exit: Option<i32>,
     pub timed_out: bool,
-    pub interrupted: bool,
+    /// The user stopped it; the command was killed
+    pub interrupted: Option<Interrupt>,
     pub stdout: String,
     pub stderr: String,
 }
@@ -67,8 +69,12 @@ fn collect(
 }
 
 /// Runs `cmd` in bash, in its own process group, without a terminal on stdin.
-/// A timeout or Ctrl-C kills the whole group.
-pub async fn shell(cmd: &str, timeout: Duration) -> Result<ShellOutput> {
+/// A timeout or an interrupt of the user kills the whole group.
+pub async fn shell(
+    cmd: &str,
+    timeout: Duration,
+    interrupts: &mut Interrupts,
+) -> Result<ShellOutput> {
     let mut child = Command::new("bash")
         .arg("-c")
         .arg(cmd)
@@ -83,11 +89,11 @@ pub async fn shell(cmd: &str, timeout: Duration) -> Result<ShellOutput> {
     let (out, out_task) = collect(child.stdout.take().context("stdout")?);
     let (err, err_task) = collect(child.stderr.take().context("stderr")?);
 
-    let (mut timed_out, mut interrupted) = (false, false);
+    let (mut timed_out, mut interrupted) = (false, None);
     let status = tokio::select! {
         status = child.wait() => Some(status?),
         _ = tokio::time::sleep(timeout) => { timed_out = true; None }
-        _ = tokio::signal::ctrl_c() => { interrupted = true; None }
+        why = interrupts.next() => { interrupted = Some(why); None }
     };
     let status = match status {
         Some(status) => status,
@@ -152,9 +158,13 @@ mod tests {
 
     #[tokio::test]
     async fn shell_returns_code_and_both_streams() {
-        let output = shell("echo out; echo err >&2; exit 3", Duration::from_secs(10))
-            .await
-            .unwrap();
+        let output = shell(
+            "echo out; echo err >&2; exit 3",
+            Duration::from_secs(10),
+            &mut Interrupts::signal(),
+        )
+        .await
+        .unwrap();
         assert_eq!(output.exit, Some(3));
         assert_eq!(
             (output.stdout.as_str(), output.stderr.as_str()),
@@ -169,6 +179,7 @@ mod tests {
         let output = shell(
             "echo begin; sleep 30 | sleep 30",
             Duration::from_millis(300),
+            &mut Interrupts::signal(),
         )
         .await
         .unwrap();
@@ -181,10 +192,26 @@ mod tests {
     #[tokio::test]
     async fn background_child_does_not_block() {
         let started = Instant::now();
-        let output = shell("sleep 20 & echo done", Duration::from_secs(10))
+        let output = shell(
+            "sleep 20 & echo done",
+            Duration::from_secs(10),
+            &mut Interrupts::signal(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(output.stdout, "done\n");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn interrupt_kills_the_command() {
+        let (sender, mut interrupts) = Interrupts::channel();
+        sender.send(Interrupt::Stop).unwrap();
+        let started = Instant::now();
+        let output = shell("sleep 30", Duration::from_secs(60), &mut interrupts)
             .await
             .unwrap();
-        assert_eq!(output.stdout, "done\n");
+        assert_eq!(output.interrupted, Some(Interrupt::Stop));
         assert!(started.elapsed() < Duration::from_secs(5));
     }
 

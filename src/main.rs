@@ -6,6 +6,7 @@ mod config;
 mod deepseek;
 mod ui;
 
+use agent::interrupt::Interrupt;
 use agent::protocol;
 use anyhow::{Result, bail};
 use auth::Auth;
@@ -46,6 +47,7 @@ async fn main() -> Result<()> {
             let mut conversation = conversation(&paths, &settings, &cli.run)?;
             let prompt = protocol::first_prompt(&cli.run.task.join(" "), &cwd());
             let mut terminal = ui::Terminal::new(None);
+            let mut interrupts = terminal.interrupts();
             let mut always = HashSet::new();
             terminal.begin();
             let result = agent::run::run(
@@ -55,14 +57,17 @@ async fn main() -> Result<()> {
                 &settings,
                 cli.run.yes,
                 &mut always,
+                &mut interrupts,
             )
             .await;
             terminal.finish(&result);
-            // The finish line already showed the error.
-            if result.is_err() {
-                std::process::exit(1);
+            // The finish line already showed the error; the terminal must be restored before the exit.
+            drop(terminal);
+            match result {
+                Ok(()) => Ok(()),
+                Err(err) if err.is::<Interrupt>() => std::process::exit(130),
+                Err(_) => std::process::exit(1),
             }
-            Ok(())
         }
     }
 }
@@ -73,20 +78,12 @@ fn cwd() -> String {
         .unwrap_or_default()
 }
 
-const CHAT_HELP: &str = "\
-/new    start a fresh conversation (the model forgets the earlier tasks)
-/help   this text
-/exit   quit (also Ctrl-D)
-
-Enter sends. A new line: Alt+Enter, Ctrl-J, or end the line with \\ and press Enter.
-Up/Down move in the text and then through earlier inputs. Ctrl-C clears the box.
-While a task runs: Ctrl-C stops the running command, or the task while it waits for the model.";
-
 /// Interactive mode: every input is a task in the same conversation, so the model
 /// remembers the earlier ones. What the user allowed with "always" holds until the exit.
 async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<()> {
     let mut conversation = conversation(paths, settings, run)?;
     let mut terminal = ui::Terminal::new(Some(paths.history()));
+    let mut interrupts = terminal.interrupts();
     let mut always = HashSet::new();
     let mut first = true;
     let model = match (run.expert, run.think || settings.deepseek.thinking) {
@@ -100,18 +97,18 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             "" => continue,
             "/exit" | "/quit" => break,
             "/help" => {
-                terminal.info(CHAT_HELP);
+                terminal.help();
                 continue;
             }
             "/new" => {
                 conversation = self::conversation(paths, settings, run)?;
                 first = true;
-                terminal.info("new conversation");
+                terminal.info("New conversation: the model starts from zero.");
                 continue;
             }
             // A path like /etc/hosts is a task, a single word after the slash a command.
             command if command.starts_with('/') && !command[1..].contains(['/', ' ']) => {
-                terminal.error(&format!("unknown command {command}; see /help"));
+                terminal.error(&format!("unknown command `{command}`; see `/help`"));
                 continue;
             }
             task if first => protocol::first_prompt(task, &cwd()),
@@ -119,7 +116,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         };
         first = false;
         terminal.begin();
-        // A failed task (network, Ctrl-C, dead token) does not end the chat.
+        // A failed or stopped task does not end the chat; Ctrl-C twice does.
         let result = agent::run::run(
             &mut conversation,
             &mut terminal,
@@ -127,9 +124,16 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             settings,
             run.yes,
             &mut always,
+            &mut interrupts,
         )
         .await;
         terminal.finish(&result);
+        if matches!(
+            result.as_ref().err().and_then(|err| err.downcast_ref()),
+            Some(Interrupt::Quit)
+        ) {
+            break;
+        }
     }
     Ok(())
 }

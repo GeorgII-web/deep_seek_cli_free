@@ -1,11 +1,12 @@
 //! The agent loop: prompt → answer → action → result → next prompt.
 
+use super::interrupt::{Interrupt, Interrupts};
 use super::policy::{self, Verdict};
 use super::protocol::{self, Action, Parsed};
-use super::tools;
+use super::tools::{self, ShellOutput};
 use crate::backend::{Backend, Event};
 use crate::config::Settings;
-use anyhow::{Result, bail};
+use anyhow::Result;
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -46,13 +47,15 @@ pub async fn run<B: Backend, U: Ui>(
     settings: &Settings,
     yes: bool,
     always: &mut HashSet<String>,
+    interrupts: &mut Interrupts,
 ) -> Result<()> {
+    interrupts.clear();
     for _ in 0..settings.agent.max_steps {
         let answer = {
             let mut sink = |event: &Event| ui.event(event);
             tokio::select! {
                 answer = backend.ask(&prompt, &mut sink) => answer?,
-                _ = tokio::signal::ctrl_c() => bail!("interrupted"),
+                why = interrupts.next() => return Err(why.into()),
             }
         };
         ui.answer_end();
@@ -64,7 +67,7 @@ pub async fn run<B: Backend, U: Ui>(
                 message
             }
             Parsed::Action { action, extra } => {
-                let mut result = act(action, ui, settings, yes, always).await;
+                let mut result = act(action, ui, settings, yes, always, interrupts).await?;
                 if extra > 0 {
                     result.push_str("\nNote: only your first action block was run. Send one block per answer.\n");
                 }
@@ -80,14 +83,16 @@ pub async fn run<B: Backend, U: Ui>(
     Ok(())
 }
 
-/// Checks, asks and runs one action; returns the message for the model.
+/// Checks, asks and runs one action; returns the message for the model, or the
+/// interrupt that ended the task while the action ran.
 async fn act<U: Ui>(
     mut action: Action,
     ui: &mut U,
     settings: &Settings,
     yes: bool,
     always: &mut HashSet<String>,
-) -> String {
+    interrupts: &mut Interrupts,
+) -> Result<String, Interrupt> {
     ui.action(&action);
     loop {
         match policy::check(&action, &settings.policy, yes, always) {
@@ -96,9 +101,9 @@ async fn act<U: Ui>(
                     "denied by policy.deny (`{pattern}`): {}",
                     action.summary()
                 ));
-                return format!(
+                return Ok(format!(
                     "Denied: this matches the user's deny rule `{pattern}`. It will never run; do not try it again.\n"
-                );
+                ));
             }
             Verdict::Allow => break,
             Verdict::Ask => {
@@ -110,7 +115,7 @@ async fn act<U: Ui>(
                         break;
                     }
                     Decision::No => {
-                        return "Denied by the user. Try another way, or explain what you need and stop.\n".into();
+                        return Ok("Denied by the user. Try another way, or explain what you need and stop.\n".into());
                     }
                     // The edited command goes through the checks again.
                     Decision::Edit(cmd) => match &mut action {
@@ -132,19 +137,24 @@ async fn act<U: Ui>(
         }
     }
     ui.running(&action);
-    execute(&action, settings).await
+    execute(&action, settings, interrupts).await
 }
 
-async fn execute(action: &Action, settings: &Settings) -> String {
+async fn execute(
+    action: &Action,
+    settings: &Settings,
+    interrupts: &mut Interrupts,
+) -> Result<String, Interrupt> {
     let max = settings.agent.max_output_bytes;
-    match action {
+    Ok(match action {
         Action::Shell { cmd, timeout_s, .. } => {
             let limit = settings.agent.command_timeout_secs;
             let timeout = Duration::from_secs(timeout_s.unwrap_or(limit).clamp(1, limit.max(1)));
-            match tools::shell(cmd, timeout).await {
-                Ok(output) if output.interrupted => {
-                    "The user interrupted the command (Ctrl-C); it was killed.\n".into()
-                }
+            match tools::shell(cmd, timeout, interrupts).await {
+                Ok(ShellOutput {
+                    interrupted: Some(why),
+                    ..
+                }) => return Err(why),
                 Ok(output) => protocol::shell_result(
                     output.exit,
                     output.timed_out,
@@ -162,7 +172,7 @@ async fn execute(action: &Action, settings: &Settings) -> String {
             Ok(()) => format!("Written: {path} ({} bytes)\n", content.len()),
             Err(err) => format!("Error: {err:#}\n"),
         },
-    }
+    })
 }
 
 #[cfg(test)]
@@ -231,7 +241,16 @@ mod tests {
         yes: bool,
     ) -> Result<()> {
         let prompt = protocol::first_prompt(task, "/work");
-        run(backend, ui, prompt, settings, yes, &mut HashSet::new()).await
+        run(
+            backend,
+            ui,
+            prompt,
+            settings,
+            yes,
+            &mut HashSet::new(),
+            &mut Interrupts::signal(),
+        )
+        .await
     }
 
     fn settings() -> Settings {
@@ -347,6 +366,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn stop_during_a_command_ends_the_task() {
+        let mut backend = Script::new(&[
+            &block(r#"{"tool":"shell","cmd":"sleep 30"}"#),
+            "never asked",
+        ]);
+        let (sender, mut interrupts) = Interrupts::channel();
+        let mut cfg = settings();
+        cfg.policy.allow = vec!["sleep".into()];
+        let stopper = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            sender.send(Interrupt::Stop).unwrap();
+            sender
+        });
+        let prompt = protocol::first_prompt("t", "/work");
+        let err = run(
+            &mut backend,
+            &mut FakeUi::default(),
+            prompt,
+            &cfg,
+            false,
+            &mut HashSet::new(),
+            &mut interrupts,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.downcast_ref::<Interrupt>(), Some(&Interrupt::Stop));
+        assert_eq!(backend.prompts.len(), 1);
+        drop(stopper.await);
+    }
+
+    #[tokio::test]
     async fn always_and_the_conversation_carry_over_to_the_next_task() {
         let first = block(r#"{"tool":"shell","cmd":"true one"}"#);
         let second = block(r#"{"tool":"shell","cmd":"true two"}"#);
@@ -364,6 +414,7 @@ mod tests {
             &cfg,
             false,
             &mut always,
+            &mut Interrupts::signal(),
         )
         .await
         .unwrap();
@@ -374,6 +425,7 @@ mod tests {
             &cfg,
             false,
             &mut always,
+            &mut Interrupts::signal(),
         )
         .await
         .unwrap();

@@ -57,8 +57,50 @@ impl Style {
     pub fn code_text(&self) -> &'static str {
         self.code("\x1b[38;5;80m")
     }
+    /// `text` in the color `base`, with every `code` span in the code color.
+    /// Without colors the text stays as it is, backticks included.
+    pub fn inline(&self, text: &str, base: &'static str) -> String {
+        if !self.on {
+            return text.to_string();
+        }
+        let mut out = String::from(base);
+        for (i, part) in text.split('`').enumerate() {
+            if i % 2 == 1 {
+                out.push_str(&format!(
+                    "{}{}{part}{}{base}",
+                    self.reset(),
+                    self.code_text(),
+                    self.reset()
+                ));
+            } else {
+                out.push_str(part);
+            }
+        }
+        out.push_str(self.reset());
+        out
+    }
+
     /// Borders, hints, meta lines
     pub fn gray(&self) -> &'static str {
         self.code("\x1b[38;5;245m")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inline_colors_code_spans_only_with_colors_on() {
+        assert_eq!(
+            Style::new(false).inline("see `/help` now", "x"),
+            "see `/help` now"
+        );
+        let s = Style::new(true);
+        let (gray, code, reset) = (s.gray(), s.code_text(), s.reset());
+        assert_eq!(
+            s.inline("see `/help` now", gray),
+            format!("{gray}see {reset}{code}/help{reset}{gray} now{reset}")
+        );
     }
 }
