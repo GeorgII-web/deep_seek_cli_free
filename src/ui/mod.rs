@@ -1,8 +1,11 @@
 //! The terminal side of the agent: input box, streamed answer, progress line,
 //! action lines, approval question, result preview, finish line.
 //!
-//! Answer text goes to stdout, everything else to stderr. Without a terminal
-//! there are no colors, no spinner and no box: plain lines only.
+//! Two layouts. Inline (a single task, or no terminal): output follows the
+//! shell prompt, answer text on stdout, everything else on stderr. Screen (the
+//! chat on a terminal): the screen is cleared, the input box is docked at the
+//! bottom, output scrolls above it; everything goes to stdout.
+//! Without a terminal there are no colors, no spinner and no box.
 
 pub mod editor;
 pub mod render;
@@ -17,6 +20,7 @@ use render::Markdown;
 use spinner::Spinner;
 use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
+use std::sync::{Mutex, MutexGuard};
 use std::time::Instant;
 use style::Style;
 
@@ -25,10 +29,30 @@ const RESULT_LINES: usize = 8;
 const INPUT_HINT: &str =
     "Enter send · Alt+Enter or \\ + Enter new line · ↑↓ history · /help · Ctrl-D quit";
 
+static SCREEN: Mutex<()> = Mutex::new(());
+
+/// Held while something is written to the terminal, so the progress thread
+/// never writes into the middle of other output.
+pub(crate) fn screen_lock() -> MutexGuard<'static, ()> {
+    SCREEN
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Writes control sequences and text to the terminal in one piece.
+pub(crate) fn screen_write(text: &str) {
+    let _screen = screen_lock();
+    let mut out = std::io::stdout().lock();
+    let _ = out.write_all(text.as_bytes());
+    let _ = out.flush();
+}
+
 pub struct Terminal {
     style: Style,
     /// Keys can be read one by one: stdin and stderr are a terminal
     interactive: bool,
+    /// Screen layout is on: box docked at the bottom
+    screen: bool,
     spinner: Spinner,
     markdown: Markdown,
     editor: Editor,
@@ -50,6 +74,7 @@ impl Terminal {
         Self {
             style,
             interactive,
+            screen: false,
             spinner: Spinner::new(std::io::stderr().is_terminal(), style),
             markdown: Markdown::new(style),
             editor: Editor::new(style, history_file),
@@ -62,10 +87,45 @@ impl Terminal {
         }
     }
 
-    /// The head of a chat.
-    pub fn banner(&self, model: &str, cwd: &str) {
+    /// A line of chrome: stderr inline, the output area in the screen layout.
+    fn line(&self, text: &str) {
+        let _screen = screen_lock();
+        if self.screen {
+            println!("{text}");
+        } else {
+            eprintln!("{text}");
+        }
+    }
+
+    /// Chrome without a line end (a question that waits for a key).
+    fn partial(&self, text: &str) {
+        let _screen = screen_lock();
+        if self.screen {
+            print!("{text}");
+            let _ = std::io::stdout().flush();
+        } else {
+            eprint!("{text}");
+            let _ = std::io::stderr().flush();
+        }
+    }
+
+    /// Answer text: always stdout.
+    fn text(&self, text: &str) {
+        let _screen = screen_lock();
+        print!("{text}");
+        let _ = std::io::stdout().flush();
+    }
+
+    /// Starts the chat: on a terminal the screen is cleared and the input box is
+    /// docked at the bottom for the rest of the session.
+    pub fn open_chat(&mut self, model: &str, cwd: &str) {
         let s = self.style;
-        eprintln!(
+        let docked = self.interactive && std::io::stdout().is_terminal();
+        if docked {
+            screen_write("\x1b[2J\x1b[H");
+            self.screen = true;
+        }
+        self.line(&format!(
             "{}{}✻ dsc{} {}{} · DeepSeek web · {model}{}",
             s.bold(),
             s.accent(),
@@ -73,9 +133,18 @@ impl Terminal {
             s.gray(),
             env!("CARGO_PKG_VERSION"),
             s.reset()
-        );
-        eprintln!("{}  {cwd}{}", s.gray(), s.reset());
-        eprintln!("{}  /help for commands{}", s.gray(), s.reset());
+        ));
+        self.line(&format!("{}  {cwd}{}", s.gray(), s.reset()));
+        self.line(&format!("{}  /help for commands{}", s.gray(), s.reset()));
+        self.line("");
+        self.gap = true;
+        if docked {
+            if self.editor.open_dock().is_ok() {
+                self.spinner.dock();
+            } else {
+                self.screen = false;
+            }
+        }
     }
 
     /// Reads the next chat input; `None` = leave. With a terminal this is the
@@ -88,11 +157,12 @@ impl Terminal {
                 _ => None,
             };
         }
-        eprintln!();
+        if !self.screen {
+            self.blank();
+        }
         match self.editor.read("", INPUT_HINT, true) {
             Ok(Input::Submit(text)) => {
                 self.echo(&text);
-                self.gap = true;
                 Some(text)
             }
             Ok(Input::Exit) => None,
@@ -104,26 +174,28 @@ impl Terminal {
     }
 
     /// The submitted input as part of the scrollback.
-    fn echo(&self, text: &str) {
+    fn echo(&mut self, text: &str) {
         let s = self.style;
+        self.blank();
         for (i, line) in text.lines().enumerate() {
             let mark = if i == 0 { ">" } else { " " };
-            eprintln!(
+            self.line(&format!(
                 "{}{}{mark}{} {}{line}{}",
                 s.bold(),
                 s.accent(),
                 s.reset(),
                 s.bold(),
                 s.reset()
-            );
+            ));
         }
-        eprintln!();
+        self.gap = false;
+        self.blank();
     }
 
     /// One blank line, unless the last thing printed was one.
     fn blank(&mut self) {
         if !std::mem::replace(&mut self.gap, true) {
-            eprintln!();
+            self.line("");
         }
     }
 
@@ -137,6 +209,7 @@ impl Terminal {
     /// End of a task: one line with the time it took.
     pub fn finish(&mut self, result: &anyhow::Result<()>) {
         self.close_output();
+        self.spinner.stop();
         let s = self.style;
         let secs = self.started.elapsed().as_secs_f32();
         let plural = |n: u32, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
@@ -146,32 +219,53 @@ impl Terminal {
             plural(self.actions, "action")
         );
         match result {
-            Ok(()) => eprintln!("{}✓{} {}{stats}{}", s.ok(), s.reset(), s.gray(), s.reset()),
-            Err(err) => eprintln!(
+            Ok(()) => self.line(&format!(
+                "{}✓{} {}{stats}{}",
+                s.ok(),
+                s.reset(),
+                s.gray(),
+                s.reset()
+            )),
+            Err(err) => self.line(&format!(
                 "{}✗ {err:#}{} {}· {stats}{}",
                 s.err(),
                 s.reset(),
                 s.gray(),
                 s.reset()
-            ),
+            )),
         }
+        self.gap = false;
     }
 
     /// A message of the CLI itself that is not part of a task.
-    pub fn info(&self, text: &str) {
-        eprintln!("{}{text}{}", self.style.gray(), self.style.reset());
+    pub fn info(&mut self, text: &str) {
+        for line in text.lines() {
+            self.line(&format!(
+                "{}{line}{}",
+                self.style.gray(),
+                self.style.reset()
+            ));
+        }
+        self.gap = false;
     }
 
-    pub fn error(&self, text: &str) {
-        eprintln!("{}✗ {text}{}", self.style.err(), self.style.reset());
+    pub fn error(&mut self, text: &str) {
+        self.line(&format!(
+            "{}✗ {text}{}",
+            self.style.err(),
+            self.style.reset()
+        ));
+        self.gap = false;
     }
 
-    /// Ends whatever is on the screen (spinner, open answer line) before chrome is printed.
+    /// Ends an open answer line before chrome is printed. Inline, the spinner
+    /// shares the output line and is removed too.
     fn close_output(&mut self) {
-        self.spinner.stop();
+        if !self.spinner.docked() {
+            self.spinner.stop();
+        }
         if std::mem::take(&mut self.thinking_open) || std::mem::take(&mut self.text_open) {
-            println!();
-            let _ = std::io::stdout().flush();
+            self.text("\n");
         }
     }
 
@@ -179,14 +273,27 @@ impl Terminal {
         if text.is_empty() {
             return;
         }
-        self.spinner.stop();
-        if std::mem::take(&mut self.thinking_open) {
-            println!("\n");
+        if self.spinner.docked() {
+            self.spinner.start("Answering");
+        } else {
+            self.spinner.stop();
         }
-        print!("{text}");
-        let _ = std::io::stdout().flush();
+        if std::mem::take(&mut self.thinking_open) {
+            self.text("\n\n");
+        }
+        self.text(text);
         self.text_open = true;
         self.gap = false;
+    }
+}
+
+impl Drop for Terminal {
+    fn drop(&mut self) {
+        self.spinner.stop();
+        if self.screen {
+            self.editor.close_dock();
+            self.text("\n");
+        }
     }
 }
 
@@ -194,15 +301,18 @@ impl Ui for Terminal {
     fn event(&mut self, event: &Event) {
         match event {
             Event::Status(label) => {
-                // A status in the middle of printed text would tear the line.
-                if !self.text_open && !self.thinking_open {
+                // Inline, a status in the middle of printed text would tear the line.
+                if self.spinner.docked() || (!self.text_open && !self.thinking_open) {
                     self.spinner.start(label);
                 }
             }
             Event::Thinking(text) => {
-                self.spinner.stop();
-                print!("{}{text}{}", self.style.dim(), self.style.reset());
-                let _ = std::io::stdout().flush();
+                if self.spinner.docked() {
+                    self.spinner.start("Thinking");
+                } else {
+                    self.spinner.stop();
+                }
+                self.text(&format!("{}{text}{}", self.style.dim(), self.style.reset()));
                 self.thinking_open = true;
                 self.gap = false;
             }
@@ -233,7 +343,7 @@ impl Ui for Terminal {
         self.blank();
         self.gap = false;
         let mut lines = what.lines();
-        eprintln!(
+        self.line(&format!(
             "{}●{} {}{kind}{} {}{}{}",
             s.action(),
             s.reset(),
@@ -242,24 +352,25 @@ impl Ui for Terminal {
             s.action(),
             lines.next().unwrap_or(""),
             s.reset()
-        );
+        ));
         for line in lines {
-            eprintln!("{}      {line}{}", s.action(), s.reset());
+            self.line(&format!("{}      {line}{}", s.action(), s.reset()));
         }
         if !action.why().is_empty() {
-            eprintln!("{}  {}{}", s.gray(), action.why(), s.reset());
+            self.line(&format!("{}  {}{}", s.gray(), action.why(), s.reset()));
         }
     }
 
     fn approve(&mut self, action: &Action, can_always: bool) -> Decision {
         self.close_output();
+        self.spinner.stop();
         let s = self.style;
         if !self.interactive {
-            eprintln!(
+            self.line(&format!(
                 "{}  no terminal to ask on: denied (use --yes or policy.allow){}",
                 s.gray(),
                 s.reset()
-            );
+            ));
             return Decision::No;
         }
         let is_shell = matches!(action, Action::Shell { .. });
@@ -278,11 +389,11 @@ impl Ui for Terminal {
             keys.push('e');
             choices.push_str(&format!(" · {}e{} edit", s.bold(), s.reset()));
         }
-        eprint!("{}  Allow?{} {choices} ", s.accent(), s.reset());
-        let _ = std::io::stderr().flush();
+        self.partial(&format!("{}  Allow?{} {choices} ", s.accent(), s.reset()));
         let choice = editor::read_choice(&keys).ok().flatten();
         // The question is replaced by its outcome.
-        eprint!("\r\x1b[2K");
+        self.partial("\r\x1b[2K");
+        let denied = format!("{}  ✗ denied{}", s.err(), s.reset());
         match choice {
             Some('y') => Decision::Yes,
             Some('a') => Decision::Always,
@@ -293,13 +404,13 @@ impl Ui for Terminal {
                 match self.editor.read(cmd, "Enter run · Ctrl-D cancel", false) {
                     Ok(Input::Submit(edited)) => Decision::Edit(edited),
                     _ => {
-                        eprintln!("{}  ✗ denied{}", s.err(), s.reset());
+                        self.line(&denied);
                         Decision::No
                     }
                 }
             }
             _ => {
-                eprintln!("{}  ✗ denied{}", s.err(), s.reset());
+                self.line(&denied);
                 Decision::No
             }
         }
@@ -329,15 +440,15 @@ impl Ui for Terminal {
             .collect();
         for (i, line) in lines.iter().take(RESULT_LINES).enumerate() {
             let mark = if i == 0 { "⎿" } else { " " };
-            eprintln!("{}  {mark} {line}{}", s.gray(), s.reset());
+            self.line(&format!("{}  {mark} {line}{}", s.gray(), s.reset()));
         }
         if lines.len() > RESULT_LINES {
-            eprintln!(
+            self.line(&format!(
                 "{}    … +{} lines{}",
                 s.gray(),
                 lines.len() - RESULT_LINES,
                 s.reset()
-            );
+            ));
         }
         self.gap = false;
         self.blank();
@@ -345,7 +456,11 @@ impl Ui for Terminal {
 
     fn note(&mut self, text: &str) {
         self.close_output();
-        eprintln!("{}  {text}{}", self.style.gray(), self.style.reset());
+        self.line(&format!(
+            "{}  {text}{}",
+            self.style.gray(),
+            self.style.reset()
+        ));
         self.gap = false;
     }
 }

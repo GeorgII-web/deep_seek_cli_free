@@ -34,7 +34,7 @@ DSC_TEST_WASM=$PWD/var/tmp/sha3.wasm cargo test -- --ignored --nocapture
 | each step, no prompt | `DSC_HOME=var/home cargo run -- doctor` | throwaway home; needs `var/home/auth.json` (`dsc login --token` there) |
 | read-only task | `cargo run -- "how much disk space is free on /"` | uses an allowed command |
 | approval question | a task that needs an unlisted command, in a real terminal or with `scripts/pty-drive.py` | without a terminal every question is a no |
-| input box, drawn screen | `scripts/pty-drive.py '["/help\r", "abc", "\x1b\r", "def"]'` | pseudo-terminal, scripted keys, prints the screen; sends a request only when a task line is submitted |
+| input box, drawn screen | `scripts/pty-drive.py '["/help\r", "abc", "\x1b\r", "def"]'` | pseudo-terminal, scripted keys; optional rows and columns; prints scrollback, screen and cursor; sends a request only when a task line is submitted |
 
 - Never run `dsc --yes` against the live account from an agent session.
 - Every live prompt counts against the user's account: a few per change, the throttle stays on.

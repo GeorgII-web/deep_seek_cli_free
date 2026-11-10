@@ -70,8 +70,9 @@ dsc --yes "create a .gitignore for a Rust project"
 
 ### Chat
 
-`dsc` without a task (or `dsc chat`) opens a chat. Every input is a task in the same conversation, so the model
-remembers what it did before:
+`dsc` without a task (or `dsc chat`) opens a chat: the screen is cleared, the input box stays at the bottom and
+the output scrolls above it. Earlier output is in your terminal's scrollback (mouse wheel, Shift+PgUp). Every
+input is a task in the same conversation, so the model remembers what it did before:
 
 ```console
 $ dsc
@@ -94,8 +95,10 @@ There is 809G free on / (out of 1007G, 16% used).
   Enter send · Alt+Enter or \ + Enter new line · ↑↓ history · /help · Ctrl-D quit
 ```
 
-While `dsc` waits, a progress line shows what for and for how long (`⠹ Waiting for DeepSeek… 3s`). The last line
-of a task shows the seconds it took.
+While `dsc` works, the line under the box shows what it waits for and for how long
+(`⠹ Waiting for DeepSeek… 3s · Ctrl-C to stop`). The last line of a task shows the seconds it took. The box grows
+with your text, up to ten rows. A single task (`dsc "<task>"`) does not clear the screen: it prints below your
+shell prompt.
 
 | Key in the input box | Effect |
 |---|---|

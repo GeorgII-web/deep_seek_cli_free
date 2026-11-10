@@ -22,7 +22,7 @@ Entry `main()` in `src/main.rs`: `Cli::parse` → `Paths::new` → `Settings::lo
 
 ## Chat (`chat()` in `src/main.rs`)
 
-Shows `Terminal::banner`, then reads inputs with `Terminal::input` (the multiline box, or plain lines without a
+Calls `Terminal::open_chat` (clears the screen and docks the input box when on a terminal), then reads inputs with `Terminal::input` (the multiline box, or plain lines without a
 terminal) until it returns `None`. One `Conversation` and one "always" set live for the whole chat; each task is
 wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_prompt`, later ones `next_prompt`.
 

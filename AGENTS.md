@@ -24,11 +24,11 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/agent/policy.rs` | `check` → `Allow` / `Ask` / `Deny`, `always_key` (what "always" covers) |
 | `src/agent/tools.rs` | `shell` (bash, own process group, timeout, Ctrl-C, output collected), `cap`, `read_file`, `write_file` |
 | `src/agent/run.rs` | `run` (the loop for one task; takes the prompt and the session's "always" set), `act` (show, check, ask, edit), `execute`; `Ui` trait and `Decision`; loop tests with a scripted backend |
-| `src/ui/mod.rs` | `Terminal` = `Ui` on the terminal plus `banner`, `input`, `begin`, `finish`, `info`, `error` |
-| `src/ui/editor.rs` | `Buffer`, `Editor` (multiline input box, history), `read_choice` (one key) |
+| `src/ui/mod.rs` | `Terminal` = `Ui` on the terminal plus `open_chat`, `input`, `begin`, `finish`, `info`, `error`; two layouts: inline (single task) and screen (chat: cleared screen, box docked at the bottom); `screen_lock`, `screen_write` |
+| `src/ui/editor.rs` | `Buffer`, `Editor` (multiline input box inline or docked with a scroll region above, history), `read_choice` (one key) |
 | `src/ui/render.rs` | `Markdown`: hides the `dsc` block, trims blank lines, styles code, bold, headings |
 | `src/ui/spinner.rs`, `style.rs` | progress line with a clock; every color code |
-| `scripts/pty-drive.py` | drives the chat in a pseudo-terminal with scripted keys and prints the screen |
+| `scripts/pty-drive.py` | drives the chat in a pseudo-terminal with scripted keys and prints scrollback, screen and cursor |
 
 ## Skills (`.agents/skills`, read the one that matches before working)
 

@@ -4,6 +4,7 @@
 //! crossterm in raw mode, on stderr, below the scrollback (no full-screen mode).
 
 use super::style::Style;
+use super::{screen_lock, screen_write};
 use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -214,12 +215,31 @@ pub enum Input {
     Exit,
 }
 
+/// The box fixed at the bottom of the screen: the rows above it are a scroll
+/// region, so output scrolls there (and into the terminal's scrollback) while
+/// the box stays.
+struct Dock {
+    /// Rows reserved at the bottom: borders, text rows, status line; 0 = none yet
+    area: usize,
+    /// Terminal height the layout was made for
+    height: u16,
+    /// Where output continues: row and column, 1-based
+    out: (u16, u16),
+}
+
+/// Rows of the dock besides the text: top border, bottom border, status line.
+const DOCK_EXTRA: usize = 3;
+/// Most text rows the docked box shows; more scroll inside it.
+const DOCK_MAX_ROWS: usize = 10;
+
 pub struct Editor {
     style: Style,
     history: Vec<String>,
     history_file: Option<PathBuf>,
-    /// Terminal rows between the top of the box and the cursor, from the last draw
+    /// Inline box: terminal rows between its top and the cursor, from the last draw
     cursor_line: u16,
+    /// Set while the box is docked at the bottom (chat)
+    dock: Option<Dock>,
 }
 
 impl Editor {
@@ -235,7 +255,141 @@ impl Editor {
             history,
             history_file,
             cursor_line: 0,
+            dock: None,
         }
+    }
+
+    /// The cursor as row and column, 1-based; `None` when the terminal does not answer.
+    fn cursor() -> Option<(u16, u16)> {
+        crossterm::cursor::position()
+            .ok()
+            .map(|(column, row)| (row + 1, column + 1))
+    }
+
+    /// Docks the box at the bottom from now on; output continues at the cursor.
+    pub fn open_dock(&mut self) -> io::Result<()> {
+        let (_, height) = terminal::size()?;
+        self.dock = Some(Dock {
+            area: 0,
+            height,
+            out: Self::cursor().unwrap_or((1, 1)),
+        });
+        self.dock_idle()
+    }
+
+    /// Gives the whole screen back: no scroll region, no box.
+    pub fn close_dock(&mut self) {
+        let Some(dock) = self.dock.take() else {
+            return;
+        };
+        let mut frame = String::from("\x1b[r");
+        for row in (dock.height as usize - dock.area + 1)..=dock.height as usize {
+            frame.push_str(&format!("\x1b[{row};1H\x1b[2K"));
+        }
+        frame.push_str(&format!("\x1b[{};{}H", dock.out.0, dock.out.1));
+        screen_write(&frame);
+    }
+
+    /// Reserves `area` rows at the bottom of a terminal `height` rows high and
+    /// clears them. Growing pushes the output up first, so nothing is covered.
+    fn set_area(dock: &mut Dock, area: usize, height: u16, frame: &mut String) {
+        let rows = height as usize;
+        let area = area.min(rows.saturating_sub(1));
+        let bottom = (rows - area) as u16;
+        let mut clear_from = bottom;
+        if height != dock.height {
+            // Resized: the old layout means nothing; output continues inside the new region.
+            dock.out.0 = dock.out.0.min(bottom);
+        } else {
+            let old_bottom = (rows - dock.area) as u16;
+            if dock.out.0 > bottom {
+                let lines = (dock.out.0 - bottom) as usize;
+                frame.push_str(&format!("\x1b[{old_bottom};1H{}", "\n".repeat(lines)));
+                dock.out.0 = bottom;
+            }
+            clear_from = bottom.min(old_bottom);
+        }
+        frame.push_str(&format!("\x1b[1;{bottom}r"));
+        for row in clear_from + 1..=height {
+            frame.push_str(&format!("\x1b[{row};1H\x1b[2K"));
+        }
+        dock.area = area;
+        dock.height = height;
+    }
+
+    /// The docked box, empty, with the cursor back in the output.
+    fn dock_idle(&mut self) -> io::Result<()> {
+        let width = Self::inner_width();
+        let lines = self.box_lines(&Buffer::default(), width, 0, 1);
+        let (_, height) = terminal::size()?;
+        let Some(dock) = &mut self.dock else {
+            return Ok(());
+        };
+        let mut frame = String::new();
+        Self::set_area(dock, 1 + DOCK_EXTRA, height, &mut frame);
+        let top = height as usize - dock.area + 1;
+        for (i, line) in lines.iter().enumerate() {
+            frame.push_str(&format!("\x1b[{};1H{line}", top + i));
+        }
+        frame.push_str(&format!("\x1b[{};{}H", dock.out.0, dock.out.1));
+        screen_write(&frame);
+        Ok(())
+    }
+
+    fn draw_docked(&mut self, buffer: &Buffer, width: usize, hint: &str) -> io::Result<()> {
+        let s = self.style;
+        let (_, height) = terminal::size()?;
+        let rows = buffer.rows(width);
+        let (cursor_row, cursor_column) = buffer.locate(&rows);
+        let visible = rows
+            .len()
+            .min((height as usize / 3).clamp(1, DOCK_MAX_ROWS));
+        let first = (cursor_row + 1).saturating_sub(visible);
+        let lines = self.box_lines(buffer, width, first, visible);
+        let Some(dock) = &mut self.dock else {
+            return Ok(());
+        };
+        let mut frame = String::new();
+        Self::set_area(dock, visible + DOCK_EXTRA, height, &mut frame);
+        let top = height as usize - dock.area + 1;
+        for (i, line) in lines.iter().enumerate() {
+            frame.push_str(&format!("\x1b[{};1H{line}", top + i));
+        }
+        let hint: String = hint.chars().take(width + FRAME_COLS - 2).collect();
+        frame.push_str(&format!(
+            "\x1b[{height};1H{}  {hint}{}",
+            s.gray(),
+            s.reset()
+        ));
+        frame.push_str(&format!(
+            "\x1b[{};{}H",
+            top + 1 + cursor_row - first,
+            5 + cursor_column
+        ));
+        screen_write(&frame);
+        Ok(())
+    }
+
+    /// Top border, `count` text rows from row `first`, bottom border.
+    fn box_lines(&self, buffer: &Buffer, width: usize, first: usize, count: usize) -> Vec<String> {
+        let s = self.style;
+        let rows = buffer.rows(width);
+        let border = "─".repeat(width + FRAME_COLS - 2);
+        let mut lines = vec![format!("{}╭{border}╮{}", s.gray(), s.reset())];
+        for (i, &row) in rows.iter().enumerate().skip(first).take(count) {
+            let text = buffer.row_text(row);
+            let used: usize = text.chars().map(width_of).sum();
+            let mark = if i == 0 { ">" } else { " " };
+            lines.push(format!(
+                "{gray}│{reset} {accent}{mark}{reset} {text}{pad} {gray}│{reset}",
+                gray = s.gray(),
+                reset = s.reset(),
+                accent = s.accent(),
+                pad = " ".repeat(width.saturating_sub(used)),
+            ));
+        }
+        lines.push(format!("{}╰{border}╯{}", s.gray(), s.reset()));
+        lines
     }
 
     fn inner_width() -> usize {
@@ -252,6 +406,10 @@ impl Editor {
         let mut position = self.history.len();
         let mut draft = String::new();
         self.cursor_line = 0;
+        if let Some(dock) = &mut self.dock {
+            // Output moved the cursor since the last draw.
+            dock.out = Self::cursor().unwrap_or(dock.out);
+        }
         loop {
             let width = Self::inner_width();
             self.draw(&buffer, width, hint)?;
@@ -349,51 +507,39 @@ impl Editor {
         Ok(())
     }
 
+    /// Removes the box (inline) or empties it (docked) when the input ends.
     fn erase(&mut self) -> io::Result<()> {
+        if self.dock.is_some() {
+            return self.dock_idle();
+        }
+        let _screen = screen_lock();
         let mut out = io::stderr().lock();
         self.move_to_top(&mut out)?;
         out.flush()
     }
 
     fn draw(&mut self, buffer: &Buffer, width: usize, hint: &str) -> io::Result<()> {
+        if self.dock.is_some() {
+            return self.draw_docked(buffer, width, hint);
+        }
         let s = self.style;
         let rows = buffer.rows(width);
         let (cursor_row, cursor_column) = buffer.locate(&rows);
         // A box taller than the screen shows the rows around the cursor.
         let screen = terminal::size().map_or(24, |(_, lines)| lines as usize);
-        let visible = screen.saturating_sub(4).max(1);
+        let visible = rows.len().min(screen.saturating_sub(4).max(1));
         let first = (cursor_row + 1).saturating_sub(visible);
-        let shown = &rows[first..rows.len().min(first + visible)];
-
-        let border = "─".repeat(width + FRAME_COLS - 2);
-        let mut frame = format!("{}╭{border}╮{}\r\n", s.gray(), s.reset());
-        for (i, &row) in shown.iter().enumerate() {
-            let text = buffer.row_text(row);
-            let used: usize = text.chars().map(width_of).sum();
-            let mark = if first + i == 0 { ">" } else { " " };
-            frame.push_str(&format!(
-                "{gray}│{reset} {accent}{mark}{reset} {text}{pad} {gray}│{reset}\r\n",
-                gray = s.gray(),
-                reset = s.reset(),
-                accent = s.accent(),
-                pad = " ".repeat(width.saturating_sub(used)),
-            ));
-        }
+        let mut frame = self.box_lines(buffer, width, first, visible).join("\r\n");
         let hint: String = hint.chars().take(width + FRAME_COLS - 2).collect();
-        frame.push_str(&format!(
-            "{}╰{border}╯{}\r\n{}  {hint}{}",
-            s.gray(),
-            s.reset(),
-            s.gray(),
-            s.reset()
-        ));
+        frame.push_str(&format!("\r\n{}  {hint}{}", s.gray(), s.reset()));
 
+        let _screen = screen_lock();
         let mut out = io::stderr().lock();
         self.move_to_top(&mut out)?;
         out.write_all(frame.as_bytes())?;
         // The cursor is on the hint line now: top border + rows + bottom border above it.
         let cursor_line = 1 + (cursor_row - first);
-        let up = (shown.len() + 2 - cursor_line) as u16;
+        let up = (visible + 2 - cursor_line) as u16;
         queue!(out, MoveUp(up), MoveToColumn((4 + cursor_column) as u16))?;
         self.cursor_line = cursor_line as u16;
         out.flush()

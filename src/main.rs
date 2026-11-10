@@ -94,7 +94,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         (false, true) => format!("{} + thinking", settings.deepseek.model_type),
         (false, false) => settings.deepseek.model_type.clone(),
     };
-    terminal.banner(&model, &cwd());
+    terminal.open_chat(&model, &cwd());
     while let Some(line) = terminal.input() {
         let prompt = match line.as_str() {
             "" => continue,

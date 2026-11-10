@@ -1,59 +1,139 @@
 #!/usr/bin/env python3
 """Drives `dsc` chat in a pseudo-terminal with scripted keys and prints the screen.
 
-Usage: scripts/pty-drive.py '<python list of keys>'
+Usage: scripts/pty-drive.py '<python list of keys>' [rows] [columns]
 A key is a string, or (string, seconds to wait after it). Examples:
   scripts/pty-drive.py '["/help\\r", "abc", "\\x1b\\r", "def", "\\x1b[A", "X"]'    # no request is sent
   scripts/pty-drive.py '[("how much disk space is free on /\\r", 14), ("\\x04", 1)]' # one live task
 Keys: \\r Enter, \\x1b\\r Alt+Enter, \\x1b[A up, \\x1b[B down, \\x03 Ctrl-C, \\x04 Ctrl-D, \\x15 Ctrl-U.
-Uses DSC_HOME (default var/home) and target/debug/dsc; the screen is 60 columns wide.
+Uses DSC_HOME (default var/home) and target/debug/dsc. Default screen: 24 rows, 60 columns.
+The output shows the lines that scrolled off the top (scrollback), then the screen.
 """
-import os, pty, sys, time, select, re, struct, fcntl, termios
+import fcntl, os, pty, re, select, struct, sys, termios, time
+
 keys = eval(sys.argv[1])
+H = int(sys.argv[2]) if len(sys.argv) > 2 else 24
+W = int(sys.argv[3]) if len(sys.argv) > 3 else 60
+
 pid, fd = pty.fork()
 if pid == 0:
     os.environ['DSC_HOME'] = os.path.abspath(os.environ.get('DSC_HOME', 'var/home'))
     os.execv('./target/debug/dsc', ['dsc'])
-fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', 24, 60, 0, 0))
-out = b''
-def pump(t):
-    global out
-    end = time.time() + t
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', H, W, 0, 0))
+
+# A small terminal: enough of VT100 for what dsc writes.
+rows = [[' '] * W for _ in range(H)]
+scrollback = []
+top, bottom, y, x, saved = 0, H - 1, 0, 0, (0, 0)
+pending = ''
+
+
+def line_feed():
+    global y
+    if y == bottom:
+        line = rows.pop(top)
+        if top == 0:
+            scrollback.append(line)
+        rows.insert(bottom, [' '] * W)
+    elif y < H - 1:
+        y += 1
+
+
+def feed(text):
+    global top, bottom, y, x, saved, pending
+    s = pending + text
+    pending = ''
+    i = 0
+    while i < len(s):
+        c = s[i]
+        if c == '\x1b':
+            if len(s) - i < 2:
+                pending = s[i:]
+                return
+            if s[i + 1] in '78':
+                if s[i + 1] == '7':
+                    saved = (y, x)
+                else:
+                    y, x = saved
+                i += 2
+                continue
+            m = re.match(r'\x1b\[(\??)([0-9;]*)([A-Za-z])', s[i:])
+            if not m:
+                if re.fullmatch(r'\x1b\[\??[0-9;]*', s[i:]):
+                    pending = s[i:]
+                    return
+                i += 1
+                continue
+            private, args, kind = m.groups()
+            nums = [int(n) if n else None for n in args.split(';')] if args else [None]
+            first = nums[0]
+            if private:
+                # Cursor position report request (ESC[6n has no '?'; nothing to do for modes)
+                pass
+            elif kind == 'n' and first == 6:
+                os.write(fd, f'\x1b[{y + 1};{x + 1}R'.encode())
+            elif kind == 'A':
+                y = max(0, y - (first or 1))
+            elif kind == 'G':
+                x = (first or 1) - 1
+            elif kind == 'H':
+                y = min(H - 1, (first or 1) - 1)
+                x = ((nums[1] if len(nums) > 1 else None) or 1) - 1
+            elif kind == 'J':
+                if (first or 0) == 2:
+                    for r in rows:
+                        r[:] = [' '] * W
+                else:
+                    rows[y][x:] = [' '] * (W - x)
+                    for r in rows[y + 1:]:
+                        r[:] = [' '] * W
+            elif kind == 'K':
+                if (first or 0) == 2:
+                    rows[y][:] = [' '] * W
+                else:
+                    rows[y][x:] = [' '] * (W - x)
+            elif kind == 'r':
+                top = (first or 1) - 1
+                bottom = ((nums[1] if len(nums) > 1 else None) or H) - 1
+                y, x = 0, 0
+            i += m.end()
+            continue
+        if c == '\r':
+            x = 0
+        elif c == '\n':
+            line_feed()
+        elif c >= ' ':
+            if x >= W:
+                x = 0
+                line_feed()
+            rows[y][x] = c
+            x += 1
+        i += 1
+
+
+def pump(seconds):
+    end = time.time() + seconds
     while time.time() < end:
-        r, _, _ = select.select([fd], [], [], 0.05)
-        if r:
-            try: out += os.read(fd, 65536)
-            except OSError: return
-pump(0.8)
-for k in keys:
-    w = 0.25
-    if isinstance(k, tuple): k, w = k
-    os.write(fd, k.encode()); pump(w)
+        ready, _, _ = select.select([fd], [], [], 0.05)
+        if ready:
+            try:
+                feed(os.read(fd, 65536).decode('utf8', 'replace'))
+            except OSError:
+                return
+
+
+pump(1.0)
+for key in keys:
+    wait = 0.25
+    if isinstance(key, tuple):
+        key, wait = key
+    os.write(fd, key.encode())
+    pump(wait)
 pump(0.5)
-# minimal screen emulation: rows x cols, handles \r \n, CSI A (up), G (column), J (clear down), K(2), m
-rows = [[' '] * 60 for _ in range(200)]; y = x = 0
-i = 0; s = out.decode('utf8', 'replace')
-while i < len(s):
-    c = s[i]
-    if c == '\x1b':
-        m = re.match(r'\x1b\[(\?)?([0-9;]*)([A-Za-z])', s[i:])
-        if not m: i += 1; continue
-        n = int(m.group(2).split(';')[0] or 1) if m.group(2).split(';')[0].isdigit() or not m.group(2) else 1
-        k = m.group(3)
-        if not m.group(1):
-            if k == 'A': y = max(0, y - n)
-            elif k == 'G': x = n - 1
-            elif k == 'J':
-                rows[y][x:] = [' '] * (60 - x)
-                for r in rows[y + 1:]: r[:] = [' '] * 60
-            elif k == 'K': rows[y][:] = [' '] * 60
-        i += m.end(); continue
-    if c == '\r': x = 0
-    elif c == '\n': y += 1
-    elif c >= ' ':
-        if x < 60: rows[y][x] = c
-        x += 1
-    i += 1
-last = max(j for j, r in enumerate(rows) if ''.join(r).strip())
-print('\n'.join(''.join(r).rstrip() for r in rows[:last + 1]))
-print('cursor', y, x)
+
+for line in scrollback:
+    print('  ^ ' + ''.join(line).rstrip())
+for n, line in enumerate(rows):
+    mark = '-' if top <= n <= bottom else '#'
+    print(f'{n + 1:3}{mark}' + ''.join(line).rstrip())
+print(f'cursor row {y + 1} column {x + 1}; scroll region rows {top + 1}-{bottom + 1}')
