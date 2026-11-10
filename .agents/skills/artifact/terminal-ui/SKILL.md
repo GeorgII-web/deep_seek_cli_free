@@ -140,8 +140,10 @@ Two grays: `Style::key` (lighter) for the key, `Style::faint` (darker) for what 
 
 A modal window centered on the terminal's alternate screen (`ESC[?1049h` … `l`), so the chat is not overwritten
 and comes back as it was; `Terminal::token_dialog` then calls `Editor::refresh_dock` to set the scroll region
-again. Content: title, the reason, how to get the token, the field, the buttons `[ OK ]` and `[ Cancel ]` (the
-focused one inverted), a hint line below.
+again. Content (`dialog::rows`, which also returns the row of the token field): title, the reason, five numbered steps
+to get the token (open the site, open the console with F12 or Ctrl+Shift+J, type `allow pasting`, run the
+`SNIPPET`, paste the token; keys and things to type colored through `Style::inline`), the field, the buttons
+`[ OK ]` and `[ Cancel ]` (the focused one inverted), a hint line below. The README section "Log in" has the same steps.
 
 | Key | Effect |
 |---|---|

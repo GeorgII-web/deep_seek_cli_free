@@ -21,9 +21,16 @@ enum Focus {
     Cancel,
 }
 
-/// The rows of the window, each `width` columns wide. `token_len` = characters
-/// typed so far; they are shown as dots only.
-fn rows(style: Style, width: usize, reason: &str, token_len: usize, focus: Focus) -> Vec<String> {
+/// The rows of the window, each `width` columns wide, and the index of the row
+/// with the token field. `token_len` = characters typed so far; they are shown
+/// as dots only.
+fn rows(
+    style: Style,
+    width: usize,
+    reason: &str,
+    token_len: usize,
+    focus: Focus,
+) -> (Vec<String>, usize) {
     let s = style;
     let inner = width - 4;
     let (gray, reset) = (s.gray(), s.reset());
@@ -89,24 +96,53 @@ fn rows(style: Style, width: usize, reason: &str, token_len: usize, focus: Focus
         buttons_shown,
     );
 
-    vec![
+    // A step of the instructions: `code` spans (keys, things to type) are colored.
+    let step = |text: &str| {
+        let visible = if s.on() {
+            text.replace('`', "")
+        } else {
+            text.to_string()
+        };
+        row(&visible, s.inline(text, ""))
+    };
+    let indented = format!("   {SNIPPET}");
+    let mut lines = vec![
         top,
         plain(""),
         row(reason, format!("{}{reason}{reset}", s.action())),
         plain(""),
-        plain("Open chat.deepseek.com, log in, and run in the DevTools"),
-        plain("console:"),
-        row(SNIPPET, format!("{}{SNIPPET}{reset}", s.code_text())),
-        plain("Then paste the token here. It is saved on this machine only"),
-        plain("and never shown or sent as a message."),
+        row(
+            "How to get the token",
+            format!("{}How to get the token{reset}", s.bold()),
+        ),
+        step("`1.` Open `chat.deepseek.com` in your browser and log in."),
+        step("`2.` Open the console: `F12` or `Ctrl+Shift+J`."),
+        step("`3.` Click into the console input, type `allow pasting`,"),
+        step("   press `Enter`."),
+        step("`4.` Paste this line there and press `Enter`:"),
+        row(&indented, format!("   {}{SNIPPET}{reset}", s.code_text())),
+        step("`5.` Paste the token below (`Ctrl+Shift+V` or right click)."),
         plain(""),
+        row(
+            "It is saved on this machine only: never shown, never sent as",
+            format!(
+                "{}It is saved on this machine only: never shown, never sent as{reset}",
+                s.faint()
+            ),
+        ),
+        row("a message.", format!("{}a message.{reset}", s.faint())),
+        plain(""),
+    ];
+    let token_index = lines.len();
+    lines.extend([
         token_row,
         row(&count, format!("{}{count}{reset}", s.faint())),
         plain(""),
         buttons_row,
         plain(""),
         format!("{gray}╰{}╯{reset}", "─".repeat(width - 2)),
-    ]
+    ]);
+    (lines, token_index)
 }
 
 /// Opens the window and waits. `Some(token)` = OK with a token, `None` = Cancel.
@@ -133,7 +169,7 @@ fn run(style: Style, reason: &str) -> io::Result<Option<String>> {
             .unwrap_or((80, 24));
         let width = WIDTH.min(columns.saturating_sub(2)).max(SNIPPET.len() + 4);
         let reason: String = reason.chars().take(width - 4).collect();
-        let window = rows(s, width, &reason, token.chars().count(), focus);
+        let (window, token_index) = rows(s, width, &reason, token.chars().count(), focus);
         let top = lines.saturating_sub(window.len() + 2) / 2 + 1;
         let left = columns.saturating_sub(width) / 2 + 1;
         let mut frame = String::from("\x1b[2J");
@@ -152,7 +188,7 @@ fn run(style: Style, reason: &str) -> io::Result<Option<String>> {
         // The cursor waits in the token field.
         let field = width - 4 - "Token: ".len();
         let column = left + 2 + "Token: ".len() + token.chars().count().min(field);
-        frame.push_str(&format!("\x1b[{};{column}H", top + 10));
+        frame.push_str(&format!("\x1b[{};{column}H", top + token_index));
         screen_write(&frame);
 
         match event::read()? {
@@ -324,6 +360,7 @@ mod tests {
             token_len,
             focus,
         )
+        .0
     }
 
     #[test]
@@ -333,6 +370,29 @@ mod tests {
                 assert_eq!(row.chars().count(), WIDTH, "{row:?}");
             }
         }
+    }
+
+    #[test]
+    fn the_steps_are_there_and_the_cursor_row_is_the_token_field() {
+        let (window, token_index) = rows(Style::new(false), WIDTH, "r", 3, Focus::Ok);
+        assert!(window[token_index].contains("Token: •••"));
+        let text = window.join("\n");
+        for part in [
+            "`1.` Open",
+            "`F12` or `Ctrl+Shift+J`",
+            "type `allow pasting`",
+            "`4.` Paste this line",
+            SNIPPET,
+            "`5.` Paste the token",
+        ] {
+            assert!(text.contains(part), "{part}");
+        }
+        // With colors the marks are gone.
+        let colored = rows(Style::new(true), WIDTH, "r", 3, Focus::Ok)
+            .0
+            .join("\n");
+        assert!(!colored.contains('`'));
+        assert!(colored.contains("allow pasting"));
     }
 
     #[test]
@@ -347,8 +407,8 @@ mod tests {
     #[test]
     fn the_focused_button_is_inverted() {
         let s = Style::new(true);
-        let ok = rows(s, WIDTH, "r", 1, Focus::Ok).join("\n");
-        let cancel = rows(s, WIDTH, "r", 1, Focus::Cancel).join("\n");
+        let ok = rows(s, WIDTH, "r", 1, Focus::Ok).0.join("\n");
+        let cancel = rows(s, WIDTH, "r", 1, Focus::Cancel).0.join("\n");
         assert!(ok.contains("\x1b[7m[ OK ]") && !ok.contains("\x1b[7m[ Cancel ]"));
         assert!(cancel.contains("\x1b[7m[ Cancel ]") && !cancel.contains("\x1b[7m[ OK ]"));
     }

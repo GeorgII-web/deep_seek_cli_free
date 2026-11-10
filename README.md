@@ -60,19 +60,27 @@ cargo install --path .        # installs `dsc` into ~/.cargo/bin
 
 ## Log in
 
+`dsc` needs the login token of your DeepSeek web account. Start `dsc` (or `dsc login`): a window asks for it and
+shows these steps.
+
 1. Open <https://chat.deepseek.com> in your browser and log in.
-2. Open DevTools → Console and run:
+2. Open the console: **F12** or **Ctrl+Shift+J**.
+3. Click into the console input, type `allow pasting`, press **Enter**. (Chrome asks for this once before it
+   lets you paste.)
+4. Paste this line there and press **Enter**. It copies the token to your clipboard and prints `undefined`:
    ```js
    copy(JSON.parse(localStorage.getItem('userToken')).value)
    ```
-   This copies your login token to the clipboard. (Chrome asks you to type `allow pasting` first.)
-3. Run `dsc` (or `dsc login`): a window asks for the token. Paste it and press Enter. It is shown as dots only.
-4. Run `dsc doctor`:
-   ```console
-   token     ok (challenge DeepSeekHashV1, difficulty 144000)
-   wasm      ok (26612 bytes)
-   pow       ok (870 ms)
-   ```
+5. Back in the `dsc` window, paste the token (**Ctrl+Shift+V** or right click) and press **Enter**. It is shown
+   as dots only.
+
+Check it with `dsc doctor`:
+
+```console
+token     ok (challenge DeepSeekHashV1, difficulty 144000)
+wasm      ok (26612 bytes)
+pow       ok (870 ms)
+```
 
 The token is stored in `~/.config/deep_seek_cli_free/auth.json` with mode 0600. Treat it like a password: it gives full access
 to your DeepSeek account. `dsc logout` removes it.
