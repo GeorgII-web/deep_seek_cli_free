@@ -5,15 +5,13 @@ when done.
 
 | # | Task | Done when |
 |---|---|---|
-| 6 | `agent::protocol`: instruction text, action block parser | unit tests: plain answer, one block, broken JSON, several blocks |
-| 7 | `agent::tools`: `shell` (bash -lc, timeout, process group kill, output cap), `read_file`, `write_file` | unit tests incl. timeout and cap |
-| 8 | `agent::policy` + `ui`: allow/deny lists, ask prompt (`y/a/n/e`), `--yes` | deny wins over `--yes`; tests on the matcher |
-| 9 | `agent::run`: the loop, step limit, Ctrl-C handling, transcript in `sessions/` | `dsc "how much disk space is free"` asks, runs `df`, answers |
-| 10 | `dsc chat` REPL with `--resume`, flags `--think`, `--search`, `--expert` | several tasks in one conversation |
+| 10 | `dsc chat` REPL: several tasks in one conversation; transcript in `<home>/sessions/<id>.jsonl` (prompts, actions, results, session id, last message id) and `--resume` | a second task sees the first; resume continues after a restart |
+| 13 | Display: hide the raw `dsc` block while streaming (the action line shows it already); stream command output live | no JSON noise in a run |
+| 14 | Verify `--search` and `--expert` live; map their fragment types | both give an answer |
 | 11 | `dsc login` over CDP (own Chrome profile) | fresh login without FreeDeepseekAPI |
 | 12 | Skills per artifact (`deepseek-client`, `agent-loop`, `policy`, `build-run-check`), README, release build (musl static), GitHub remote | `cargo build --release --target x86_64-unknown-linux-musl` gives one binary |
 
 ## Open questions
 
 - Binary name `dsc` ok?
-- Not verified live yet: a second turn in one conversation (comes with task 9), search mode, the `expert` model.
+- `~/.config/dsc/config.toml` was written with the first defaults (allow list with `cat`, `head`, `grep`, ...); delete it to get the current ones.

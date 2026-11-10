@@ -127,17 +127,32 @@ impl Default for Policy {
     fn default() -> Self {
         let list = |items: &[&str]| items.iter().map(|s| s.to_string()).collect();
         Self {
+            // No program that prints file content: what it prints goes to DeepSeek.
             allow: list(&[
-                "ls", "pwd", "cat", "head", "tail", "wc", "rg", "grep", "find", "df", "du",
-                "uname", "whoami", "date", "which", "file", "stat",
+                "ls",
+                "pwd",
+                "df",
+                "du",
+                "uname",
+                "whoami",
+                "date",
+                "which",
+                "stat",
+                "wc",
+                "file",
+                "git status",
             ]),
             deny: list(&[
                 "rm -rf /",
+                "rm -rf ~",
                 "mkfs",
                 "dd of=/dev/",
                 "shutdown",
                 "reboot",
                 ":(){",
+                ".ssh/id_",
+                ".aws/credentials",
+                "dsc/auth.json",
             ]),
         }
     }

@@ -5,7 +5,7 @@ description: Architecture of deep_seek_cli_free (binary `dsc`) — the layers (C
 
 # Architecture
 
-State: config, auth, the whole DeepSeek backend (client, proof of work, stream parser, conversation, throttle) work live; the agent is design (`TASKS.md`).
+State: the agent works live end to end (`dsc "<task>"`); `chat`, transcripts and the browser login are design (`TASKS.md`).
 
 ## Decisions
 
@@ -61,8 +61,8 @@ SSE (`stream::Parser`, recorded samples in `src/deepseek/fixtures/`): `event: <n
 
 Fragment `type`: `THINK` → `Event::Thinking`, `RESPONSE` → `Event::Text`, others (search) are dropped.
 
-Verified live on 2026-11-10: the token alone is enough (no cookie); plain and thinking answers parse. Not yet
-verified live: a second turn in one conversation, search mode, the `expert` model.
+Verified live on 2026-11-10: the token alone is enough (no cookie); plain and thinking answers parse. A second turn in
+one conversation works (agent run). Not yet verified live: search mode, the `expert` model.
 
 `model_type`: `default` (fast), `expert`; `thinking_enabled` and `search_enabled` are flags on top.
 Answers of the JSON calls are an envelope `{code, msg, data: {biz_code, biz_msg, biz_data}}` (`client::biz_data`):
@@ -94,10 +94,11 @@ Send times live in `<home>/cache/throttle.json`, so the limits also hold across 
 | `--token` | token pasted on a hidden prompt, cookie optional |
 | (default) | starts the system Chrome with `--remote-debugging-port` and profile `<home>/chrome-profile`, the user logs in, the CLI reads `userToken` and cookies over CDP, closes it; needs WSLg or a desktop |
 
-## Agent protocol
+## Agent protocol (`agent::protocol`, `agent::run`)
 
-First message of a conversation = instructions (role, OS facts, cwd, the action format, "one action per answer,
-then stop") + the user's task. The model answers either plain text (final answer) or ends with exactly one block:
+First message of a conversation = `first_prompt`: role, the action format, the tools, the rules (one action per
+answer, never invent the result, no interactive commands, prefer read-only, plain text when done), the working
+directory, the task. The model answers either plain text (final answer, the loop ends) or with a block:
 
 ````
 ```dsc
@@ -105,18 +106,37 @@ then stop") + the user's task. The model answers either plain text (final answer
 ```
 ````
 
-Tools: `shell` (`cmd`, `timeout_s`), `read_file` (`path`), `write_file` (`path`, `content`). The parser takes
-the last `dsc` fence; broken JSON → the error text goes back to the model. The result goes back as the next
-message: exit code, stdout and stderr, each capped (head + tail) by `agent.max_output_bytes`. The loop ends on
-an answer without a block, `agent.max_steps`, or Ctrl-C (first = stop the running command, second = quit).
+| Tool | Fields | Result message |
+|---|---|---|
+| `shell` | `cmd`, `timeout_s` (optional, capped by `agent.command_timeout_secs`), `why` | `Result: exit code N` / `timed out, killed` / `killed by a signal`, then `--- stdout ---`, `--- stderr ---` or `(no output)` |
+| `read_file` | `path`, `why` | `--- <path> ---` + content |
+| `write_file` | `path`, `content` (whole file), `why` | `Written: <path> (N bytes)` |
+
+- `parse`: lines between a `` ```dsc `` line and a `` ``` `` line; an unclosed block counts. The **first** block
+  runs; further blocks are ignored and the model is told so. Broken JSON, an unknown tool or field → `Invalid`,
+  its text goes back to the model.
+- Output is capped per stream to `agent.max_output_bytes` (`tools::cap`: head + tail, cut on character borders).
+- `tools::shell`: `bash -c`, stdin closed, own process group; timeout or Ctrl-C kills the group; output of a
+  finished command is collected for 0.5 s more at most (a background child may hold the pipe).
+- The loop ends on a final answer, after `agent.max_steps` answers, or on Ctrl-C while waiting for the model
+  (Ctrl-C while a command runs only kills the command and tells the model).
+- The loop knows only the `Backend` and `Ui` traits; `run.rs` tests script both.
 
 ## Approval policy (`agent::policy`)
 
-Order: deny list → `--yes` or allow list → ask. Ask shows the command and `why`: `y` once, `a` always for this
-program in the run, `n` no (the model gets "denied by user" and may try another way), `e` edit before running.
-Config: `policy.allow` (program names run without asking, e.g. `ls`, `cat`, `rg`, `git status`), `policy.deny`
-(patterns never run, even with `--yes`). `shell` runs `bash -lc` in the cwd of the CLI with a timeout and its
-own process group (killed as a tree).
+`check` order: deny list → `--yes` → allowed "always" in this run → allow list → ask.
+
+| Rule | Detail |
+|---|---|
+| `policy.deny` | substring of the command or file path (whitespace squeezed); never runs, also with `--yes` and after an edit; the model is told not to retry |
+| `policy.allow` | a program or a program with its first arguments (`git status`), matched on whole words; only for a simple command, i.e. none of `; & | > < $ ( ) { }` backtick or newline |
+| files | `read_file` and `write_file` always ask without `--yes` |
+| ask (`ui::Terminal::approve`) | `y` once, `a` always in this run (the program of a simple command, or the tool; not offered for compound commands), `n` no (the model may try another way), `e` edit the command, then only the deny list is checked again |
+| no terminal on stdin | a question counts as no |
+
+Defaults: allow = `ls pwd df du uname whoami date which stat wc file`, `git status`; nothing that prints file
+content, because every result is sent to DeepSeek. Deny = destructive patterns plus `.ssh/id_`,
+`.aws/credentials`, `dsc/auth.json`. The deny list is a plain substring guard, not a sandbox.
 
 ## Files
 
@@ -127,7 +147,7 @@ own process group (killed as a tree).
 | `<home>/auth.json` | secret, 0600 |
 | `<home>/cache/sha3.wasm`, `sha3.url` | proof-of-work module and the URL it came from; refetched when `wasm_url` differs |
 | `<home>/cache/throttle.json` | send times of the last hour |
-| `<home>/sessions/<id>.jsonl` | transcript of each run (prompts, actions, results) for `dsc chat --resume` |
+| `<home>/sessions/<id>.jsonl` | planned: transcript of each run for `dsc chat --resume` |
 
 ## Risks
 

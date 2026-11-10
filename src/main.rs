@@ -1,19 +1,19 @@
+mod agent;
 mod auth;
 mod backend;
 mod cli;
 mod config;
 mod deepseek;
+mod ui;
 
 use anyhow::{Result, bail};
 use auth::Auth;
-use backend::{Backend, Event};
 use clap::Parser;
 use cli::{Cli, Command};
 use config::{Paths, Settings};
 use deepseek::client::{Client, TurnOpts};
 use deepseek::pow;
 use deepseek::session::Conversation;
-use std::io::Write;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -40,7 +40,19 @@ async fn main() -> Result<()> {
         }
         Some(Command::Chat { .. }) => bail!("chat: not implemented yet (TASKS.md #10)"),
         None if cli.run.task.is_empty() => bail!("no task given; see `dsc --help`"),
-        None => ask(&paths, &settings, &cli.run).await,
+        None => {
+            let mut conversation = conversation(&paths, &settings, &cli.run)?;
+            let task = cli.run.task.join(" ");
+            let mut terminal = ui::Terminal::default();
+            agent::run::run(
+                &mut conversation,
+                &mut terminal,
+                &task,
+                &settings,
+                cli.run.yes,
+            )
+            .await
+        }
     }
 }
 
@@ -81,31 +93,6 @@ fn conversation(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Resul
         settings.throttle.clone(),
         opts,
     ))
-}
-
-/// Temporary until the agent loop exists (TASKS.md #9): one prompt, the answer is
-/// streamed to stdout, the reasoning dimmed to stderr.
-async fn ask(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<()> {
-    let mut conversation = conversation(paths, settings, run)?;
-    let mut thinking = false;
-    let mut sink = |event: &Event| {
-        match event {
-            Event::Thinking(text) => {
-                thinking = true;
-                eprint!("\x1b[2m{text}\x1b[0m");
-            }
-            Event::Text(text) => {
-                if std::mem::take(&mut thinking) {
-                    eprintln!();
-                }
-                print!("{text}");
-            }
-        }
-        let _ = std::io::stdout().flush();
-    };
-    conversation.ask(&run.task.join(" "), &mut sink).await?;
-    println!();
-    Ok(())
 }
 
 /// Checks each step of a DeepSeek call without sending a prompt.

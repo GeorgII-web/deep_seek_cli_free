@@ -7,7 +7,7 @@ account (chat.deepseek.com), no paid API key. One static binary, no node, no bro
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt), `ask()` = temporary until the agent loop: a task is sent as one prompt, answer streamed to stdout, reasoning dimmed to stderr |
+| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt); `chat` bails "not implemented yet" |
 | `src/backend.rs` | `Backend` trait (`ask(prompt, sink) -> answer text`, one value = one conversation) and `Event` (`Thinking`, `Text`); the agent knows only this |
 | `src/cli.rs` | clap: `Cli` = optional `Command` (`chat --resume`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
 | `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/dsc`; `config()`, `auth()`, `cache()`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing |
@@ -17,8 +17,11 @@ account (chat.deepseek.com), no paid API key. One static binary, no node, no bro
 | `src/deepseek/session.rs` | `Conversation`: session id, `parent_message_id`, wasm cache, `pow_header()`, `send()` with throttle and 429 retries, `impl Backend` (`ask` = send + parse + keep the answer id as next parent); built with the `TurnOpts` of the run |
 | `src/deepseek/throttle.rs` | `delay_ms` (pure rule), `acquire` (wait + record in `<home>/cache/throttle.json`) |
 | `src/deepseek/stream.rs` | `Parser`: `feed(bytes) -> Vec<Event>`, `finish()` (error unless status `FINISHED`), `response_message_id`; tests on the recorded streams in `src/deepseek/fixtures/` |
-| `src/agent/` `[ ]` | `protocol.rs` prompt + action parser, `run.rs` loop, `tools.rs` shell/read/write, `policy.rs` approval |
-| `src/ui.rs` `[ ]` | streamed output, approval prompt, colors |
+| `src/agent/protocol.rs` | `Action` (`shell`, `read_file`, `write_file`), `first_prompt` (rules + task), `parse` → `Final` / `Action` / `Invalid`, `shell_result` text |
+| `src/agent/policy.rs` | `check` → `Allow` / `Ask` / `Deny`, `always_key` (what "always" covers) |
+| `src/agent/tools.rs` | `shell` (bash, own process group, timeout, Ctrl-C, output collected), `cap`, `read_file`, `write_file` |
+| `src/agent/run.rs` | `run` (the loop), `act` (check, ask, edit), `execute`; `Ui` trait and `Decision`; loop tests with a scripted backend |
+| `src/ui.rs` | `Terminal` = `Ui` on the terminal: streamed answer, approval question, result preview, notes |
 
 ## Skills (`.agents/skills`, read the one that matches before working)
 
@@ -31,7 +34,9 @@ account (chat.deepseek.com), no paid API key. One static binary, no node, no bro
 - Every code piece is described in a skill; update the skill in the same change.
 - DeepSeek specifics (URLs, headers, wasm URL, model types) live only in `src/deepseek/`; the agent talks to the
   `Backend` trait.
-- No command runs without passing `agent::policy`; the default is ask.
+- No action runs without passing `agent::policy`; the default is ask.
+- What an action prints goes to DeepSeek: the default allow list has no program that prints file content.
+- Never run `dsc --yes` against the live account from an agent session; test the loop with the scripted backend.
 - Secrets (`auth.json`, tokens, cookies) never in the repo, logs or error messages.
 - Work and temp files go to git-ignored `var/`.
 
