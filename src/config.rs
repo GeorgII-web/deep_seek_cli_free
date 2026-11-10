@@ -96,22 +96,40 @@ pub struct Throttle {
     pub min_interval_ms: u64,
     /// Random extra gap, 0..=this
     pub jitter_ms: u64,
+    /// Requests allowed in any 60 seconds; 0 = no cap
+    pub max_per_minute: u32,
     /// Requests allowed in any 60 minutes; 0 = no cap
     pub max_per_hour: u32,
     /// Retries after HTTP 429
     pub retries_on_429: u32,
-    /// Wait before such a retry when the server sent no `Retry-After`
+    /// Wait before the first such retry when the server sent no `Retry-After`;
+    /// doubled for each further one, and kept as a pause for later runs
     pub wait_on_429_secs: u64,
 }
 
-impl Default for Throttle {
-    fn default() -> Self {
+impl Throttle {
+    /// The defaults of the first versions; they proved too fast for the free account.
+    fn first_defaults() -> Self {
         Self {
             min_interval_ms: 3000,
             jitter_ms: 2000,
             max_per_hour: 120,
             retries_on_429: 2,
             wait_on_429_secs: 60,
+            ..Self::default()
+        }
+    }
+}
+
+impl Default for Throttle {
+    fn default() -> Self {
+        Self {
+            min_interval_ms: 6000,
+            jitter_ms: 4000,
+            max_per_minute: 5,
+            max_per_hour: 60,
+            retries_on_429: 2,
+            wait_on_429_secs: 120,
         }
     }
 }
@@ -218,7 +236,8 @@ impl Settings {
         let text = fs::read_to_string(&file).with_context(|| format!("read {}", file.display()))?;
         let mut settings: Self =
             toml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
-        if settings.guard_auth_file() {
+        // Both run: the first `|` is not short-circuit on purpose.
+        if settings.guard_auth_file() | settings.slow_down() {
             settings.save(paths)?;
         }
         Ok(settings)
@@ -229,6 +248,16 @@ impl Settings {
         let file = paths.config();
         fs::write(&file, toml::to_string_pretty(self)?)
             .with_context(|| format!("write {}", file.display()))
+    }
+
+    /// A config still holding the first throttle defaults gets the current, slower
+    /// ones; values the user changed are kept. Returns true when something changed.
+    fn slow_down(&mut self) -> bool {
+        if self.throttle == Throttle::first_defaults() {
+            self.throttle = Throttle::default();
+            return true;
+        }
+        false
     }
 
     /// A deny list written before the folder was renamed protects only the old
@@ -329,6 +358,29 @@ mod tests {
                 .unwrap()
                 .contains("deep_seek_cli_free/auth.json")
         );
+        fs::remove_dir_all(paths.home).unwrap();
+    }
+
+    #[test]
+    fn first_throttle_defaults_are_replaced_and_own_values_kept() {
+        let paths = Paths {
+            home: temp_dir("slow"),
+        };
+        let old = "[throttle]\nmin_interval_ms = 3000\njitter_ms = 2000\nmax_per_hour = 120\nretries_on_429 = 2\nwait_on_429_secs = 60\n";
+        fs::write(paths.config(), old).unwrap();
+        assert_eq!(
+            Settings::load_or_create(&paths).unwrap().throttle,
+            Throttle::default()
+        );
+        assert!(
+            fs::read_to_string(paths.config())
+                .unwrap()
+                .contains("min_interval_ms = 6000")
+        );
+
+        fs::write(paths.config(), old.replace("3000", "1000")).unwrap();
+        let own = Settings::load_or_create(&paths).unwrap().throttle;
+        assert_eq!((own.min_interval_ms, own.max_per_hour), (1000, 120));
         fs::remove_dir_all(paths.home).unwrap();
     }
 }

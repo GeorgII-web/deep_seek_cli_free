@@ -2,10 +2,12 @@
 //! because every `dsc` call is a new process.
 
 use crate::config::{Paths, Throttle as Settings};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const HOUR_MS: u64 = 3_600_000;
+const MINUTE_MS: u64 = 60_000;
 
 fn now_ms() -> u64 {
     SystemTime::now()
@@ -14,34 +16,70 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
-/// How long to wait before the next request, given the send times (ms) of earlier ones.
-pub fn delay_ms(settings: &Settings, sent: &[u64], now: u64, jitter: u64) -> u64 {
-    let mut wait = 0;
-    if let Some(last) = sent.iter().max() {
-        let gap = settings.min_interval_ms + jitter;
-        wait = (last + gap).saturating_sub(now);
-    }
-    let in_hour: Vec<u64> = sent.iter().copied().filter(|t| t + HOUR_MS > now).collect();
-    if settings.max_per_hour > 0 && in_hour.len() as u64 >= settings.max_per_hour as u64 {
-        // Wait until the oldest request that still counts leaves the hour window.
-        let mut sorted = in_hour;
-        sorted.sort_unstable();
-        let blocking = sorted[sorted.len() - settings.max_per_hour as usize];
-        wait = wait.max((blocking + HOUR_MS).saturating_sub(now));
-    }
-    wait
+/// What is remembered between runs (`<home>/cache/throttle.json`).
+#[derive(Default, Serialize, Deserialize)]
+struct State {
+    /// Send times (ms) of the last hour
+    sent: Vec<u64>,
+    /// After a "too many requests" answer: no request before this time (ms)
+    #[serde(default)]
+    cooldown_until: u64,
 }
 
-/// Waits as the settings ask, then records the request. `on_wait` is told the
-/// time before a wait starts.
+fn file(paths: &Paths) -> std::path::PathBuf {
+    paths.cache().join("throttle.json")
+}
+
+fn load(paths: &Paths) -> State {
+    let text = fs::read_to_string(file(paths)).unwrap_or_default();
+    // The first versions stored only the list of send times.
+    serde_json::from_str::<State>(&text)
+        .or_else(|_| {
+            serde_json::from_str::<Vec<u64>>(&text).map(|sent| State {
+                sent,
+                cooldown_until: 0,
+            })
+        })
+        .unwrap_or_default()
+}
+
+fn save(paths: &Paths, state: &State) {
+    let _ = fs::create_dir_all(paths.cache());
+    let _ = fs::write(
+        file(paths),
+        serde_json::to_string(state).unwrap_or_default(),
+    );
+}
+
+/// Wait until fewer than `max` of `sent` lie inside the last `window` ms; 0 = no cap.
+fn window_wait(sent: &[u64], now: u64, window: u64, max: u32) -> u64 {
+    let mut inside: Vec<u64> = sent.iter().copied().filter(|t| t + window > now).collect();
+    if max == 0 || inside.len() < max as usize {
+        return 0;
+    }
+    // The oldest request that still counts must leave the window.
+    inside.sort_unstable();
+    let blocking = inside[inside.len() - max as usize];
+    (blocking + window).saturating_sub(now)
+}
+
+/// How long to wait before the next request, given the send times (ms) of earlier ones.
+pub fn delay_ms(settings: &Settings, sent: &[u64], now: u64, jitter: u64) -> u64 {
+    let gap = match sent.iter().max() {
+        Some(last) => (last + settings.min_interval_ms + jitter).saturating_sub(now),
+        None => 0,
+    };
+    gap.max(window_wait(sent, now, MINUTE_MS, settings.max_per_minute))
+        .max(window_wait(sent, now, HOUR_MS, settings.max_per_hour))
+}
+
+/// Waits as the settings ask (gap, per-minute and per-hour caps, a cooldown left
+/// by an earlier "too many requests"), then records the request. `on_wait` is
+/// told the time before a wait starts.
 pub async fn acquire(paths: &Paths, settings: &Settings, on_wait: &mut dyn FnMut(Duration)) {
-    let file = paths.cache().join("throttle.json");
     let now = now_ms();
-    let mut sent: Vec<u64> = fs::read_to_string(&file)
-        .ok()
-        .and_then(|text| serde_json::from_str(&text).ok())
-        .unwrap_or_default();
-    sent.retain(|t| t + HOUR_MS > now && *t <= now);
+    let mut state = load(paths);
+    state.sent.retain(|t| t + HOUR_MS > now && *t <= now);
 
     let jitter = match settings.jitter_ms {
         0 => 0,
@@ -54,14 +92,21 @@ pub async fn acquire(paths: &Paths, settings: &Settings, on_wait: &mut dyn FnMut
                 % (max + 1)
         }
     };
-    let wait = Duration::from_millis(delay_ms(settings, &sent, now, jitter));
+    let cooldown = state.cooldown_until.saturating_sub(now);
+    let wait = Duration::from_millis(delay_ms(settings, &state.sent, now, jitter).max(cooldown));
     if !wait.is_zero() {
         on_wait(wait);
         tokio::time::sleep(wait).await;
     }
-    sent.push(now_ms());
-    let _ = fs::create_dir_all(paths.cache());
-    let _ = fs::write(&file, serde_json::to_string(&sent).unwrap_or_default());
+    state.sent.push(now_ms());
+    save(paths, &state);
+}
+
+/// Remembers that DeepSeek asked to slow down: no request for `secs`, also in a later run.
+pub fn cooldown(paths: &Paths, secs: u64) {
+    let mut state = load(paths);
+    state.cooldown_until = now_ms() + secs * 1000;
+    save(paths, &state);
 }
 
 #[cfg(test)]
@@ -72,6 +117,7 @@ mod tests {
         Settings {
             min_interval_ms,
             jitter_ms: 0,
+            max_per_minute: 0,
             max_per_hour,
             ..Settings::default()
         }
@@ -101,5 +147,37 @@ mod tests {
             delay_ms(&s, &[now - 70 * 60_000, now - 10 * 60_000], now, 0),
             0
         );
+    }
+
+    #[test]
+    fn minute_cap_spreads_a_burst() {
+        let s = Settings {
+            min_interval_ms: 0,
+            jitter_ms: 0,
+            max_per_minute: 3,
+            max_per_hour: 0,
+            ..Settings::default()
+        };
+        let now = 10 * HOUR_MS;
+        // Three requests in the last 30 s: the fourth waits until the first is a minute old.
+        let sent = [now - 30_000, now - 20_000, now - 10_000];
+        assert_eq!(delay_ms(&s, &sent, now, 0), 30_000);
+        assert_eq!(delay_ms(&s, &sent[1..], now, 0), 0);
+    }
+
+    #[test]
+    fn old_state_file_is_read_and_cooldown_is_kept() {
+        let paths = Paths {
+            home: std::env::temp_dir().join(format!("dsc-throttle-{}", std::process::id())),
+        };
+        fs::create_dir_all(paths.cache()).unwrap();
+        fs::write(file(&paths), "[1,2,3]").unwrap();
+        assert_eq!(load(&paths).sent, [1, 2, 3]);
+        cooldown(&paths, 90);
+        let state = load(&paths);
+        assert_eq!(state.sent, [1, 2, 3]);
+        let left = state.cooldown_until - now_ms();
+        assert!((80_000..=90_000).contains(&left), "{left}");
+        fs::remove_dir_all(paths.home).unwrap();
     }
 }

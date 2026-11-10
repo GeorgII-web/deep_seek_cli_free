@@ -105,7 +105,7 @@ watcher and the agent loop (`Terminal::mode`). With a terminal it is shown as `S
 
 | Line | Content |
 |---|---|
-| under the box (`Editor::hint_line`) | mode label, then the `(key, meaning)` pairs of `INPUT_HINTS` (or `EDIT_HINTS`) that fit the width, most important first |
+| under the box (`Editor::hint_line`) | left: mode label and the hint of `MODE_KEY` (Shift+Tab); right, ending at the box edge: the other `(key, meaning)` pairs of `INPUT_HINTS` (or `EDIT_HINTS`, `MENU_HINTS`) that fit, most important first |
 | progress line (`Spinner`) | spinner, label, clock, then the hint `Esc to stop` or a 2 s notice, then the mode label |
 
 Two grays: `Style::key` (lighter) for the key, `Style::faint` (darker) for what it does and the ` · ` separators.

@@ -126,7 +126,7 @@ There is 809G free on / (out of 1007G, 16% used).
 ╭──────────────────────────────────────────────────────────────╮
 │ > which command did you run for that?                        │
 ╰──────────────────────────────────────────────────────────────╯
-  ⏵ ask · Shift+Tab mode · Enter send · Alt+Enter new line · Ctrl-C twice quit · ↑↓ history · /help
+  ⏵ ask · Shift+Tab mode   Enter send · Alt+Enter new line · Ctrl-C twice quit · ↑↓ history · /help
 ```
 
 While `dsc` works, the line under the box shows what it waits for and for how long
@@ -230,12 +230,13 @@ search = false
 locale = "en"
 timeout_secs = 180
 
-[throttle]                  # keeps the request rate low
-min_interval_ms = 3000      # minimum gap between two requests, also across runs
-jitter_ms = 2000            # random extra gap
-max_per_hour = 120          # 0 = no cap
-retries_on_429 = 2
-wait_on_429_secs = 60
+[throttle]                  # keeps the request rate low, so the account is not blocked
+min_interval_ms = 6000      # minimum gap between two requests, also across runs
+jitter_ms = 4000            # random extra gap
+max_per_minute = 5          # 0 = no cap
+max_per_hour = 60           # 0 = no cap
+retries_on_429 = 2          # retries when DeepSeek says "too many requests"
+wait_on_429_secs = 120      # pause before the first retry; doubled for each further one
 
 [agent]
 max_steps = 25              # answers of the model per task
@@ -247,6 +248,10 @@ mode = "ask"                # or "allow_all"; the last mode you chose is saved h
 allow = ["ls", "pwd", "df", "du", "uname", "whoami", "date", "which", "stat", "wc", "file", "git status"]
 deny = ["rm -rf /", "rm -rf ~", "mkfs", "dd of=/dev/", "shutdown", "reboot", ":(){", ".ssh/id_", ".aws/credentials", "deep_seek_cli_free/auth.json", "dsc/auth.json"]
 ```
+
+When `dsc` has to wait for one of these limits, the progress line says so. A pause after "too many requests" is
+remembered, so a new start does not run straight into the limit again. A config that still has the first, faster
+defaults is moved to these values automatically; numbers you changed yourself are kept.
 
 An `allow` entry is a program, or a program with its first arguments (`git status`). It applies only to simple
 commands: anything with `; & | > < $ ( )` asks.

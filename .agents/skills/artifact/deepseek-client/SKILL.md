@@ -15,7 +15,7 @@ trait (`src/backend.rs`), implemented by `session::Conversation`. Reference for 
 | `pow.rs` | `solve`, `header` |
 | `stream.rs` | `Parser` (`feed`, `finish`, `response_message_id`) |
 | `session.rs` | `Conversation` (`wasm`, `pow_header`, `send`, `send_once`, `ask`); reports progress to the sink as `Event::Status` ("Pausing N s (throttle)" for a wait of a second or more, "Opening conversation", "Solving proof of work", "Waiting for DeepSeek", "Rate limited by DeepSeek, retry in N s") |
-| `throttle.rs` | `delay_ms` (pure rule), `acquire` (calls `on_wait` before it sleeps) |
+| `throttle.rs` | `delay_ms` and `window_wait` (pure rules), `acquire` (calls `on_wait` before it sleeps), `cooldown` |
 | `fixtures/` | recorded SSE bodies used by the parser tests |
 
 ## Calls
@@ -60,13 +60,20 @@ Every completion call goes through `throttle::acquire` (in `Conversation::send`)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `min_interval_ms` | 3000 | minimum gap between two requests |
-| `jitter_ms` | 2000 | random extra gap, 0..=value |
-| `max_per_hour` | 120 | requests in any 60 minutes, 0 = no cap; when reached the CLI waits and shows it in the progress line |
+| `min_interval_ms` | 6000 | minimum gap between two requests |
+| `jitter_ms` | 4000 | random extra gap, 0..=value |
+| `max_per_minute` | 5 | requests in any 60 seconds, 0 = no cap |
+| `max_per_hour` | 60 | requests in any 60 minutes, 0 = no cap; when a cap is reached the CLI waits and shows it in the progress line |
 | `retries_on_429` | 2 | retries after HTTP 429 |
-| `wait_on_429_secs` | 60 | wait before such a retry when there is no `Retry-After` |
+| `wait_on_429_secs` | 120 | pause before the first such retry without `Retry-After`; doubled for each further one |
 
-Send times live in `<home>/cache/throttle.json`, so the limits also hold across separate `dsc` runs.
+State in `<home>/cache/throttle.json` (`State`: `sent` = send times of the last hour, `cooldown_until`), so the
+limits also hold across separate `dsc` runs; the first versions' plain list is still read. Every 429 calls
+`throttle::cooldown`, also the last one that fails the task: the next request, even of a new run, waits it out.
+`delay_ms` = the largest of the gap and the two window waits (`window_wait`).
+
+The first defaults (3 s gap, 120 per hour) got the account blocked within hours (2026-11-10).
+`Settings::slow_down` replaces a config that still holds exactly those values with the current defaults.
 
 ## When the site changes
 

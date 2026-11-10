@@ -255,6 +255,8 @@ pub struct Editor {
 /// A slash command: name with the slash, what it does.
 pub type Command = (&'static str, &'static str);
 
+/// The key that switches the mode: its hint stays on the left, next to the mode.
+const MODE_KEY: &str = "Shift+Tab";
 const MENU_HINTS: &[(&str, &str)] = &[
     ("↑↓", "choose"),
     ("Enter", "run"),
@@ -346,28 +348,40 @@ impl Editor {
         self.mode = Some(mode);
     }
 
-    /// The line under the box: the mode, then as many `(key, meaning)` hints as fit in `max` columns.
+    /// The line under the box, `max` columns wide: on the left the mode and the
+    /// key that switches it, on the right (up to the box edge) as many of the other
+    /// `(key, meaning)` hints as fit.
     fn hint_line(&self, hints: &[(&str, &str)], max: usize) -> String {
         let s = self.style;
         let dot = format!("{} · {}", s.faint(), s.reset());
-        let (mut line, mut used) = (String::new(), 0);
+        let (mut left, mut left_columns) = (String::new(), 0);
         if let Some(mode) = &self.mode {
             let allow_all = mode.load(Ordering::Relaxed);
-            line.push_str(&s.mode_label(allow_all));
-            used += if allow_all { 12 } else { 5 };
+            left.push_str(&s.mode_label(allow_all));
+            left_columns += if allow_all { 12 } else { 5 };
         }
+        let (mut right, mut right_columns) = (String::new(), 0);
         for (key, what) in hints {
-            let columns = key.chars().count() + what.chars().count() + 4;
-            if used + columns > max {
+            let item = key.chars().count() + what.chars().count() + usize::from(!what.is_empty());
+            let on_left = *key == MODE_KEY && self.mode.is_some();
+            let other = if on_left { right_columns } else { left_columns };
+            let (side, used) = match on_left {
+                true => (&mut left, &mut left_columns),
+                false => (&mut right, &mut right_columns),
+            };
+            let separator = if side.is_empty() { 0 } else { 3 };
+            // Two columns stay between the sides.
+            if *used + separator + item + other + 2 > max {
                 break;
             }
-            if !line.is_empty() {
-                line.push_str(&dot);
+            if separator > 0 {
+                side.push_str(&dot);
             }
-            line.push_str(&s.hint(key, what));
-            used += columns;
+            side.push_str(&s.hint(key, what));
+            *used += separator + item;
         }
-        line
+        let gap = max.saturating_sub(left_columns + right_columns);
+        format!("{left}{}{right}", " ".repeat(gap))
     }
 
     /// The cursor as row and column, 1-based; `None` when the terminal does not answer.
@@ -561,8 +575,8 @@ impl Editor {
             selected = selected.min(items.len().saturating_sub(1));
             let hint = match (armed_now, items.is_empty()) {
                 (true, _) => format!("{}{AGAIN_HINT}{}", self.style.action(), self.style.reset()),
-                (false, false) => self.hint_line(MENU_HINTS, width + FRAME_COLS - 4),
-                (false, true) => self.hint_line(hints, width + FRAME_COLS - 4),
+                (false, false) => self.hint_line(MENU_HINTS, width + FRAME_COLS - 2),
+                (false, true) => self.hint_line(hints, width + FRAME_COLS - 2),
             };
             let menu = self.menu_lines(&items, selected, width + FRAME_COLS - 2);
             self.draw(&buffer, width, &menu, &hint)?;

@@ -37,7 +37,8 @@ DSC_TEST_WASM=$PWD/var/tmp/sha3.wasm cargo test -- --ignored --nocapture
 | input box, drawn screen | `scripts/pty-drive.py '["/help\r", "abc", "\x1b\r", "def"]'` | pseudo-terminal, scripted keys; optional rows and columns; prints scrollback, screen and cursor; sends a request only when a task line is submitted |
 
 - Never run `dsc --yes` against the live account from an agent session.
-- Every live prompt counts against the user's account: a few per change, the throttle stays on.
+- Every live prompt counts against the user's account, and many in a day got it blocked once: at most one or
+  two live tasks per change, none when the scripted tests and the pseudo-terminal cover it; the throttle stays on.
 - Record a new stream shape: put a temporary dump of `chunk` into the loop of `Conversation::ask`, save the body
   under `src/deepseek/fixtures/`, add a parser test, remove the dump. A fixture holds only the test prompt's answer.
 

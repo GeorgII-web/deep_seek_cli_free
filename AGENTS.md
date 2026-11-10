@@ -18,7 +18,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/deepseek/client.rs` | `Client`: headers, `create_session`, `create_challenge`, `completion` (returns the SSE response), `fetch_wasm`; `ApiError` (`TokenDead`, `RateLimited`), envelope check `biz_data` |
 | `src/deepseek/pow.rs` | `solve(wasm, challenge)` in `wasmi`, `header()` = `X-DS-PoW-Response` value |
 | `src/deepseek/session.rs` | `Conversation`: session id, `parent_message_id`, wasm cache, `pow_header()`, `send()` with throttle and 429 retries, `impl Backend` (`ask` = send + parse + keep the answer id as next parent); built with the `TurnOpts` of the run |
-| `src/deepseek/throttle.rs` | `delay_ms` (pure rule), `acquire` (wait + record in `<home>/cache/throttle.json`) |
+| `src/deepseek/throttle.rs` | `delay_ms` (gap, per-minute and per-hour caps), `acquire` (wait + record in `<home>/cache/throttle.json`), `cooldown` (pause after a 429, kept across runs) |
 | `src/deepseek/stream.rs` | `Parser`: `feed(bytes) -> Vec<Event>`, `finish()` (error unless status `FINISHED`), `response_message_id`; tests on the recorded streams in `src/deepseek/fixtures/` |
 | `src/agent/protocol.rs` | `Action` (`shell`, `read_file`, `write_file`), `first_prompt` (rules + task), `next_prompt` (a further task), `parse` → `Final` / `Done` / `Action` / `Invalid`, `shell_result` text |
 | `src/agent/policy.rs` | `check` → `Allow` / `Ask` / `Deny`, `always_key` (what "always" covers) |

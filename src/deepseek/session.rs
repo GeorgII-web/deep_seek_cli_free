@@ -97,9 +97,17 @@ impl Conversation {
             throttle::acquire(&self.paths, &self.throttle, &mut on_wait).await;
             match self.send_once(prompt, sink).await {
                 Err(err) => match err.downcast_ref::<ApiError>() {
-                    Some(ApiError::RateLimited(after)) if retries > 0 => {
+                    Some(ApiError::RateLimited(after)) => {
+                        // Each further "too many requests" doubles the pause. It is also
+                        // written down, so a new run does not start right into the limit.
+                        let attempt = self.throttle.retries_on_429 - retries;
+                        let secs =
+                            after.unwrap_or(self.throttle.wait_on_429_secs << attempt.min(6));
+                        throttle::cooldown(&self.paths, secs);
+                        if retries == 0 {
+                            return Err(err);
+                        }
                         retries -= 1;
-                        let secs = after.unwrap_or(self.throttle.wait_on_429_secs);
                         sink(&Event::Status(format!(
                             "Rate limited by DeepSeek, retry in {secs} s"
                         )));
