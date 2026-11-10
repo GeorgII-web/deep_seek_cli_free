@@ -7,6 +7,7 @@
 //! bottom, output scrolls above it; everything goes to stdout.
 //! Without a terminal there are no colors, no spinner and no box.
 
+pub mod banner;
 pub mod editor;
 pub mod render;
 pub mod spinner;
@@ -300,8 +301,20 @@ impl Terminal {
             screen_write("\x1b[2J\x1b[H");
             self.screen = true;
         }
+        // The picture needs a terminal; a piped chat gets the plain lines only.
+        if docked {
+            let columns = crossterm::terminal::size().map_or(80, |(columns, _)| columns as usize);
+            let art = banner::art(s, columns);
+            if !art.is_empty() {
+                self.line("");
+                for line in &art {
+                    self.line(line);
+                }
+                self.line("");
+            }
+        }
         self.line(&format!(
-            "{}{}✻ dsc{} {}{} · DeepSeek web · {model}{}",
+            "{}{}  ✻ dsc{} {}{} · DeepSeek web · {model}{}",
             s.bold(),
             s.accent(),
             s.reset(),
@@ -312,7 +325,7 @@ impl Terminal {
         self.line(&format!("{}  {cwd}{}", s.gray(), s.reset()));
         self.line("");
         self.line(&s.inline(
-            "  `/help` commands and keys · `Shift+Tab` ask / allow all · `Esc` stops a task · `Ctrl-C` twice quits",
+            "  `/` commands · `Shift+Tab` mode · `Esc` stops a task · `Ctrl-C` twice quits",
             s.gray(),
         ));
         self.line("");

@@ -11,6 +11,7 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 | File | Content |
 |---|---|
 | `src/ui/mod.rs` | `Terminal` (`line`, `partial`, `text` = the only print paths); `screen_lock`, `screen_write`; constants `RESULT_LINES` (8), `INPUT_HINTS`, `EDIT_HINTS`, `COMMANDS` |
+| `src/ui/banner.rs` | `art(style, columns)`: the start picture; `glyph` holds the 5-row letters (`#` = filled cell) |
 | `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history, command menu), `command_matches`, `Dock`, `Input`, `read_choice`, `RawMode` |
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
 | `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`, `set_mode`; `Notifier` (a 2 s notice in place of the key hint) |
@@ -25,6 +26,9 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 
 Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_idle`, `close_dock`):
 
+- `open_chat` prints, after the clear: the picture "DEEP SEEK CLI FREE" (`banner::art`: one band from 78
+  columns, two bands from 42, none below; blue, gray and green shades per row, plain blocks without colors; only
+  in the screen layout), then version and model, the working directory and the key hint line.
 - The rows above the dock are a scroll region (`ESC[1;<bottom>r`). Output written there scrolls inside it and
   leaves through the top into the terminal's own scrollback; the dock rows are never touched by output.
 - The dock = top border, 1 to `DOCK_MAX_ROWS` (10, at most a third of the screen) text rows, bottom border,

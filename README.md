@@ -76,7 +76,14 @@ input is a task in the same conversation, so the model remembers what it did bef
 
 ```console
 $ dsc
-✻ dsc 0.1.0 · DeepSeek web · default
+
+  ███  ████ ████ ███    ███ ████ ████ █  █   ███ █    ███  ████ ███  ████ ████
+  █  █ █    █    █  █  █    █    █    █ █   █    █     █   █    █  █ █    █
+  █  █ ███  ███  ███    ██  ███  ███  ██    █    █     █   ███  ███  ███  ███
+  █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
+  ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
+
+  ✻ dsc 0.1.0 · DeepSeek web · default
 
 > how much disk space is free on / ?
 
