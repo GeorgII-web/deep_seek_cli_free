@@ -1,0 +1,5 @@
+/target
+/var
+/.idea
+auth.json
+deepseek-auth.json

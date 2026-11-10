@@ -1,0 +1,17 @@
+[package]
+name = "deep_seek_cli_free"
+version = "0.1.0"
+edition = "2024"
+description = "CLI agent that runs commands on this machine, driven by the free DeepSeek web account"
+
+[[bin]]
+name = "dsc"
+path = "src/main.rs"
+
+[dependencies]
+
+[profile.release]
+codegen-units = 1
+lto = true
+panic = "abort"
+strip = true
