@@ -173,3 +173,7 @@ The agent loop is tested with a scripted model, the stream parser with recorded 
 ## Credits
 
 The web protocol was learned from [FreeDeepseekAPI](https://github.com/ForgetMeAI/FreeDeepseekAPI).
+
+## License
+
+[MIT](LICENSE)
