@@ -32,7 +32,7 @@ cli  →  agent::run (loop)  →  Backend trait  →  deepseek::{client, pow, st
 ```
 
 `Backend` (`src/backend.rs`): `async fn ask(&mut self, prompt, sink: &mut dyn FnMut(&Event)) -> Result<String>`;
-`Event` = `Thinking(String) | Text(String)`. One `Backend` value = one conversation; the returned string is the
+`Event` = `Thinking(String) | Text(String) | Status(String)` (progress label). One `Backend` value = one conversation; the returned string is the
 answer without the reasoning.
 
 `Ui` (`src/agent/run.rs`): what the loop shows and asks; `ui::Terminal` is the real one. The loop knows only the
@@ -42,7 +42,8 @@ two traits, so its tests script both.
 |---|---|
 | `src/main.rs`, `src/cli.rs`, `src/config.rs`, `src/auth.rs` | `../../artifact/cli-config-auth/SKILL.md` |
 | `src/backend.rs`, `src/deepseek/*` | `../../artifact/deepseek-client/SKILL.md` |
-| `src/agent/protocol.rs`, `run.rs`, `tools.rs`, `src/ui.rs` | `../../artifact/agent-loop/SKILL.md` |
+| `src/agent/protocol.rs`, `run.rs`, `tools.rs` | `../../artifact/agent-loop/SKILL.md` |
+| `src/ui/*` | `../../artifact/terminal-ui/SKILL.md` |
 | `src/agent/policy.rs`, the approval question | `../../artifact/approval-policy/SKILL.md` |
 | gates, live checks, release, publishing | `../../quality-gate/build-run-check/SKILL.md` |
 
@@ -53,6 +54,7 @@ two traits, so its tests script both.
 | `<home>` | `$DSC_HOME`, else `~/.config/dsc` |
 | `<home>/config.toml` | `deepseek.*` (model type, thinking, search, locale, timeout), `throttle.*`, `agent.*`, `policy.*` |
 | `<home>/auth.json` | secret, 0600 |
+| `<home>/history.json` | the last 200 chat inputs |
 | `<home>/cache/sha3.wasm`, `sha3.url` | proof-of-work module and the URL it came from; refetched when `wasm_url` differs |
 | `<home>/cache/throttle.json` | send times of the last hour |
 | `<home>/sessions/<id>.jsonl` | planned: transcript of each run for `dsc chat --resume` |

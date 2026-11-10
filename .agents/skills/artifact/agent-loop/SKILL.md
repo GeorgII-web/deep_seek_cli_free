@@ -1,6 +1,6 @@
 ---
 name: agent-loop
-description: The agent in `src/agent/` and `src/ui.rs` — the text protocol that emulates tool calls (`protocol.rs`, first prompt, `dsc` action block, parser, result messages), the tools (`tools.rs`, shell in its own process group, output cap, file read and write), the loop and the `Ui` trait (`run.rs`) and the terminal output. Use when the model's actions are parsed wrong, a tool misbehaves, a tool is added, the prompt or the loop end conditions change.
+description: The agent in `src/agent/` — the text protocol that emulates tool calls (`protocol.rs`, first prompt, `dsc` action block, parser, result messages), the tools (`tools.rs`, shell in its own process group, output cap, file read and write), the loop and the `Ui` trait (`run.rs`). Use when the model's actions are parsed wrong, a tool misbehaves, a tool is added, the prompt or the loop end conditions change.
 ---
 
 # Agent loop
@@ -13,7 +13,6 @@ Entry `agent::run::run(backend, ui, prompt, settings, yes, always)` = one task; 
 | `src/agent/protocol.rs` | `Action`, `FENCE`, `first_prompt`, `next_prompt`, `parse` → `Parsed`, `shell_result` |
 | `src/agent/tools.rs` | `shell` → `ShellOutput`, `cap`, `read_file`, `write_file`; constants `KEEP_BYTES`, `DRAIN` |
 | `src/agent/run.rs` | `run`, `act` (policy, question, edit), `execute`; `Ui`, `Decision`; tests with `Script` and `FakeUi` |
-| `src/ui.rs` | `Terminal` implements `Ui`; `RESULT_LINES` = lines of a result shown to the user |
 
 ## Protocol
 
@@ -49,14 +48,15 @@ directory, the task. The model answers either plain text (final answer, the loop
    further task in the same one (a short reminder of the rules + the task).
 2. `backend.ask(prompt)`; pieces go to `Ui::event`, then `Ui::answer_end`.
 3. `parse(answer)`: `Final` → return; `Invalid` → its text is the next prompt; `Action` → `act`.
-4. `act`: `policy::check` (see `../approval-policy/SKILL.md`), then `execute`; the result text is shown with
-   `Ui::result` and becomes the next prompt.
+4. `act`: `Ui::action` (what the model asked for), `policy::check` (see `../approval-policy/SKILL.md`), maybe
+   `Ui::approve`, then `Ui::running` and `execute`; the result text is shown with `Ui::result` and becomes the
+   next prompt. After an edit `Ui::action` shows the new command.
 5. After `agent.max_steps` answers: `Ui::note` and return.
 
-## Terminal (`ui::Terminal`)
+## `Ui` trait
 
-Answer text to stdout, reasoning dimmed; the action line, question, result preview and notes to stderr. The raw
-`dsc` block is still printed as part of the answer (`TASKS.md`).
+`event` (pieces of the answer and `Event::Status` progress), `answer_end`, `action`, `approve`, `running`,
+`result`, `note`. The terminal implementation is `../terminal-ui/SKILL.md`; tests use `FakeUi`.
 
 ## Adding a tool
 

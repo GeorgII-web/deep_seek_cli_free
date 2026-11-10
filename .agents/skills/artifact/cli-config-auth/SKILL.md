@@ -22,22 +22,25 @@ Entry `main()` in `src/main.rs`: `Cli::parse` → `Paths::new` → `Settings::lo
 
 ## Chat (`chat()` in `src/main.rs`)
 
-Reads lines with `ui::Terminal::read_line("dsc> ")` until the end of input. One `Conversation` and one "always"
-set live for the whole chat; the first task uses `protocol::first_prompt`, later ones `next_prompt`.
+Shows `Terminal::banner`, then reads inputs with `Terminal::input` (the multiline box, or plain lines without a
+terminal) until it returns `None`. One `Conversation` and one "always" set live for the whole chat; each task is
+wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_prompt`, later ones `next_prompt`.
 
-| Line | Effect |
+| Input | Effect |
 |---|---|
 | empty | ignored |
 | `/new` | new `Conversation`, the next task gets the rules again |
+| `/help` | `CHAT_HELP` |
 | `/exit`, `/quit`, Ctrl-D | leave |
-| other `/x` | "unknown command" |
+| other `/word` | "unknown command"; a text with a second `/` or a space (a path, a sentence) is a task |
 | anything else | a task; an error of the run (network, dead token, Ctrl-C) is printed and the chat goes on |
 
-Not saved: no transcript, no resume (`TASKS.md`). Line input is the plain terminal line (no history keys).
+Not saved: no transcript, no resume (`TASKS.md`). Inputs are kept in `<home>/history.json` (`Paths::history`).
+A single task (`dsc "<task>"`) uses `Terminal::new(None)` and exits with code 1 when the run failed.
 
 ## Config (`src/config.rs`)
 
-`Paths`: home = `$DSC_HOME`, else `~/.config/dsc` (created); `config()`, `auth()`, `cache()`.
+`Paths`: home = `$DSC_HOME`, else `~/.config/dsc` (created); `config()`, `auth()`, `history()`, `cache()`.
 `Settings::load_or_create` writes the defaults when `config.toml` is missing; unknown keys fail
 (`deny_unknown_fields`), missing keys take defaults.
 

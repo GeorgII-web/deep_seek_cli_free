@@ -8,11 +8,15 @@ browser at runtime: the browser is needed once, to log in.
 
 ```console
 $ dsc "how much disk space is free on the root filesystem?"
-$ df -h /
-Result: exit code 0
-Filesystem      Size  Used Avail Use% Mounted on
-/dev/sdd       1007G  146G  810G  16% /
+
+● Run df -h /
+  check free disk space on root filesystem
+  ⎿ exit code 0
+    Filesystem      Size  Used Avail Use% Mounted on
+    /dev/sdd       1007G  146G  810G  16% /
+
 Root filesystem: 810G available (1007G total, 16% used).
+✓ 8.1s · 2 answers · 1 action
 ```
 
 > **Unofficial.** This talks to the private web API of chat.deepseek.com. It can break when the site changes, and
@@ -21,8 +25,8 @@ Root filesystem: 810G available (1007G total, 16% used).
 ## Status
 
 Early, works end to end. Done: login by token, direct HTTP client, proof of work, streamed answers, reasoning
-mode, the agent loop with approvals, interactive chat, request throttling. Open: resume of a chat after a restart,
-login through the browser, nicer output. See [TASKS.md](TASKS.md).
+mode, the agent loop with approvals, interactive chat with a multiline input box, request throttling. Open:
+resume of a chat after a restart, login through the browser. See [TASKS.md](TASKS.md).
 
 ## Install
 
@@ -66,21 +70,47 @@ dsc --yes "create a .gitignore for a Rust project"
 
 ### Chat
 
-`dsc` without a task (or `dsc chat`) opens a prompt. Every line is a task in the same conversation, so the model
+`dsc` without a task (or `dsc chat`) opens a chat. Every input is a task in the same conversation, so the model
 remembers what it did before:
 
 ```console
 $ dsc
-dsc> how much disk space is free on / ?
-$ df -h /
-There is 810G free on / (out of 1007G, 16% used).
+✻ dsc 0.1.0 · DeepSeek web · default
 
-dsc> which command did you run for that?
-The exact command was: df -h /
+> how much disk space is free on / ?
+
+● Run df -h /
+  check free disk space on /
+  ⎿ exit code 0
+    Filesystem      Size  Used Avail Use% Mounted on
+    /dev/sdd       1007G  147G  809G  16% /
+
+There is 809G free on / (out of 1007G, 16% used).
+✓ 8.1s · 2 answers · 1 action
+
+╭──────────────────────────────────────────────────────────────╮
+│ > which command did you run for that?                        │
+╰──────────────────────────────────────────────────────────────╯
+  Enter send · Alt+Enter or \ + Enter new line · ↑↓ history · /help · Ctrl-D quit
 ```
 
-`/new` starts a fresh conversation, `/exit` or Ctrl-D quits. Flags work here too (`dsc --think`). What you allowed
-with `a` holds until you quit. A chat is not saved: after a restart the model starts from zero.
+While `dsc` waits, a progress line shows what for and for how long (`⠹ Waiting for DeepSeek… 3s`). The last line
+of a task shows the seconds it took.
+
+| Key in the input box | Effect |
+|---|---|
+| Enter | send |
+| Alt+Enter, Ctrl-J, or `\` then Enter | new line |
+| Up / Down | move in the text, then through earlier inputs |
+| Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
+| Ctrl-C | clear the box (quit when it is empty) |
+| Ctrl-D | quit |
+
+Pasting several lines works. `/new` starts a fresh conversation, `/help` lists the commands, `/exit` quits. Flags
+work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
+`~/.config/dsc/history.json`; the conversation itself is not saved, after a restart the model starts from zero.
+
+Colors switch off with `NO_COLOR=1` or when the output is not a terminal.
 
 ### Flags
 
@@ -107,12 +137,12 @@ The model can ask for three actions: run a shell command, read a file, write a f
 3. Otherwise you are asked:
 
 ```console
-$ head -n 1 Cargo.toml
-why: show the first line
-[y] yes  [a] always in this run  [n] no  [e] edit >
+● Run head -n 1 Cargo.toml
+  show the first line
+  Allow? y yes · a always in this session · n no · e edit
 ```
 
-`a` allows that program (or tool) for the rest of the run; `e` lets you change the command first; `n` tells the
+One key answers. `a` allows that program (or tool) until you quit; `e` lets you change the command first; `n` tells the
 model it was denied, so it can try another way. Without a terminal on stdin every question counts as no.
 
 Ctrl-C while a command runs kills only the command; Ctrl-C while waiting for the model ends the task (in a chat

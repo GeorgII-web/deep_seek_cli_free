@@ -9,6 +9,8 @@ pub enum Event {
     Thinking(String),
     /// Answer text
     Text(String),
+    /// What is being waited for ("Solving proof of work"); shown as a progress line
+    Status(String),
 }
 
 /// One conversation: every `ask` continues below the previous answer.

@@ -32,8 +32,9 @@ pub fn delay_ms(settings: &Settings, sent: &[u64], now: u64, jitter: u64) -> u64
     wait
 }
 
-/// Waits as the settings ask, then records the request. Returns the time waited.
-pub async fn acquire(paths: &Paths, settings: &Settings) -> Duration {
+/// Waits as the settings ask, then records the request. `on_wait` is told the
+/// time before a wait starts.
+pub async fn acquire(paths: &Paths, settings: &Settings, on_wait: &mut dyn FnMut(Duration)) {
     let file = paths.cache().join("throttle.json");
     let now = now_ms();
     let mut sent: Vec<u64> = fs::read_to_string(&file)
@@ -55,15 +56,12 @@ pub async fn acquire(paths: &Paths, settings: &Settings) -> Duration {
     };
     let wait = Duration::from_millis(delay_ms(settings, &sent, now, jitter));
     if !wait.is_zero() {
-        if wait > Duration::from_secs(5) {
-            eprintln!("throttle: waiting {} s", wait.as_secs());
-        }
+        on_wait(wait);
         tokio::time::sleep(wait).await;
     }
     sent.push(now_ms());
     let _ = fs::create_dir_all(paths.cache());
     let _ = fs::write(&file, serde_json::to_string(&sent).unwrap_or_default());
-    wait
 }
 
 #[cfg(test)]

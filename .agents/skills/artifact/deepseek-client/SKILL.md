@@ -14,8 +14,8 @@ trait (`src/backend.rs`), implemented by `session::Conversation`. Reference for 
 | `client.rs` | `Client` (`create_session`, `create_challenge`, `completion`, `fetch_wasm`), `Challenge`, `TurnOpts`, `ApiError`, `biz_data`; constants `BASE`, `COMPLETION_PATH`, `DEFAULT_WASM_URL`, `CLIENT_VERSION`, `USER_AGENT` |
 | `pow.rs` | `solve`, `header` |
 | `stream.rs` | `Parser` (`feed`, `finish`, `response_message_id`) |
-| `session.rs` | `Conversation` (`wasm`, `pow_header`, `send`, `send_once`, `ask`) |
-| `throttle.rs` | `delay_ms` (pure rule), `acquire` |
+| `session.rs` | `Conversation` (`wasm`, `pow_header`, `send`, `send_once`, `ask`); reports progress to the sink as `Event::Status` ("Pausing N s (throttle)" for a wait of a second or more, "Opening conversation", "Solving proof of work", "Waiting for DeepSeek", "Rate limited by DeepSeek, retry in N s") |
+| `throttle.rs` | `delay_ms` (pure rule), `acquire` (calls `on_wait` before it sleeps) |
 | `fixtures/` | recorded SSE bodies used by the parser tests |
 
 ## Calls
@@ -62,7 +62,7 @@ Every completion call goes through `throttle::acquire` (in `Conversation::send`)
 |---|---|---|
 | `min_interval_ms` | 3000 | minimum gap between two requests |
 | `jitter_ms` | 2000 | random extra gap, 0..=value |
-| `max_per_hour` | 120 | requests in any 60 minutes, 0 = no cap; when reached the CLI waits and says so |
+| `max_per_hour` | 120 | requests in any 60 minutes, 0 = no cap; when reached the CLI waits and shows it in the progress line |
 | `retries_on_429` | 2 | retries after HTTP 429 |
 | `wait_on_429_secs` | 60 | wait before such a retry when there is no `Retry-After` |
 

@@ -161,6 +161,7 @@ mod tests {
                 match event {
                     Event::Text(t) => text.push_str(&t),
                     Event::Thinking(t) => thinking.push_str(&t),
+                    Event::Status(_) => {}
                 }
             }
         }

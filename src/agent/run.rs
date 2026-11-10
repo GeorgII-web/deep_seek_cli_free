@@ -27,7 +27,9 @@ pub trait Ui {
     fn answer_end(&mut self);
     /// Asks the user about an action; `can_always` = "always" is offered
     fn approve(&mut self, action: &Action, can_always: bool) -> Decision;
-    /// The action that runs now without a question
+    /// The action the model asked for, before any check
+    fn action(&mut self, action: &Action);
+    /// The action starts now (allowed or approved)
     fn running(&mut self, action: &Action);
     /// What the action returned (the text that goes to the model)
     fn result(&mut self, text: &str);
@@ -86,6 +88,7 @@ async fn act<U: Ui>(
     yes: bool,
     always: &mut HashSet<String>,
 ) -> String {
+    ui.action(&action);
     loop {
         match policy::check(&action, &settings.policy, yes, always) {
             Verdict::Deny(pattern) => {
@@ -97,10 +100,7 @@ async fn act<U: Ui>(
                     "Denied: this matches the user's deny rule `{pattern}`. It will never run; do not try it again.\n"
                 );
             }
-            Verdict::Allow => {
-                ui.running(&action);
-                break;
-            }
+            Verdict::Allow => break,
             Verdict::Ask => {
                 let key = policy::always_key(&action);
                 match ui.approve(&action, key.is_some()) {
@@ -116,6 +116,7 @@ async fn act<U: Ui>(
                     Decision::Edit(cmd) => match &mut action {
                         Action::Shell { cmd: old, .. } => {
                             *old = cmd;
+                            ui.action(&action);
                             // Do not ask twice: only the deny list is checked again.
                             if let Verdict::Deny(_) =
                                 policy::check(&action, &settings.policy, true, always)
@@ -130,6 +131,7 @@ async fn act<U: Ui>(
             }
         }
     }
+    ui.running(&action);
     execute(&action, settings).await
 }
 
@@ -209,6 +211,7 @@ mod tests {
             self.asked.push(action.summary());
             self.decisions.pop_front().expect("unexpected question")
         }
+        fn action(&mut self, _: &Action) {}
         fn running(&mut self, _: &Action) {}
         fn result(&mut self, _: &str) {}
         fn note(&mut self, text: &str) {

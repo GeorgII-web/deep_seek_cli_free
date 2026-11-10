@@ -45,9 +45,10 @@ async fn main() -> Result<()> {
         None => {
             let mut conversation = conversation(&paths, &settings, &cli.run)?;
             let prompt = protocol::first_prompt(&cli.run.task.join(" "), &cwd());
-            let mut terminal = ui::Terminal::default();
+            let mut terminal = ui::Terminal::new(None);
             let mut always = HashSet::new();
-            agent::run::run(
+            terminal.begin();
+            let result = agent::run::run(
                 &mut conversation,
                 &mut terminal,
                 prompt,
@@ -55,7 +56,13 @@ async fn main() -> Result<()> {
                 cli.run.yes,
                 &mut always,
             )
-            .await
+            .await;
+            terminal.finish(&result);
+            // The finish line already showed the error.
+            if result.is_err() {
+                std::process::exit(1);
+            }
+            Ok(())
         }
     }
 }
@@ -66,35 +73,54 @@ fn cwd() -> String {
         .unwrap_or_default()
 }
 
-/// Interactive mode: every line is a task in the same conversation, so the model
-/// remembers the earlier ones. `/new` starts a fresh conversation, `/exit` or the
-/// end of input leaves. What the user allowed with "always" holds until the exit.
+const CHAT_HELP: &str = "\
+/new    start a fresh conversation (the model forgets the earlier tasks)
+/help   this text
+/exit   quit (also Ctrl-D)
+
+Enter sends. A new line: Alt+Enter, Ctrl-J, or end the line with \\ and press Enter.
+Up/Down move in the text and then through earlier inputs. Ctrl-C clears the box.
+While a task runs: Ctrl-C stops the running command, or the task while it waits for the model.";
+
+/// Interactive mode: every input is a task in the same conversation, so the model
+/// remembers the earlier ones. What the user allowed with "always" holds until the exit.
 async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<()> {
     let mut conversation = conversation(paths, settings, run)?;
-    let mut terminal = ui::Terminal::default();
+    let mut terminal = ui::Terminal::new(Some(paths.history()));
     let mut always = HashSet::new();
     let mut first = true;
-    eprintln!("dsc chat: a task per line; /new = fresh conversation, /exit or Ctrl-D = quit");
-    while let Some(line) = ui::Terminal::read_line("\ndsc> ") {
+    let model = match (run.expert, run.think || settings.deepseek.thinking) {
+        (true, _) => "expert".to_string(),
+        (false, true) => format!("{} + thinking", settings.deepseek.model_type),
+        (false, false) => settings.deepseek.model_type.clone(),
+    };
+    terminal.banner(&model, &cwd());
+    while let Some(line) = terminal.input() {
         let prompt = match line.as_str() {
             "" => continue,
             "/exit" | "/quit" => break,
+            "/help" => {
+                terminal.info(CHAT_HELP);
+                continue;
+            }
             "/new" => {
                 conversation = self::conversation(paths, settings, run)?;
                 first = true;
-                eprintln!("new conversation");
+                terminal.info("new conversation");
                 continue;
             }
-            command if command.starts_with('/') => {
-                eprintln!("unknown command {command}; known: /new, /exit");
+            // A path like /etc/hosts is a task, a single word after the slash a command.
+            command if command.starts_with('/') && !command[1..].contains(['/', ' ']) => {
+                terminal.error(&format!("unknown command {command}; see /help"));
                 continue;
             }
             task if first => protocol::first_prompt(task, &cwd()),
             task => protocol::next_prompt(task),
         };
         first = false;
+        terminal.begin();
         // A failed task (network, Ctrl-C, dead token) does not end the chat.
-        if let Err(err) = agent::run::run(
+        let result = agent::run::run(
             &mut conversation,
             &mut terminal,
             prompt,
@@ -102,10 +128,8 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             run.yes,
             &mut always,
         )
-        .await
-        {
-            eprintln!("dsc: {err:#}");
-        }
+        .await;
+        terminal.finish(&result);
     }
     Ok(())
 }

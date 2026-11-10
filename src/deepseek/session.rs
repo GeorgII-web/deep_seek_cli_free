@@ -73,17 +73,31 @@ impl Conversation {
     }
 
     /// Sends `prompt` as the next message; the response body is the SSE stream.
-    /// Throttled; HTTP 429 is retried as the settings say.
-    async fn send(&mut self, prompt: &str) -> Result<reqwest::Response> {
+    /// Throttled; HTTP 429 is retried as the settings say. `sink` gets the progress.
+    async fn send(
+        &mut self,
+        prompt: &str,
+        sink: &mut dyn FnMut(&Event),
+    ) -> Result<reqwest::Response> {
         let mut retries = self.throttle.retries_on_429;
         loop {
-            throttle::acquire(&self.paths, &self.throttle).await;
-            match self.send_once(prompt).await {
+            let mut on_wait = |wait: Duration| {
+                if wait >= Duration::from_secs(1) {
+                    sink(&Event::Status(format!(
+                        "Pausing {} s (throttle)",
+                        wait.as_secs()
+                    )));
+                }
+            };
+            throttle::acquire(&self.paths, &self.throttle, &mut on_wait).await;
+            match self.send_once(prompt, sink).await {
                 Err(err) => match err.downcast_ref::<ApiError>() {
                     Some(ApiError::RateLimited(after)) if retries > 0 => {
                         retries -= 1;
                         let secs = after.unwrap_or(self.throttle.wait_on_429_secs);
-                        eprintln!("rate limited by DeepSeek, retry in {secs} s");
+                        sink(&Event::Status(format!(
+                            "Rate limited by DeepSeek, retry in {secs} s"
+                        )));
                         tokio::time::sleep(Duration::from_secs(secs)).await;
                     }
                     _ => return Err(err),
@@ -93,16 +107,23 @@ impl Conversation {
         }
     }
 
-    async fn send_once(&mut self, prompt: &str) -> Result<reqwest::Response> {
+    async fn send_once(
+        &mut self,
+        prompt: &str,
+        sink: &mut dyn FnMut(&Event),
+    ) -> Result<reqwest::Response> {
         let session_id = match &self.session_id {
             Some(id) => id.clone(),
             None => {
+                sink(&Event::Status("Opening conversation".into()));
                 let id = self.client.create_session().await?;
                 self.session_id = Some(id.clone());
                 id
             }
         };
+        sink(&Event::Status("Solving proof of work".into()));
         let pow = self.pow_header().await?;
+        sink(&Event::Status("Waiting for DeepSeek".into()));
         self.client
             .completion(
                 &session_id,
@@ -117,7 +138,7 @@ impl Conversation {
 
 impl Backend for Conversation {
     async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
-        let mut body = self.send(prompt).await?.bytes_stream();
+        let mut body = self.send(prompt, sink).await?.bytes_stream();
         let mut parser = Parser::new();
         let mut answer = String::new();
         while let Some(chunk) = body.next().await {

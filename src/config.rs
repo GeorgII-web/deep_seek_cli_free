@@ -30,6 +30,11 @@ impl Paths {
         self.home.join("auth.json")
     }
 
+    /// Earlier chat inputs (JSON list)
+    pub fn history(&self) -> PathBuf {
+        self.home.join("history.json")
+    }
+
     pub fn cache(&self) -> PathBuf {
         self.home.join("cache")
     }

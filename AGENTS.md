@@ -10,8 +10,8 @@ The repo is public: no personal paths, names or data in any tracked file.
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; no task or `chat` → `chat()` (a task per line in one conversation, `/new`, `/exit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
-| `src/backend.rs` | `Backend` trait (`ask(prompt, sink) -> answer text`, one value = one conversation) and `Event` (`Thinking`, `Text`); the agent knows only this |
+| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; no task or `chat` → `chat()` (tasks in one conversation, `/new`, `/help`, `/exit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
+| `src/backend.rs` | `Backend` trait (`ask(prompt, sink) -> answer text`, one value = one conversation) and `Event` (`Thinking`, `Text`, `Status`); the agent knows only this |
 | `src/cli.rs` | clap: `Cli` = optional `Command` (`chat`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
 | `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/dsc`; `config()`, `auth()`, `cache()`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing |
 | `src/auth.rs` | `Auth` (`token`, `cookie`, `wasm_url`): `load`, `require`, `import` (FreeDeepseekAPI file), `new`, `save` (0600), `remove`; browser login over CDP `[ ]` |
@@ -23,8 +23,12 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/agent/protocol.rs` | `Action` (`shell`, `read_file`, `write_file`), `first_prompt` (rules + task), `next_prompt` (a further task), `parse` → `Final` / `Action` / `Invalid`, `shell_result` text |
 | `src/agent/policy.rs` | `check` → `Allow` / `Ask` / `Deny`, `always_key` (what "always" covers) |
 | `src/agent/tools.rs` | `shell` (bash, own process group, timeout, Ctrl-C, output collected), `cap`, `read_file`, `write_file` |
-| `src/agent/run.rs` | `run` (the loop for one task; takes the prompt and the session's "always" set), `act` (check, ask, edit), `execute`; `Ui` trait and `Decision`; loop tests with a scripted backend |
-| `src/ui.rs` | `Terminal` = `Ui` on the terminal: streamed answer, approval question, result preview, notes |
+| `src/agent/run.rs` | `run` (the loop for one task; takes the prompt and the session's "always" set), `act` (show, check, ask, edit), `execute`; `Ui` trait and `Decision`; loop tests with a scripted backend |
+| `src/ui/mod.rs` | `Terminal` = `Ui` on the terminal plus `banner`, `input`, `begin`, `finish`, `info`, `error` |
+| `src/ui/editor.rs` | `Buffer`, `Editor` (multiline input box, history), `read_choice` (one key) |
+| `src/ui/render.rs` | `Markdown`: hides the `dsc` block, trims blank lines, styles code, bold, headings |
+| `src/ui/spinner.rs`, `style.rs` | progress line with a clock; every color code |
+| `scripts/pty-drive.py` | drives the chat in a pseudo-terminal with scripted keys and prints the screen |
 
 ## Skills (`.agents/skills`, read the one that matches before working)
 
@@ -33,7 +37,8 @@ The repo is public: no personal paths, names or data in any tracked file.
 | [architecture](.agents/skills/general/architecture/SKILL.md) | orienting, decisions and their reasons, layers, `Backend` and `Ui` traits, runtime files, which skill covers which module |
 | [cli-config-auth](.agents/skills/artifact/cli-config-auth/SKILL.md) | commands and flags, `main.rs` dispatch, `doctor`, `config.toml` sections and defaults, `auth.json`, login |
 | [deepseek-client](.agents/skills/artifact/deepseek-client/SKILL.md) | DeepSeek calls and headers, error envelope, proof of work, SSE format and parser, conversation, throttle, what to do when the site changes |
-| [agent-loop](.agents/skills/artifact/agent-loop/SKILL.md) | action block protocol, first prompt, tools, loop steps, terminal output, adding a tool |
+| [agent-loop](.agents/skills/artifact/agent-loop/SKILL.md) | action block protocol, first prompt, tools, loop steps, `Ui` trait, adding a tool |
+| [terminal-ui](.agents/skills/artifact/terminal-ui/SKILL.md) | look of a run, input box and its keys, progress line, markdown rendering, colors, checking the screen with `scripts/pty-drive.py` |
 | [approval-policy](.agents/skills/artifact/approval-policy/SKILL.md) | allow, deny, ask, "always", edit, default lists |
 | [build-run-check](.agents/skills/quality-gate/build-run-check/SKILL.md) | gates, solver test, live checks, recording a fixture, build profiles, public repo rules |
 
