@@ -7,9 +7,9 @@ account (chat.deepseek.com), no paid API key. One static binary, no node, no bro
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | entry: parse CLI, load config, dispatch |
-| `src/cli.rs` `[ ]` | clap commands: `dsc "<task>"`, `dsc chat`, `dsc login`, `dsc logout`, `dsc doctor` |
-| `src/config.rs` `[ ]` | `Paths` (`$DSC_HOME`, else `~/.config/dsc`), `config.toml`, `auth.json` (mode 0600) |
+| `src/main.rs` | entry: parse CLI, `Paths`, `Settings`, dispatch; `doctor()` prints paths and model; other commands bail "not implemented yet" |
+| `src/cli.rs` | clap: `Cli` = optional `Command` (`chat --resume`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
+| `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/dsc`; `config()`, `auth()`, `cache()`, `sessions()`), `Settings` = `[deepseek]`, `[agent]`, `[policy]` with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing |
 | `src/auth.rs` `[ ]` | token + cookie store; login by import file, pasted token, or own Chrome over CDP |
 | `src/deepseek/` `[ ]` | `client.rs` HTTP calls, `pow.rs` proof of work, `stream.rs` SSE parser, `session.rs` chat session |
 | `src/agent/` `[ ]` | `protocol.rs` prompt + action parser, `run.rs` loop, `tools.rs` shell/read/write, `policy.rs` approval |
@@ -34,4 +34,5 @@ account (chat.deepseek.com), no paid API key. One static binary, no node, no bro
 
 ```bash
 cargo test && cargo fmt --check && cargo clippy --all-targets -- -D warnings
+DSC_HOME=var/home cargo run -- doctor    # throwaway home
 ```

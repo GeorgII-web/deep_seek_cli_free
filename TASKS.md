@@ -5,10 +5,9 @@ when done.
 
 | # | Task | Done when |
 |---|---|---|
-| 1 | Skeleton: deps (`clap`, `tokio`, `reqwest` rustls + stream, `serde`, `toml`, `anyhow`, `wasmi`, `base64`), `cli.rs`, `config.rs` (`Paths`, `config.toml` defaults, `auth.json` 0600) | `dsc --help` lists the commands, `dsc doctor` prints the paths |
-| 2 | `dsc login --import <file>` and `--token` | `auth.json` written from `~/projects/dsfree/FreeDeepseekAPI/deepseek-auth.json`; `dsc logout` removes it |
-| 3 | `deepseek::client` + `session`: headers, session create, challenge fetch, error mapping (401/403/429) | `dsc doctor` shows "token ok" or "token dead" against the live site |
-| 4 | `deepseek::pow`: wasm download + cache, `wasm_solve` in `wasmi` | unit test with a recorded challenge/answer pair; solve time printed by `doctor` |
+| 2 | `dsc login --import <file>` and `--token` | deps `serde_json`, `rpassword`; `auth.json` (0600) written from `~/projects/dsfree/FreeDeepseekAPI/deepseek-auth.json`; `dsc logout` removes it |
+| 3 | deps `tokio`, `reqwest` (rustls, stream); `deepseek::client` + `session`: headers, session create, challenge fetch, error mapping (401/403/429) | `dsc doctor` shows "token ok" or "token dead" against the live site |
+| 4 | deps `wasmi`, `base64`; `deepseek::pow`: wasm download + cache, `wasm_solve` in `wasmi` | unit test with a recorded challenge/answer pair; solve time printed by `doctor` |
 | 5 | `deepseek::stream` + `Backend` impl: completion call, SSE patches → `Event`, `parent_message_id` | `dsc ask "2+2"` streams the answer; a second turn in the same session remembers the first; parser unit tests on recorded SSE |
 | 6 | `agent::protocol`: instruction text, action block parser | unit tests: plain answer, one block, broken JSON, several blocks |
 | 7 | `agent::tools`: `shell` (bash -lc, timeout, process group kill, output cap), `read_file`, `write_file` | unit tests incl. timeout and cap |

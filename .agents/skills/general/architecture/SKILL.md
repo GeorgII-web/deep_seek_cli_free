@@ -5,7 +5,7 @@ description: Architecture of deep_seek_cli_free (binary `dsc`) — the layers (C
 
 # Architecture
 
-State: design, code not written yet (`TASKS.md`). Update this file with every change.
+State: `cli.rs`, `config.rs` and `doctor` (paths only) exist; the rest is design (`TASKS.md`). Update this file with every change.
 
 ## Decisions
 
