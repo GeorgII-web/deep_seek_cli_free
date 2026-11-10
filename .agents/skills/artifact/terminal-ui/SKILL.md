@@ -10,8 +10,8 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 
 | File | Content |
 |---|---|
-| `src/ui/mod.rs` | `Terminal` (`line`, `partial`, `text` = the only print paths); `screen_lock`, `screen_write`; constants `RESULT_LINES` (8), `INPUT_HINT` |
-| `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history), `Dock`, `Input`, `read_choice`, `RawMode` |
+| `src/ui/mod.rs` | `Terminal` (`line`, `partial`, `text` = the only print paths); `screen_lock`, `screen_write`; constants `RESULT_LINES` (8), `INPUT_HINTS`, `EDIT_HINTS`, `COMMANDS` |
+| `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history, command menu), `command_matches`, `Dock`, `Input`, `read_choice`, `RawMode` |
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
 | `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`, `set_mode`; `Notifier` (a 2 s notice in place of the key hint) |
 | `src/ui/style.rs` | `Style`: every escape code; `detect()`; `inline(text, base)` colors `code` spans in chrome lines; `hint(key, what)` and `mode_label` for hint lines |
@@ -116,11 +116,25 @@ at the box width (wide characters count two columns); a box taller than the scre
 | Up, Down | move a row; at the first or last row go through the history (the draft is kept) |
 | Left, Right, Home, End, Ctrl-A, Ctrl-E | move |
 | Backspace, Delete, Ctrl-W or Alt+Backspace (word), Ctrl-U, Ctrl-K | delete |
+| `/` as the first character | command menu, see below |
 | Shift+Tab | switch the mode (ask ⇄ allow all) |
 | Esc | clear the box |
 | Ctrl-C | clear the box and show "Press Ctrl-C again to exit" for `AGAIN` (2 s); a second one in that time quits |
 | Ctrl-D | quit on an empty box, else delete |
 | paste | bracketed paste keeps line ends; tabs become spaces, control characters are dropped |
+
+Command menu (chat prompt only, `remember = true`): while the input is one word starting with `/`,
+`command_matches(COMMANDS, text)` gives the commands that start with it and `menu_lines` draws them between the box
+and the hint line (the dock grows by that many rows). A command typed out in full offers nothing, so Enter sends it.
+
+| Key with the menu open | Effect |
+|---|---|
+| Up, Down | move the selection (wraps) |
+| Enter, Tab | put the selected command into the box; nothing runs until the next Enter |
+| Esc | close the menu for this text; the text stays |
+| any edit | new matches, selection back to the first |
+
+`COMMANDS` lives in `src/ui/mod.rs` (`Editor::set_commands`); `chat()` in `src/main.rs` runs them.
 
 History: `<home>/history.json`, the last 200 inputs, consecutive duplicates skipped; only the chat passes a file.
 

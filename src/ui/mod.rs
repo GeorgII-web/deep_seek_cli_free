@@ -40,6 +40,17 @@ const INPUT_HINTS: &[(&str, &str)] = &[
     ("/help", ""),
 ];
 const EDIT_HINTS: &[(&str, &str)] = &[("Enter", "run"), ("Ctrl-D", "cancel")];
+/// The slash commands of the chat: offered in the menu when the input starts with `/`.
+/// `src/main.rs` (`chat`) runs them.
+const COMMANDS: &[editor::Command] = &[
+    (
+        "/new",
+        "start a fresh conversation (the model forgets the earlier tasks)",
+    ),
+    ("/mode", "switch between ask and allow all (also Shift+Tab)"),
+    ("/help", "commands and keys"),
+    ("/exit", "quit"),
+];
 
 static SCREEN: Mutex<()> = Mutex::new(());
 
@@ -105,6 +116,7 @@ impl Terminal {
             // The mode can only be switched with keys, so it is only shown with a terminal.
             spinner.set_mode(allow_all.clone());
             editor.set_mode(allow_all.clone());
+            editor.set_commands(COMMANDS);
         }
         Self {
             style,
@@ -443,17 +455,15 @@ impl Terminal {
             )
         };
         self.blank();
-        let lines = [
-            heading("Commands"),
-            row(
-                "/new",
-                "start a fresh conversation (the model forgets the earlier tasks)",
-            ),
-            row("/mode", "switch between ask and allow all (also Shift+Tab)"),
-            row("/help", "this text"),
-            row("/exit", "quit"),
+        let mut lines = vec![heading("Commands")];
+        lines.extend(COMMANDS.iter().map(|(name, what)| row(name, what)));
+        lines.extend([
             String::new(),
             heading("Input box"),
+            row(
+                "/",
+                "list the commands: arrows choose, Enter inserts, Enter again sends",
+            ),
             row("Enter", "send"),
             row("Alt+Enter, Ctrl-J, \\ Enter", "new line"),
             row("Up, Down", "move in the text, then through earlier inputs"),
@@ -474,7 +484,7 @@ impl Terminal {
             ),
             row("Ctrl-C twice", "quit"),
             row("Ctrl-D", "quit (empty box)"),
-        ];
+        ]);
         for line in lines {
             self.line(&line);
         }

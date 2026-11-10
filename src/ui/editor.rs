@@ -248,6 +248,31 @@ pub struct Editor {
     dock: Option<Dock>,
     /// The approval mode (true = allow all): shown in the hint line, Shift+Tab switches it
     mode: Option<Arc<AtomicBool>>,
+    /// Slash commands offered in a menu while the input is the start of one: name, meaning
+    commands: &'static [Command],
+}
+
+/// A slash command: name with the slash, what it does.
+pub type Command = (&'static str, &'static str);
+
+const MENU_HINTS: &[(&str, &str)] = &[("↑↓", "choose"), ("Enter", "insert"), ("Esc", "close")];
+
+/// The commands the menu offers for `text`: those starting with it, while `text`
+/// is one word starting with `/`. A command typed out in full offers nothing,
+/// so Enter sends it.
+pub fn command_matches(commands: &'static [Command], text: &str) -> Vec<Command> {
+    if !text.starts_with('/') || text.contains(char::is_whitespace) {
+        return Vec::new();
+    }
+    let found: Vec<Command> = commands
+        .iter()
+        .copied()
+        .filter(|(name, _)| name.starts_with(text))
+        .collect();
+    match found.as_slice() {
+        [(name, _)] if *name == text => Vec::new(),
+        _ => found,
+    }
 }
 
 impl Editor {
@@ -265,7 +290,51 @@ impl Editor {
             cursor_line: 0,
             dock: None,
             mode: None,
+            commands: &[],
         }
+    }
+
+    pub fn set_commands(&mut self, commands: &'static [Command]) {
+        self.commands = commands;
+    }
+
+    /// The menu rows: the selected command marked and in the accent color.
+    fn menu_lines(&self, items: &[Command], selected: usize, max: usize) -> Vec<String> {
+        let s = self.style;
+        let name_columns = items
+            .iter()
+            .map(|(name, _)| name.chars().count())
+            .max()
+            .unwrap_or(0)
+            + 3;
+        items
+            .iter()
+            .enumerate()
+            .map(|(i, (name, what))| {
+                let pad = " ".repeat(name_columns - name.chars().count());
+                let what: String = what
+                    .chars()
+                    .take(max.saturating_sub(name_columns + 4))
+                    .collect();
+                match i == selected {
+                    true => format!(
+                        "  {}{}❯ {name}{}{pad}{}{what}{}",
+                        s.bold(),
+                        s.accent(),
+                        s.reset(),
+                        s.key(),
+                        s.reset()
+                    ),
+                    false => format!(
+                        "    {}{name}{}{pad}{}{what}{}",
+                        s.key(),
+                        s.reset(),
+                        s.faint(),
+                        s.reset()
+                    ),
+                }
+            })
+            .collect()
     }
 
     pub fn set_mode(&mut self, mode: Arc<AtomicBool>) {
@@ -375,7 +444,13 @@ impl Editor {
         Ok(())
     }
 
-    fn draw_docked(&mut self, buffer: &Buffer, width: usize, hint: &str) -> io::Result<()> {
+    fn draw_docked(
+        &mut self,
+        buffer: &Buffer,
+        width: usize,
+        menu: &[String],
+        hint: &str,
+    ) -> io::Result<()> {
         let (_, height) = terminal::size()?;
         let rows = buffer.rows(width);
         let (cursor_row, cursor_column) = buffer.locate(&rows);
@@ -388,9 +463,10 @@ impl Editor {
             return Ok(());
         };
         let mut frame = String::new();
-        Self::set_area(dock, visible + DOCK_EXTRA, height, &mut frame);
+        Self::set_area(dock, visible + DOCK_EXTRA + menu.len(), height, &mut frame);
         let top = height as usize - dock.area + 1;
-        for (i, line) in lines.iter().enumerate() {
+        // Box, then the command menu, then the hint on the last row.
+        for (i, line) in lines.iter().chain(menu).enumerate() {
             frame.push_str(&format!("\x1b[{};1H{line}", top + i));
         }
         frame.push_str(&format!("\x1b[{height};1H  {hint}"));
@@ -445,6 +521,10 @@ impl Editor {
         let mut draft = String::new();
         // Time of a Ctrl-C that a second one within `AGAIN` turns into an exit
         let mut armed: Option<Instant> = None;
+        // The command menu: the chosen row, and the text for which Esc closed it
+        let mut selected = 0usize;
+        let mut closed_for: Option<String> = None;
+        let mut menu_text = String::new();
         self.cursor_line = 0;
         if let Some(dock) = &mut self.dock {
             // Output moved the cursor since the last draw.
@@ -453,11 +533,24 @@ impl Editor {
         loop {
             let width = Self::inner_width();
             let armed_now = armed.is_some_and(|at| at.elapsed() < AGAIN);
-            let hint = match armed_now {
-                true => format!("{}{AGAIN_HINT}{}", self.style.action(), self.style.reset()),
-                false => self.hint_line(hints, width + FRAME_COLS - 4),
+            let text = buffer.text();
+            if text != menu_text {
+                selected = 0;
+                menu_text = text.clone();
+            }
+            // Only the chat prompt has commands, not the box that edits a shell command.
+            let items = match remember && closed_for.as_deref() != Some(text.as_str()) {
+                true => command_matches(self.commands, &text),
+                false => Vec::new(),
             };
-            self.draw(&buffer, width, &hint)?;
+            selected = selected.min(items.len().saturating_sub(1));
+            let hint = match (armed_now, items.is_empty()) {
+                (true, _) => format!("{}{AGAIN_HINT}{}", self.style.action(), self.style.reset()),
+                (false, false) => self.hint_line(MENU_HINTS, width + FRAME_COLS - 4),
+                (false, true) => self.hint_line(hints, width + FRAME_COLS - 4),
+            };
+            let menu = self.menu_lines(&items, selected, width + FRAME_COLS - 2);
+            self.draw(&buffer, width, &menu, &hint)?;
             // The "again" hint disappears by itself.
             if let Some(at) = armed.filter(|_| armed_now)
                 && !event::poll(AGAIN.saturating_sub(at.elapsed()))?
@@ -476,6 +569,29 @@ impl Editor {
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             let alt = key.modifiers.contains(KeyModifiers::ALT);
             let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+            // With the menu open the arrows choose and Enter inserts the command
+            // into the box; it is sent only by the next Enter.
+            if !items.is_empty() {
+                match key.code {
+                    KeyCode::Up => {
+                        selected = (selected + items.len() - 1) % items.len();
+                        continue;
+                    }
+                    KeyCode::Down => {
+                        selected = (selected + 1) % items.len();
+                        continue;
+                    }
+                    KeyCode::Enter | KeyCode::Tab if !alt && !shift => {
+                        buffer = Buffer::new(items[selected].0);
+                        continue;
+                    }
+                    KeyCode::Esc => {
+                        closed_for = Some(text);
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
             match key.code {
                 KeyCode::Enter if alt || shift => buffer.insert('\n'),
                 KeyCode::Char('j') if ctrl => buffer.insert('\n'),
@@ -585,9 +701,15 @@ impl Editor {
         out.flush()
     }
 
-    fn draw(&mut self, buffer: &Buffer, width: usize, hint: &str) -> io::Result<()> {
+    fn draw(
+        &mut self,
+        buffer: &Buffer,
+        width: usize,
+        menu: &[String],
+        hint: &str,
+    ) -> io::Result<()> {
         if self.dock.is_some() {
-            return self.draw_docked(buffer, width, hint);
+            return self.draw_docked(buffer, width, menu, hint);
         }
         let rows = buffer.rows(width);
         let (cursor_row, cursor_column) = buffer.locate(&rows);
@@ -596,15 +718,18 @@ impl Editor {
         let visible = rows.len().min(screen.saturating_sub(4).max(1));
         let first = (cursor_row + 1).saturating_sub(visible);
         let mut frame = self.box_lines(buffer, width, first, visible).join("\r\n");
+        for line in menu {
+            frame.push_str(&format!("\r\n{line}"));
+        }
         frame.push_str(&format!("\r\n  {hint}"));
 
         let _screen = screen_lock();
         let mut out = io::stderr().lock();
         self.move_to_top(&mut out)?;
         out.write_all(frame.as_bytes())?;
-        // The cursor is on the hint line now: top border + rows + bottom border above it.
+        // The cursor is on the hint line now: top border, rows, bottom border and menu above it.
         let cursor_line = 1 + (cursor_row - first);
-        let up = (visible + 2 - cursor_line) as u16;
+        let up = (visible + 2 + menu.len() - cursor_line) as u16;
         queue!(out, MoveUp(up), MoveToColumn((4 + cursor_column) as u16))?;
         self.cursor_line = cursor_line as u16;
         out.flush()
@@ -661,6 +786,26 @@ mod tests {
         buffer.delete_word();
         assert_eq!(buffer.text(), "one ");
         assert_eq!(buffer.before_cursor(), Some(' '));
+    }
+
+    #[test]
+    fn command_menu_matches() {
+        const COMMANDS: &[Command] = &[("/new", "a"), ("/mode", "b"), ("/help", "c")];
+        let names = |text: &str| -> Vec<&str> {
+            command_matches(COMMANDS, text)
+                .iter()
+                .map(|c| c.0)
+                .collect()
+        };
+        assert_eq!(names("/"), ["/new", "/mode", "/help"]);
+        assert_eq!(names("/m"), ["/mode"]);
+        // Typed out in full: no menu, Enter sends it.
+        assert!(names("/mode").is_empty());
+        assert!(names("/x").is_empty());
+        // A path or a sentence is not a command; neither is text without the slash.
+        assert!(names("/new now").is_empty());
+        assert!(names("new").is_empty());
+        assert!(names("").is_empty());
     }
 
     #[test]

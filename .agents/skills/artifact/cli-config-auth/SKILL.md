@@ -36,6 +36,8 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 | other `/word` | "unknown command"; a text with a second `/` or a space (a path, a sentence) is a task |
 | anything else | a task; an error of the run (network, dead token, stopped with Esc) is shown in the finish line and the chat goes on; `Interrupt::Quit` ends the chat |
 
+A new command: a row in `COMMANDS` (`src/ui/mod.rs`; feeds the menu and `/help`) and an arm in `chat()`.
+
 Not saved: no transcript, no resume (`TASKS.md`). Inputs are kept in `<home>/history.json` (`Paths::history`).
 A single task (`dsc "<task>"`) uses `Terminal::new(None, yes)` and exits with code 1 when the run failed, 130 when it
 was interrupted. Both modes take their `Interrupts` from `Terminal::interrupts`.

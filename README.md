@@ -103,6 +103,7 @@ shell prompt.
 | Key in the input box | Effect |
 |---|---|
 | Enter | send |
+| `/` | list the commands: Up / Down choose, Enter (or Tab) puts the command into the box, Enter again runs it; Esc closes the list |
 | Alt+Enter, Ctrl-J, or `\` then Enter | new line |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
