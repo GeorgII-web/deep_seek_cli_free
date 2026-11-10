@@ -80,6 +80,10 @@ impl Style {
         out
     }
 
+    /// Foreground and background swapped: the focused button of a dialog
+    pub fn inverse(&self) -> &'static str {
+        self.code("\x1b[7m")
+    }
     /// Background of the user's prompt in the output
     pub fn prompt_bg(&self) -> &'static str {
         self.code("\x1b[48;5;237m")

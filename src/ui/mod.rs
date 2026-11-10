@@ -8,6 +8,7 @@
 //! Without a terminal there are no colors, no spinner and no box.
 
 pub mod banner;
+pub mod dialog;
 pub mod editor;
 pub mod render;
 pub mod spinner;
@@ -49,6 +50,7 @@ const COMMANDS: &[editor::Command] = &[
         "start a fresh conversation (the model forgets the earlier tasks)",
     ),
     ("/mode", "switch between ask and allow all (also Shift+Tab)"),
+    ("/login", "enter a new DeepSeek token"),
     ("/help", "commands and keys"),
     ("/exit", "quit"),
 ];
@@ -400,6 +402,23 @@ impl Terminal {
         self.blank();
     }
 
+    /// Opens the token window (see `dialog`). `None` = cancelled, or no terminal
+    /// to show it on. The token is returned to the caller and goes nowhere else.
+    pub fn token_dialog(&mut self, reason: &str) -> Option<String> {
+        if !self.interactive {
+            return None;
+        }
+        self.close_output();
+        self.spinner.stop();
+        self.watch_stop();
+        let token = dialog::ask_token(self.style, reason).ok().flatten();
+        // The alternate screen may have dropped the scroll region: lay the dock out again.
+        if self.screen {
+            self.editor.refresh_dock();
+        }
+        token
+    }
+
     /// One blank line, unless the last thing printed was one.
     fn blank(&mut self) {
         if !std::mem::replace(&mut self.gap, true) {
@@ -436,6 +455,17 @@ impl Terminal {
         if s.on() {
             // A rule over the whole width with the outcome in it: the end of a task is easy to find.
             let columns = crossterm::terminal::size().map_or(80, |(columns, _)| columns as usize);
+            // A long error is cut so the line stays one row.
+            let room = columns.saturating_sub(10);
+            let text = match text.chars().count() > room {
+                true => format!(
+                    "{}…",
+                    text.chars()
+                        .take(room.saturating_sub(1))
+                        .collect::<String>()
+                ),
+                false => text,
+            };
             let used = 3 + 2 + text.chars().count() + 1;
             let rule = "─".repeat(columns.saturating_sub(used + 1));
             self.line(&format!(

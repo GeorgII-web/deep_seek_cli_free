@@ -13,7 +13,7 @@ Entry `main()` in `src/main.rs`: `Cli::parse` → `Paths::new` → `Settings::lo
 |---|---|
 | `dsc <task words>` + `--yes`, `--think`, `--search`, `--expert` (`RunArgs`) | `conversation()` + `agent::run::run` with `protocol::first_prompt` and `ui::Terminal` |
 | `dsc` without a task (flags allowed), `dsc chat` (no flags) | `chat()` |
-| `dsc login --import <file>` / `--token` | `login()`; without a mode it bails (browser login is `TASKS.md`) |
+| `dsc login` | `login()`: without a flag the token window (`Terminal::token_dialog`), `--token` a hidden prompt, `--import <file>` a file |
 | `dsc logout` | `Auth::remove` |
 | `dsc doctor` | `doctor()`: paths, model, throttle, then token (`create_challenge`), wasm, proof of work; sends no prompt, not throttled |
 
@@ -31,6 +31,7 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 | empty | ignored |
 | `/new` | new `Conversation`, the next task gets the rules again |
 | `/mode` | `Terminal::toggle_mode` (ask ⇄ allow all) |
+| `/login` | `relogin`: token window, save, `Conversation::set_client` |
 | `/help` | `Terminal::help` |
 | `/exit`, `/quit`, Ctrl-D on an empty box, Ctrl-C twice | leave |
 | other `/word` | "unknown command"; a text with a second `/` or a space (a path, a sentence) is a task |
@@ -77,3 +78,9 @@ A new key: the struct field, its default, the README config block, the skill of 
 `Auth::save` removes the old file and creates the new one with mode 0600; `Auth::require` gives "not logged in".
 Parse errors of auth files never quote the content. Verified live: the token alone is enough, the cookie may be
 empty. The browser mode is not written yet.
+
+`relogin(paths, settings, terminal, reason)` in `src/main.rs`: `Terminal::token_dialog` → `Auth::new(token, "", old wasm_url)` →
+`Auth::save` → a `Client` for it; `None` when the user cancelled. It runs in the chat when there is no token at
+the start (cancel = exit), on `/login`, and after a task failed with `ApiError::TokenDead`: with a new token
+`Conversation::set_client` keeps the conversation and the same prompt runs again, until it works or the user
+cancels. The token never reaches the input history (`Editor`) or a prompt.

@@ -6,12 +6,14 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 # Terminal UI
 
 `ui::Terminal` implements `agent::run::Ui` (see `../agent-loop/SKILL.md`) and adds what only `src/main.rs` calls:
-`open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `interrupts`, `mode`, `toggle_mode`.
+`open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `token_dialog`, `interrupts`, `mode`,
+`toggle_mode`.
 
 | File | Content |
 |---|---|
 | `src/ui/mod.rs` | `Terminal` (`line`, `partial`, `text` = the only print paths); `screen_lock`, `screen_write`; constants `RESULT_LINES` (8), `INPUT_HINTS`, `EDIT_HINTS`, `COMMANDS` |
 | `src/ui/banner.rs` | `art(style, columns)`: the start picture; `glyph` holds the 5-row letters (`#` = filled cell) |
+| `src/ui/dialog.rs` | `ask_token(style, reason)`: the token window; `rows` builds it (tested for width and masking) |
 | `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history, command menu), `command_matches`, `Dock`, `Input`, `read_choice`, `RawMode` |
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
 | `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`, `set_mode`; `Notifier` (a 2 s notice in place of the key hint) |
@@ -107,6 +109,23 @@ watcher and the agent loop (`Terminal::mode`). With a terminal it is shown as `S
 | progress line (`Spinner`) | spinner, label, clock, then the hint `Esc to stop` or a 2 s notice, then the mode label |
 
 Two grays: `Style::key` (lighter) for the key, `Style::faint` (darker) for what it does and the ` · ` separators.
+
+## Token window (`dialog::ask_token`)
+
+A modal window centered on the terminal's alternate screen (`ESC[?1049h` … `l`), so the chat is not overwritten
+and comes back as it was; `Terminal::token_dialog` then calls `Editor::refresh_dock` to set the scroll region
+again. Content: title, the reason, how to get the token, the field, the buttons `[ OK ]` and `[ Cancel ]` (the
+focused one inverted), a hint line below.
+
+| Key | Effect |
+|---|---|
+| paste, characters | added to the token; shown as `•` only, with the count; whitespace and control characters dropped |
+| Backspace, Ctrl-U | delete one, delete all |
+| Tab, Shift+Tab, Left, Right | switch the focused button |
+| Enter | the focused button; OK without a token does nothing |
+| Esc, Ctrl-C, Ctrl-D | Cancel |
+
+The token leaves the function only as the return value: it is never printed, logged or put into `Editor` history.
 
 ## Input box (`Editor::read`)
 

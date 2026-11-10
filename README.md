@@ -66,7 +66,7 @@ cargo install --path .        # installs `dsc` into ~/.cargo/bin
    copy(JSON.parse(localStorage.getItem('userToken')).value)
    ```
    This copies your login token to the clipboard. (Chrome asks you to type `allow pasting` first.)
-3. Run `dsc login --token`, paste the token at the hidden prompt, press Enter at the cookie prompt.
+3. Run `dsc` (or `dsc login`): a window asks for the token. Paste it and press Enter. It is shown as dots only.
 4. Run `dsc doctor`:
    ```console
    token     ok (challenge DeepSeekHashV1, difficulty 144000)
@@ -75,7 +75,13 @@ cargo install --path .        # installs `dsc` into ~/.cargo/bin
    ```
 
 The token is stored in `~/.config/deep_seek_cli_free/auth.json` with mode 0600. Treat it like a password: it gives full access
-to your DeepSeek account. `dsc logout` removes it. When `doctor` says `token dead`, repeat the login.
+to your DeepSeek account. `dsc logout` removes it.
+
+When the token dies, the chat opens the same window by itself, and with the new token the task runs again;
+`/login` opens it at any time. The token is saved in `auth.json` only: it is never printed, never kept in the
+input history and never sent as a message to the model.
+
+In a script (no terminal) use `dsc login --token`, which reads it from a hidden prompt.
 
 `dsc login --import <file>` reads the `deepseek-auth.json` of
 [FreeDeepseekAPI](https://github.com/ForgetMeAI/FreeDeepseekAPI) instead.
@@ -140,7 +146,7 @@ shell prompt.
 | Ctrl-C | clears the box and asks to press it again; twice within two seconds quits, also while a task runs |
 | Ctrl-D | quit (empty box) |
 
-Pasting several lines works. `/new` starts a fresh conversation, `/mode` switches the mode, `/help` lists the
+Pasting several lines works. `/new` starts a fresh conversation, `/mode` switches the mode, `/login` asks for a new token, `/help` lists the
 commands and keys, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
 `~/.config/deep_seek_cli_free/history.json`; the conversation itself is not saved, after a restart the model starts from zero.
@@ -162,7 +168,7 @@ Windows Terminal and most others). Colors switch off with
 | Command | Meaning |
 |---|---|
 | `dsc`, `dsc chat` | interactive chat |
-| `dsc login --token` / `--import <file>` | store the token |
+| `dsc login` | store the token: the token window; `--token` = hidden prompt, `--import <file>` = from a file |
 | `dsc logout` | remove it |
 | `dsc doctor` | check paths, token and proof of work; sends no prompt |
 

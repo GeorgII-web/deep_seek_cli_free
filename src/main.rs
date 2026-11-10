@@ -13,7 +13,7 @@ use auth::Auth;
 use clap::Parser;
 use cli::{Cli, Command};
 use config::{Mode, Paths, Settings};
-use deepseek::client::{Client, TurnOpts};
+use deepseek::client::{ApiError, Client, TurnOpts};
 use deepseek::pow;
 use deepseek::session::Conversation;
 use std::collections::HashSet;
@@ -121,11 +121,16 @@ fn cwd() -> String {
 /// Interactive mode: every input is a task in the same conversation, so the model
 /// remembers the earlier ones. What the user allowed with "always" holds until the exit.
 async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<()> {
-    let mut conversation = conversation(paths, settings, run)?;
     let mut terminal = ui::Terminal::new(
         Some(paths.history()),
         run.yes || settings.policy.mode == Mode::AllowAll,
     );
+    if Auth::load(paths)?.is_none()
+        && relogin(paths, settings, &mut terminal, "You are not logged in yet.")?.is_none()
+    {
+        bail!("not logged in; run `dsc login`");
+    }
+    let mut conversation = conversation(paths, settings, run)?;
     let mode = terminal.mode();
     let mut saver = ModeSaver::new(paths, settings, mode.clone());
     let mut interrupts = terminal.interrupts();
@@ -156,6 +161,22 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 saver.sync();
                 continue;
             }
+            "/login" => {
+                match relogin(
+                    paths,
+                    settings,
+                    &mut terminal,
+                    "Enter a new DeepSeek token.",
+                ) {
+                    Ok(Some(client)) => {
+                        conversation.set_client(client);
+                        terminal.info("Token saved. Check it with a task or `dsc doctor`.");
+                    }
+                    Ok(None) => terminal.info("Cancelled: the token was not changed."),
+                    Err(err) => terminal.error(&format!("{err:#}")),
+                }
+                continue;
+            }
             "/new" => {
                 conversation = self::conversation(paths, settings, run)?;
                 first = true;
@@ -171,24 +192,58 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             task => protocol::next_prompt(task),
         };
         first = false;
-        terminal.begin();
-        // A failed or stopped task does not end the chat; Ctrl-C twice does.
-        let result = agent::run::run(
-            &mut conversation,
-            &mut terminal,
-            prompt,
-            settings,
-            &mode,
-            &mut always,
-            &mut interrupts,
-        )
-        .await;
-        terminal.finish(&result);
-        saver.sync();
-        if matches!(
-            result.as_ref().err().and_then(|err| err.downcast_ref()),
-            Some(Interrupt::Quit)
-        ) {
+        let mut quit = false;
+        // A failed or stopped task does not end the chat; Ctrl-C twice does. A dead
+        // token opens the login window and, with a new token, the task runs again.
+        loop {
+            terminal.begin();
+            let result = agent::run::run(
+                &mut conversation,
+                &mut terminal,
+                prompt.clone(),
+                settings,
+                &mode,
+                &mut always,
+                &mut interrupts,
+            )
+            .await;
+            terminal.finish(&result);
+            saver.sync();
+            let error = result.as_ref().err();
+            if matches!(
+                error.and_then(|err| err.downcast_ref()),
+                Some(Interrupt::Quit)
+            ) {
+                quit = true;
+                break;
+            }
+            if !matches!(
+                error.and_then(|err| err.downcast_ref()),
+                Some(ApiError::TokenDead(_))
+            ) {
+                break;
+            }
+            match relogin(
+                paths,
+                settings,
+                &mut terminal,
+                "The token is dead or expired.",
+            ) {
+                Ok(Some(client)) => {
+                    conversation.set_client(client);
+                    terminal.info("Token saved; running the task again.");
+                }
+                Ok(None) => {
+                    terminal.info("No new token. Use `/login` when you have one.");
+                    break;
+                }
+                Err(err) => {
+                    terminal.error(&format!("{err:#}"));
+                    break;
+                }
+            }
+        }
+        if quit {
             break;
         }
     }
@@ -204,7 +259,14 @@ fn login(paths: &Paths, import: Option<PathBuf>, token: bool) -> Result<()> {
             Auth::new(token, cookie, None)?
         }
         (None, false) => {
-            bail!("browser login: not implemented yet (TASKS.md #11); use --import or --token")
+            // The token window; without a terminal there is nothing to show it on.
+            let mut terminal = ui::Terminal::new(None, false);
+            match terminal.token_dialog("Enter your DeepSeek token.") {
+                Some(token) => Auth::new(token, String::new(), None)?,
+                None => bail!(
+                    "no token entered; in a script use `dsc login --token` or `--import <file>`"
+                ),
+            }
         }
     };
     auth.save(paths)?;
@@ -213,6 +275,27 @@ fn login(paths: &Paths, import: Option<PathBuf>, token: bool) -> Result<()> {
         paths.auth().display()
     );
     Ok(())
+}
+
+/// Asks for a new token in the login window, saves it and returns a client that
+/// uses it. `None` = the user cancelled. The token is written to `auth.json` only.
+fn relogin(
+    paths: &Paths,
+    settings: &Settings,
+    terminal: &mut ui::Terminal,
+    reason: &str,
+) -> Result<Option<Client>> {
+    let Some(token) = terminal.token_dialog(reason) else {
+        return Ok(None);
+    };
+    // The proof-of-work URL of the old login still applies.
+    let wasm_url = Auth::load(paths)
+        .ok()
+        .flatten()
+        .and_then(|old| old.wasm_url);
+    let auth = Auth::new(token, String::new(), wasm_url)?;
+    auth.save(paths)?;
+    Ok(Some(Client::new(&auth, &settings.deepseek)?))
 }
 
 fn conversation(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<Conversation> {

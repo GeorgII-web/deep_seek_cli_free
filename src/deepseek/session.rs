@@ -38,6 +38,11 @@ impl Conversation {
         &self.client
     }
 
+    /// Continues the same conversation with another login (a new token of the same account).
+    pub fn set_client(&mut self, client: Client) {
+        self.client = client;
+    }
+
     /// The proof-of-work module: memory, then `<home>/cache/sha3.wasm` when it was
     /// downloaded from the current URL, else a download.
     pub async fn wasm(&mut self) -> Result<&[u8]> {

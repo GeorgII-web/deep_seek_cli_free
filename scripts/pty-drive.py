@@ -26,6 +26,7 @@ rows = [[' '] * W for _ in range(H)]
 scrollback = []
 top, bottom, y, x, saved = 0, H - 1, 0, 0, (0, 0)
 pending = ''
+main_screen = None
 
 
 def line_feed():
@@ -40,7 +41,7 @@ def line_feed():
 
 
 def feed(text):
-    global top, bottom, y, x, saved, pending
+    global top, bottom, y, x, saved, pending, main_screen
     s = pending + text
     pending = ''
     i = 0
@@ -77,8 +78,15 @@ def feed(text):
             nums = [int(n) if n else None for n in args.split(';')] if args else [None]
             first = nums[0]
             if private:
-                # Cursor position report request (ESC[6n has no '?'; nothing to do for modes)
-                pass
+                # Alternate screen: its own content; the main screen and cursor come back after.
+                if first == 1049 and kind == 'h':
+                    main_screen = ([r[:] for r in rows], y, x)
+                    for r in rows:
+                        r[:] = [' '] * W
+                elif first == 1049 and kind == 'l' and main_screen:
+                    saved_rows, y, x = main_screen
+                    for r, old in zip(rows, saved_rows):
+                        r[:] = old
             elif kind == 'n' and first == 6:
                 os.write(fd, f'\x1b[{y + 1};{x + 1}R'.encode())
             elif kind == 'A':

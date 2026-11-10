@@ -430,6 +430,16 @@ impl Editor {
         dock.height = height;
     }
 
+    /// Sets the scroll region again after something else used the whole screen
+    /// (the alternate screen restores the content and the cursor, but a terminal
+    /// may drop the region). The cursor stays where it is.
+    pub fn refresh_dock(&mut self) {
+        if let Some(dock) = &self.dock {
+            let bottom = dock.height as usize - dock.area;
+            screen_write(&format!("\x1b7\x1b[1;{bottom}r\x1b8"));
+        }
+    }
+
     /// The docked box, empty, with the cursor back in the output.
     fn dock_idle(&mut self) -> io::Result<()> {
         let width = Self::inner_width();
