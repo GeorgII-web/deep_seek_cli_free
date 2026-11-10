@@ -36,12 +36,8 @@ pub struct RunArgs {
 
 #[derive(Subcommand, Debug)]
 pub enum Command {
-    /// Interactive conversation
-    Chat {
-        /// Continue the last conversation
-        #[arg(long)]
-        resume: bool,
-    },
+    /// Interactive conversation: several tasks, one after another (also the default without a task)
+    Chat,
     /// Store the DeepSeek web token
     Login {
         /// Read FreeDeepseekAPI's deepseek-auth.json

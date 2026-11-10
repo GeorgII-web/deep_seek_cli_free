@@ -35,19 +35,16 @@ pub trait Ui {
     fn note(&mut self, text: &str);
 }
 
+/// Runs one task: `prompt` is `protocol::first_prompt` or `next_prompt`. `always`
+/// holds what the user allowed for the rest of the session.
 pub async fn run<B: Backend, U: Ui>(
     backend: &mut B,
     ui: &mut U,
-    task: &str,
+    mut prompt: String,
     settings: &Settings,
     yes: bool,
+    always: &mut HashSet<String>,
 ) -> Result<()> {
-    let cwd = std::env::current_dir()
-        .map(|dir| dir.display().to_string())
-        .unwrap_or_default();
-    let mut prompt = protocol::first_prompt(task, &cwd);
-    let mut always = HashSet::new();
-
     for _ in 0..settings.agent.max_steps {
         let answer = {
             let mut sink = |event: &Event| ui.event(event);
@@ -65,7 +62,7 @@ pub async fn run<B: Backend, U: Ui>(
                 message
             }
             Parsed::Action { action, extra } => {
-                let mut result = act(action, ui, settings, yes, &mut always).await;
+                let mut result = act(action, ui, settings, yes, always).await;
                 if extra > 0 {
                     result.push_str("\nNote: only your first action block was run. Send one block per answer.\n");
                 }
@@ -223,6 +220,17 @@ mod tests {
         format!("ok\n```dsc\n{json}\n```")
     }
 
+    async fn run_task(
+        backend: &mut Script,
+        ui: &mut FakeUi,
+        task: &str,
+        settings: &Settings,
+        yes: bool,
+    ) -> Result<()> {
+        let prompt = protocol::first_prompt(task, "/work");
+        run(backend, ui, prompt, settings, yes, &mut HashSet::new()).await
+    }
+
     fn settings() -> Settings {
         let mut settings = Settings::default();
         settings.policy.allow = vec!["echo".into()];
@@ -235,7 +243,7 @@ mod tests {
         let mut backend =
             Script::new(&[&block(r#"{"tool":"shell","cmd":"echo hi"}"#), "It said hi."]);
         let mut ui = FakeUi::default();
-        run(&mut backend, &mut ui, "say hi", &settings(), false)
+        run_task(&mut backend, &mut ui, "say hi", &settings(), false)
             .await
             .unwrap();
         assert!(backend.prompts[0].ends_with("Task: say hi"));
@@ -255,7 +263,7 @@ mod tests {
             decisions: [Decision::No, Decision::Always].into(),
             ..Default::default()
         };
-        run(&mut backend, &mut ui, "t", &settings(), false)
+        run_task(&mut backend, &mut ui, "t", &settings(), false)
             .await
             .unwrap();
         assert!(backend.prompts[1].starts_with("Denied by the user"));
@@ -269,7 +277,7 @@ mod tests {
         let bad = block(r#"{"tool":"shell","cmd":"echo forbidden"}"#);
         let mut backend = Script::new(&[&bad, "ok"]);
         let mut ui = FakeUi::default();
-        run(&mut backend, &mut ui, "t", &settings(), true)
+        run_task(&mut backend, &mut ui, "t", &settings(), true)
             .await
             .unwrap();
         assert!(backend.prompts[1].starts_with("Denied: this matches"));
@@ -280,7 +288,7 @@ mod tests {
             decisions: [Decision::Edit("echo forbidden".into())].into(),
             ..Default::default()
         };
-        run(&mut backend, &mut ui, "t", &settings(), false)
+        run_task(&mut backend, &mut ui, "t", &settings(), false)
             .await
             .unwrap();
         assert!(backend.prompts[1].starts_with("Denied: this matches"));
@@ -293,7 +301,7 @@ mod tests {
             decisions: [Decision::Edit("printf edited".into())].into(),
             ..Default::default()
         };
-        run(&mut backend, &mut ui, "t", &settings(), false)
+        run_task(&mut backend, &mut ui, "t", &settings(), false)
             .await
             .unwrap();
         assert_eq!(
@@ -311,7 +319,7 @@ mod tests {
             &block(r#"{"tool":"shell","cmd":"echo a"}"#),
         ]);
         let mut ui = FakeUi::default();
-        run(&mut backend, &mut ui, "t", &limited, false)
+        run_task(&mut backend, &mut ui, "t", &limited, false)
             .await
             .unwrap();
         assert!(backend.prompts[1].starts_with("Your action block is not valid"));
@@ -327,11 +335,47 @@ mod tests {
         ));
         let read = block(&format!(r#"{{"tool":"read_file","path":"{path}"}}"#));
         let mut backend = Script::new(&[&write, &read, "ok"]);
-        run(&mut backend, &mut FakeUi::default(), "t", &settings(), true)
+        run_task(&mut backend, &mut FakeUi::default(), "t", &settings(), true)
             .await
             .unwrap();
         assert_eq!(backend.prompts[1], format!("Written: {path} (3 bytes)\n"));
         assert_eq!(backend.prompts[2], format!("--- {path} ---\nabc\n"));
         std::fs::remove_file(file).unwrap();
+    }
+
+    #[tokio::test]
+    async fn always_and_the_conversation_carry_over_to_the_next_task() {
+        let first = block(r#"{"tool":"shell","cmd":"true one"}"#);
+        let second = block(r#"{"tool":"shell","cmd":"true two"}"#);
+        let mut backend = Script::new(&[&first, "done 1", &second, "done 2"]);
+        let mut ui = FakeUi {
+            decisions: [Decision::Always].into(),
+            ..Default::default()
+        };
+        let mut always = HashSet::new();
+        let cfg = settings();
+        run(
+            &mut backend,
+            &mut ui,
+            protocol::first_prompt("a", "/work"),
+            &cfg,
+            false,
+            &mut always,
+        )
+        .await
+        .unwrap();
+        run(
+            &mut backend,
+            &mut ui,
+            protocol::next_prompt("b"),
+            &cfg,
+            false,
+            &mut always,
+        )
+        .await
+        .unwrap();
+        assert!(backend.prompts[2].starts_with("New task from the user."));
+        assert!(backend.prompts[2].ends_with("Task: b"));
+        assert_eq!(ui.asked.len(), 1);
     }
 }

@@ -21,8 +21,8 @@ Root filesystem: 810G available (1007G total, 16% used).
 ## Status
 
 Early, works end to end. Done: login by token, direct HTTP client, proof of work, streamed answers, reasoning
-mode, the agent loop with approvals, request throttling. Open: interactive `dsc chat`, login through the browser,
-nicer output. See [TASKS.md](TASKS.md).
+mode, the agent loop with approvals, interactive chat, request throttling. Open: resume of a chat after a restart,
+login through the browser, nicer output. See [TASKS.md](TASKS.md).
 
 ## Install
 
@@ -64,6 +64,26 @@ dsc --think "why does cargo build fail here?"    # reasoning mode
 dsc --yes "create a .gitignore for a Rust project"
 ```
 
+### Chat
+
+`dsc` without a task (or `dsc chat`) opens a prompt. Every line is a task in the same conversation, so the model
+remembers what it did before:
+
+```console
+$ dsc
+dsc> how much disk space is free on / ?
+$ df -h /
+There is 810G free on / (out of 1007G, 16% used).
+
+dsc> which command did you run for that?
+The exact command was: df -h /
+```
+
+`/new` starts a fresh conversation, `/exit` or Ctrl-D quits. Flags work here too (`dsc --think`). What you allowed
+with `a` holds until you quit. A chat is not saved: after a restart the model starts from zero.
+
+### Flags
+
 | Flag | Meaning |
 |---|---|
 | `-y`, `--yes` | run actions without asking (the deny list still applies) |
@@ -73,6 +93,7 @@ dsc --yes "create a .gitignore for a Rust project"
 
 | Command | Meaning |
 |---|---|
+| `dsc`, `dsc chat` | interactive chat |
 | `dsc login --token` / `--import <file>` | store the token |
 | `dsc logout` | remove it |
 | `dsc doctor` | check paths, token and proof of work; sends no prompt |
@@ -94,7 +115,8 @@ why: show the first line
 `a` allows that program (or tool) for the rest of the run; `e` lets you change the command first; `n` tells the
 model it was denied, so it can try another way. Without a terminal on stdin every question counts as no.
 
-Ctrl-C while a command runs kills only the command; Ctrl-C while waiting for the model ends `dsc`.
+Ctrl-C while a command runs kills only the command; Ctrl-C while waiting for the model ends the task (in a chat
+you are back at the prompt).
 
 ## Safety and privacy
 

@@ -88,6 +88,13 @@ Task: {task}"#
     )
 }
 
+/// A further task in a conversation that already got the rules.
+pub fn next_prompt(task: &str) -> String {
+    format!(
+        "New task from the user. The same rules apply: one {FENCE} block per answer, plain text when done.\n\nTask: {task}"
+    )
+}
+
 /// Finds the action in an answer of the model.
 pub fn parse(answer: &str) -> Parsed {
     let mut blocks = Vec::new();

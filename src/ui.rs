@@ -25,7 +25,8 @@ impl Terminal {
         }
     }
 
-    fn read_line(prompt: &str) -> Option<String> {
+    /// Prompts on stderr and reads a line; `None` at the end of input.
+    pub fn read_line(prompt: &str) -> Option<String> {
         eprint!("{prompt}");
         let _ = std::io::stderr().flush();
         let mut line = String::new();

@@ -6,6 +6,7 @@ mod config;
 mod deepseek;
 mod ui;
 
+use agent::protocol;
 use anyhow::{Result, bail};
 use auth::Auth;
 use clap::Parser;
@@ -14,6 +15,7 @@ use config::{Paths, Settings};
 use deepseek::client::{Client, TurnOpts};
 use deepseek::pow;
 use deepseek::session::Conversation;
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::Instant;
 
@@ -38,22 +40,74 @@ async fn main() -> Result<()> {
             );
             Ok(())
         }
-        Some(Command::Chat { .. }) => bail!("chat: not implemented yet (TASKS.md #10)"),
-        None if cli.run.task.is_empty() => bail!("no task given; see `dsc --help`"),
+        Some(Command::Chat) => chat(&paths, &settings, &cli::RunArgs::default()).await,
+        None if cli.run.task.is_empty() => chat(&paths, &settings, &cli.run).await,
         None => {
             let mut conversation = conversation(&paths, &settings, &cli.run)?;
-            let task = cli.run.task.join(" ");
+            let prompt = protocol::first_prompt(&cli.run.task.join(" "), &cwd());
             let mut terminal = ui::Terminal::default();
+            let mut always = HashSet::new();
             agent::run::run(
                 &mut conversation,
                 &mut terminal,
-                &task,
+                prompt,
                 &settings,
                 cli.run.yes,
+                &mut always,
             )
             .await
         }
     }
+}
+
+fn cwd() -> String {
+    std::env::current_dir()
+        .map(|dir| dir.display().to_string())
+        .unwrap_or_default()
+}
+
+/// Interactive mode: every line is a task in the same conversation, so the model
+/// remembers the earlier ones. `/new` starts a fresh conversation, `/exit` or the
+/// end of input leaves. What the user allowed with "always" holds until the exit.
+async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<()> {
+    let mut conversation = conversation(paths, settings, run)?;
+    let mut terminal = ui::Terminal::default();
+    let mut always = HashSet::new();
+    let mut first = true;
+    eprintln!("dsc chat: a task per line; /new = fresh conversation, /exit or Ctrl-D = quit");
+    while let Some(line) = ui::Terminal::read_line("\ndsc> ") {
+        let prompt = match line.as_str() {
+            "" => continue,
+            "/exit" | "/quit" => break,
+            "/new" => {
+                conversation = self::conversation(paths, settings, run)?;
+                first = true;
+                eprintln!("new conversation");
+                continue;
+            }
+            command if command.starts_with('/') => {
+                eprintln!("unknown command {command}; known: /new, /exit");
+                continue;
+            }
+            task if first => protocol::first_prompt(task, &cwd()),
+            task => protocol::next_prompt(task),
+        };
+        first = false;
+        // A failed task (network, Ctrl-C, dead token) does not end the chat.
+        if let Err(err) = agent::run::run(
+            &mut conversation,
+            &mut terminal,
+            prompt,
+            settings,
+            run.yes,
+            &mut always,
+        )
+        .await
+        {
+            eprintln!("dsc: {err:#}");
+        }
+    }
+    Ok(())
 }
 
 fn login(paths: &Paths, import: Option<PathBuf>, token: bool) -> Result<()> {

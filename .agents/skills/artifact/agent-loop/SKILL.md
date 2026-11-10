@@ -5,11 +5,12 @@ description: The agent in `src/agent/` and `src/ui.rs` — the text protocol tha
 
 # Agent loop
 
-Entry `agent::run::run(backend, ui, task, settings, yes)`, called from `src/main.rs` for `dsc "<task>"`.
+Entry `agent::run::run(backend, ui, prompt, settings, yes, always)` = one task; called from `src/main.rs` once for
+`dsc "<task>"` and once per line in the chat. `always` (what the user allowed for the session) belongs to the caller.
 
 | File | Content |
 |---|---|
-| `src/agent/protocol.rs` | `Action`, `FENCE`, `first_prompt`, `parse` → `Parsed`, `shell_result` |
+| `src/agent/protocol.rs` | `Action`, `FENCE`, `first_prompt`, `next_prompt`, `parse` → `Parsed`, `shell_result` |
 | `src/agent/tools.rs` | `shell` → `ShellOutput`, `cap`, `read_file`, `write_file`; constants `KEEP_BYTES`, `DRAIN` |
 | `src/agent/run.rs` | `run`, `act` (policy, question, edit), `execute`; `Ui`, `Decision`; tests with `Script` and `FakeUi` |
 | `src/ui.rs` | `Terminal` implements `Ui`; `RESULT_LINES` = lines of a result shown to the user |
@@ -44,7 +45,8 @@ directory, the task. The model answers either plain text (final answer, the loop
 
 ## Loop steps
 
-1. `prompt` = `first_prompt(task, cwd)`.
+1. The caller builds `prompt`: `first_prompt(task, cwd)` for a new conversation, `next_prompt(task)` for a
+   further task in the same one (a short reminder of the rules + the task).
 2. `backend.ask(prompt)`; pieces go to `Ui::event`, then `Ui::answer_end`.
 3. `parse(answer)`: `Final` → return; `Invalid` → its text is the next prompt; `Action` → `act`.
 4. `act`: `policy::check` (see `../approval-policy/SKILL.md`), then `execute`; the result text is shown with

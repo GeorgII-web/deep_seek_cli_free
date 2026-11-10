@@ -5,7 +5,7 @@ description: Map of deep_seek_cli_free (binary `dsc`) — the design decisions a
 
 # Architecture
 
-Entry point `src/main.rs`. State: the agent works live end to end (`dsc "<task>"`); `chat`, transcripts and the
+Entry point `src/main.rs`. State: single tasks and the interactive chat work live; transcripts with resume and the
 browser login are design (`TASKS.md`).
 
 ## Decisions

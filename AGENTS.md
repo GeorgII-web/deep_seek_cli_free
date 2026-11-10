@@ -10,9 +10,9 @@ The repo is public: no personal paths, names or data in any tracked file.
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt); `chat` bails "not implemented yet" |
+| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; no task or `chat` → `chat()` (a task per line in one conversation, `/new`, `/exit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
 | `src/backend.rs` | `Backend` trait (`ask(prompt, sink) -> answer text`, one value = one conversation) and `Event` (`Thinking`, `Text`); the agent knows only this |
-| `src/cli.rs` | clap: `Cli` = optional `Command` (`chat --resume`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
+| `src/cli.rs` | clap: `Cli` = optional `Command` (`chat`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
 | `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/dsc`; `config()`, `auth()`, `cache()`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing |
 | `src/auth.rs` | `Auth` (`token`, `cookie`, `wasm_url`): `load`, `require`, `import` (FreeDeepseekAPI file), `new`, `save` (0600), `remove`; browser login over CDP `[ ]` |
 | `src/deepseek/client.rs` | `Client`: headers, `create_session`, `create_challenge`, `completion` (returns the SSE response), `fetch_wasm`; `ApiError` (`TokenDead`, `RateLimited`), envelope check `biz_data` |
@@ -20,10 +20,10 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/deepseek/session.rs` | `Conversation`: session id, `parent_message_id`, wasm cache, `pow_header()`, `send()` with throttle and 429 retries, `impl Backend` (`ask` = send + parse + keep the answer id as next parent); built with the `TurnOpts` of the run |
 | `src/deepseek/throttle.rs` | `delay_ms` (pure rule), `acquire` (wait + record in `<home>/cache/throttle.json`) |
 | `src/deepseek/stream.rs` | `Parser`: `feed(bytes) -> Vec<Event>`, `finish()` (error unless status `FINISHED`), `response_message_id`; tests on the recorded streams in `src/deepseek/fixtures/` |
-| `src/agent/protocol.rs` | `Action` (`shell`, `read_file`, `write_file`), `first_prompt` (rules + task), `parse` → `Final` / `Action` / `Invalid`, `shell_result` text |
+| `src/agent/protocol.rs` | `Action` (`shell`, `read_file`, `write_file`), `first_prompt` (rules + task), `next_prompt` (a further task), `parse` → `Final` / `Action` / `Invalid`, `shell_result` text |
 | `src/agent/policy.rs` | `check` → `Allow` / `Ask` / `Deny`, `always_key` (what "always" covers) |
 | `src/agent/tools.rs` | `shell` (bash, own process group, timeout, Ctrl-C, output collected), `cap`, `read_file`, `write_file` |
-| `src/agent/run.rs` | `run` (the loop), `act` (check, ask, edit), `execute`; `Ui` trait and `Decision`; loop tests with a scripted backend |
+| `src/agent/run.rs` | `run` (the loop for one task; takes the prompt and the session's "always" set), `act` (check, ask, edit), `execute`; `Ui` trait and `Decision`; loop tests with a scripted backend |
 | `src/ui.rs` | `Terminal` = `Ui` on the terminal: streamed answer, approval question, result preview, notes |
 
 ## Skills (`.agents/skills`, read the one that matches before working)

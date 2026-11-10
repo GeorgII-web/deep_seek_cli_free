@@ -11,14 +11,29 @@ Entry `main()` in `src/main.rs`: `Cli::parse` → `Paths::new` → `Settings::lo
 
 | Input | Handler |
 |---|---|
-| `dsc <task words>` + `--yes`, `--think`, `--search`, `--expert` (`RunArgs`) | `conversation()` + `agent::run::run` with `ui::Terminal` |
+| `dsc <task words>` + `--yes`, `--think`, `--search`, `--expert` (`RunArgs`) | `conversation()` + `agent::run::run` with `protocol::first_prompt` and `ui::Terminal` |
+| `dsc` without a task (flags allowed), `dsc chat` (no flags) | `chat()` |
 | `dsc login --import <file>` / `--token` | `login()`; without a mode it bails (browser login is `TASKS.md`) |
 | `dsc logout` | `Auth::remove` |
 | `dsc doctor` | `doctor()`: paths, model, throttle, then token (`create_challenge`), wasm, proof of work; sends no prompt, not throttled |
-| `dsc chat --resume` | bails "not implemented yet" |
 
 `conversation()` builds `TurnOpts` from the flags over `[deepseek]`: `--expert` → `model_type = "expert"`,
 `--think` and `--search` switch the flags on.
+
+## Chat (`chat()` in `src/main.rs`)
+
+Reads lines with `ui::Terminal::read_line("dsc> ")` until the end of input. One `Conversation` and one "always"
+set live for the whole chat; the first task uses `protocol::first_prompt`, later ones `next_prompt`.
+
+| Line | Effect |
+|---|---|
+| empty | ignored |
+| `/new` | new `Conversation`, the next task gets the rules again |
+| `/exit`, `/quit`, Ctrl-D | leave |
+| other `/x` | "unknown command" |
+| anything else | a task; an error of the run (network, dead token, Ctrl-C) is printed and the chat goes on |
+
+Not saved: no transcript, no resume (`TASKS.md`). Line input is the plain terminal line (no history keys).
 
 ## Config (`src/config.rs`)
 
