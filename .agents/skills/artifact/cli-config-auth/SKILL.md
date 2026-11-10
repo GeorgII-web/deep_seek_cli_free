@@ -44,16 +44,23 @@ was interrupted. Both modes take their `Interrupts` from `Terminal::interrupts`.
 
 ## Config (`src/config.rs`)
 
-`Paths`: home = `$DSC_HOME`, else `~/.config/dsc` (created); `config()`, `auth()`, `history()`, `cache()`.
-`Settings::load_or_create` writes the defaults when `config.toml` is missing; unknown keys fail
-(`deny_unknown_fields`), missing keys take defaults.
+`Paths`: home = `$DSC_HOME`, else `~/.config/deep_seek_cli_free` (created); `config()`, `auth()`, `history()`, `cache()`.
+`Paths::new` calls `migrate`: a folder `~/.config/dsc` of the first versions is renamed to the new one, once,
+only when the new one does not exist; `$DSC_HOME` skips that. `Settings::load_or_create` writes the defaults when
+`config.toml` is missing; unknown keys fail (`deny_unknown_fields`), missing keys take defaults; a deny list
+that protects only the old token path gets the new one (`guard_auth_file`). `Settings::save` rewrites the whole
+file (comments are lost).
+
+Saved mode: `policy.mode` (`config::Mode`: `ask`, `allow_all`) is the mode at the start. `ModeSaver` in
+`src/main.rs` compares the mode flag with its last value after every input, `/mode` and task (`sync`) and saves
+when the user switched it; a mode that only comes from `--yes` is never written.
 
 | Section | Struct | Keys |
 |---|---|---|
 | `[deepseek]` | `Deepseek` | `model_type`, `thinking`, `search`, `locale`, `timeout_secs` |
 | `[throttle]` | `Throttle` | see `../deepseek-client/SKILL.md` |
 | `[agent]` | `Agent` | `max_steps`, `max_output_bytes`, `command_timeout_secs` |
-| `[policy]` | `Policy` | `allow`, `deny`, see `../approval-policy/SKILL.md` |
+| `[policy]` | `Policy` | `mode`, `allow`, `deny`, see `../approval-policy/SKILL.md` |
 
 A new key: the struct field, its default, the README config block, the skill of its section.
 

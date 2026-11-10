@@ -50,6 +50,15 @@ def feed(text):
             if len(s) - i < 2:
                 pending = s[i:]
                 return
+            if s[i + 1] == ']':
+                # OSC (hyperlinks): skip up to its end, ESC \\ or BEL.
+                ends = [e for e in (s.find('\x1b\\', i + 2), s.find('\x07', i + 2)) if e != -1]
+                if not ends:
+                    pending = s[i:]
+                    return
+                end = min(ends)
+                i = end + (2 if s[end] == '\x1b' else 1)
+                continue
             if s[i + 1] in '78':
                 if s[i + 1] == '7':
                     saved = (y, x)

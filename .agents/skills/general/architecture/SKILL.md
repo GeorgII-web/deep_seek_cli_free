@@ -1,6 +1,6 @@
 ---
 name: architecture
-description: Map of deep_seek_cli_free (binary `dsc`) — the design decisions and their reasons, the layers from CLI to the DeepSeek web client, the `Backend` and `Ui` traits that keep the agent testable, the runtime files under `~/.config/dsc`, the risks, and which skill covers which module. Use when orienting, adding a module, moving code between layers or changing a design decision.
+description: Map of deep_seek_cli_free (binary `dsc`) — the design decisions and their reasons, the layers from CLI to the DeepSeek web client, the `Backend` and `Ui` traits that keep the agent testable, the runtime files under `~/.config/deep_seek_cli_free`, the risks, and which skill covers which module. Use when orienting, adding a module, moving code between layers or changing a design decision.
 ---
 
 # Architecture
@@ -51,8 +51,8 @@ two traits, so its tests script both.
 
 | Path | Content |
 |---|---|
-| `<home>` | `$DSC_HOME`, else `~/.config/dsc` |
-| `<home>/config.toml` | `deepseek.*` (model type, thinking, search, locale, timeout), `throttle.*`, `agent.*`, `policy.*` |
+| `<home>` | `$DSC_HOME`, else `~/.config/deep_seek_cli_free` |
+| `<home>/config.toml` | `deepseek.*` (model type, thinking, search, locale, timeout), `throttle.*`, `agent.*`, `policy.*` (the saved mode, allow, deny); rewritten when the mode is switched |
 | `<home>/auth.json` | secret, 0600 |
 | `<home>/history.json` | the last 200 chat inputs |
 | `<home>/cache/sha3.wasm`, `sha3.url` | proof-of-work module and the URL it came from; refetched when `wasm_url` differs |

@@ -218,20 +218,17 @@ impl Markdown {
                 self.url_punct.push(c);
                 return true;
             }
-            for held in std::mem::take(&mut self.url_punct).chars() {
-                self.put(held, Look::Link, out);
-            }
-            self.put(c, Look::Link, out);
+            let punct = std::mem::take(&mut self.url_punct);
+            self.url_held.push_str(&punct);
+            self.url_held.push(c);
             return true;
         }
         let candidate = format!("{}{c}", self.url_held);
         let starts = !self.url_held.is_empty() || !self.prev_word;
         if starts && (candidate == "http://" || candidate == "https://") {
-            self.url_held.clear();
+            // From here the URL is collected: the terminal link needs it whole.
+            self.url_held = candidate;
             self.in_url = true;
-            for held in candidate.chars() {
-                self.put(held, Look::Link, out);
-            }
             return true;
         }
         if starts && ("http://".starts_with(&candidate) || "https://".starts_with(&candidate)) {
@@ -242,11 +239,34 @@ impl Markdown {
         false
     }
 
-    /// Ends a URL or gives up a held word start; what was held is printed as ordinary text.
+    /// Ends a URL: it is printed as a terminal hyperlink (hover and click work in
+    /// the terminal), punctuation after it as text. A word start that did not
+    /// become a URL is printed as ordinary text.
     fn flush_url(&mut self, out: &mut String) {
-        self.in_url = false;
-        let held = std::mem::take(&mut self.url_held) + &std::mem::take(&mut self.url_punct);
-        for c in held.chars() {
+        let held = std::mem::take(&mut self.url_held);
+        let punct = std::mem::take(&mut self.url_punct);
+        if std::mem::take(&mut self.in_url) && !held.ends_with("://") {
+            let mut chars = held.chars();
+            // The first character goes the normal way (line ends, look), the link wraps all.
+            if let Some(first) = chars.next() {
+                let (open, close) = self.style.hyperlink(&held);
+                let mut piece = String::new();
+                self.put(first, Look::Link, &mut piece);
+                // `piece` = [line ends][color]first: the link opens right before the character.
+                let at = piece.len() - first.len_utf8();
+                out.push_str(&piece[..at]);
+                out.push_str(&open);
+                out.push(first);
+                out.push_str(chars.as_str());
+                out.push_str(&close);
+            }
+            self.prev_word = true;
+        } else {
+            for c in held.chars() {
+                self.styled(c, out);
+            }
+        }
+        for c in punct.chars() {
             self.styled(c, out);
         }
     }
@@ -368,14 +388,19 @@ mod tests {
     fn links_are_colored_up_to_their_end() {
         let s = Style::new(true);
         let (link, reset, code) = (s.link(), s.reset(), s.code_text());
+        // Color, then the terminal hyperlink around the URL text.
+        let hyper = |url: &str| {
+            let (open, close) = s.hyperlink(url);
+            format!("{link}{open}{url}{close}{reset}")
+        };
         for chunk in [1, 5, 1000] {
             assert_eq!(
                 render("see https://a.org/x?y=1.", true, chunk),
-                format!("see {link}https://a.org/x?y=1{reset}.")
+                format!("see {}.", hyper("https://a.org/x?y=1"))
             );
             assert_eq!(
                 render("[docs](http://a.org/b) and more", true, chunk),
-                format!("[docs]({link}http://a.org/b{reset}) and more")
+                format!("[docs]({}) and more", hyper("http://a.org/b"))
             );
             // A word that only starts like a scheme, and a scheme inside a word, stay text.
             assert_eq!(
@@ -384,14 +409,23 @@ mod tests {
             );
             assert_eq!(
                 render("end https://a.org", true, chunk),
-                format!("end {link}https://a.org{reset}")
+                format!("end {}", hyper("https://a.org"))
             );
-            // In code the code color wins.
+            assert_eq!(
+                render("a\nhttps://a.org b", true, chunk),
+                format!("a\n{} b", hyper("https://a.org"))
+            );
+            // A bare scheme is no link; in code the code color wins.
+            assert_eq!(render("https:// x", true, chunk), "https:// x");
             assert_eq!(
                 render("`https://a.org`", true, chunk),
                 format!("{code}https://a.org{reset}")
             );
         }
+        assert_eq!(
+            hyper("https://a.org"),
+            format!("{link}\x1b]8;;https://a.org\x1b\\https://a.org\x1b]8;;\x1b\\{reset}")
+        );
         assert_eq!(render("see https://a.org.", false, 1), "see https://a.org.");
     }
 }

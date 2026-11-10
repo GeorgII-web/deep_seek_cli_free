@@ -10,10 +10,10 @@ The repo is public: no personal paths, names or data in any tracked file.
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; no task or `chat` → `chat()` (tasks in one conversation, `/new`, `/mode`, `/help`, `/exit`; ends on `Interrupt::Quit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
+| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; `ModeSaver` (writes `policy.mode` when the user switched the mode); no task or `chat` → `chat()` (tasks in one conversation, `/new`, `/mode`, `/help`, `/exit`; ends on `Interrupt::Quit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
 | `src/backend.rs` | `Backend` trait (`ask(prompt, sink) -> answer text`, one value = one conversation) and `Event` (`Thinking`, `Text`, `Status`); the agent knows only this |
 | `src/cli.rs` | clap: `Cli` = optional `Command` (`chat`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
-| `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/dsc`; `config()`, `auth()`, `cache()`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing |
+| `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/deep_seek_cli_free`; `config()`, `auth()`, `cache()`), `migrate` (one-time move of the old folder `~/.config/dsc`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` (with `mode`) with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing, `save` rewrites the file |
 | `src/auth.rs` | `Auth` (`token`, `cookie`, `wasm_url`): `load`, `require`, `import` (FreeDeepseekAPI file), `new`, `save` (0600), `remove`; browser login over CDP `[ ]` |
 | `src/deepseek/client.rs` | `Client`: headers, `create_session`, `create_challenge`, `completion` (returns the SSE response), `fetch_wasm`; `ApiError` (`TokenDead`, `RateLimited`), envelope check `biz_data` |
 | `src/deepseek/pow.rs` | `solve(wasm, challenge)` in `wasmi`, `header()` = `X-DS-PoW-Response` value |

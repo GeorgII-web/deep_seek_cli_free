@@ -10,8 +10,8 @@ action and again after an edit. Lists come from `[policy]` in `config.toml` (`co
 
 ## Modes
 
-`yes` is the mode flag `Terminal::mode()` (an `Arc<AtomicBool>`): false = ask, true = allow all. `--yes` sets the
-start value; Shift+Tab (input box and while a task runs) and `/mode` switch it. `agent::run::act` reads it before
+`yes` is the mode flag `Terminal::mode()` (an `Arc<AtomicBool>`): false = ask, true = allow all. The start value is `policy.mode` from
+`config.toml` (the last mode the user chose, saved by `ModeSaver`, see `../cli-config-auth/SKILL.md`) or `--yes`; Shift+Tab (input box and while a task runs) and `/mode` switch it. `agent::run::act` reads it before
 every action, so a switch in the middle of a task counts for the next action. The deny list holds in both modes.
 
 ## Rules
@@ -28,7 +28,7 @@ every action, so a switch in the middle of a task counts for the next action. Th
 
 Defaults: allow = `ls pwd df du uname whoami date which stat wc file`, `git status`; nothing that prints file
 content, because every result is sent to DeepSeek. Deny = destructive patterns plus `.ssh/id_`,
-`.aws/credentials`, `dsc/auth.json`. The deny list is a plain substring guard, not a sandbox.
+`.aws/credentials`, `deep_seek_cli_free/auth.json`, `dsc/auth.json`. The deny list is a plain substring guard, not a sandbox.
 
 ## Code
 

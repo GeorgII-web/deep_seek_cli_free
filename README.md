@@ -54,7 +54,7 @@ cargo install --path .        # installs `dsc` into ~/.cargo/bin
    pow       ok (870 ms)
    ```
 
-The token is stored in `~/.config/dsc/auth.json` with mode 0600. Treat it like a password: it gives full access
+The token is stored in `~/.config/deep_seek_cli_free/auth.json` with mode 0600. Treat it like a password: it gives full access
 to your DeepSeek account. `dsc logout` removes it. When `doctor` says `token dead`, repeat the login.
 
 `dsc login --import <file>` reads the `deepseek-auth.json` of
@@ -122,10 +122,11 @@ shell prompt.
 Pasting several lines works. `/new` starts a fresh conversation, `/mode` switches the mode, `/help` lists the
 commands and keys, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
-`~/.config/dsc/history.json`; the conversation itself is not saved, after a restart the model starts from zero.
+`~/.config/deep_seek_cli_free/history.json`; the conversation itself is not saved, after a restart the model starts from zero.
 
 In answers, `inline code` is colored, code blocks are shown with a bar on the left, and links (`https://…`) are
-blue and underlined. Colors switch off with
+blue, underlined and real terminal links: the terminal highlights them on hover and opens them on click
+(Ctrl+click in most terminals). Colors switch off with
 `NO_COLOR=1` or when the output is not a terminal.
 
 ### Flags
@@ -151,8 +152,9 @@ blue and underlined. Colors switch off with
 | ask (default) | `⏵ ask` | actions outside the allow list need your yes |
 | allow all | `⏵⏵ allow all` | every action runs without a question; only the deny list stops one |
 
-The mode is shown under the input box and on the progress line. Shift+Tab or `/mode` switches it at any time,
-also in the middle of a task; `--yes` starts in allow all.
+The mode is shown under the input box and on the progress line (`ask` green, `allow all` orange). Shift+Tab or
+`/mode` switches it at any time, also in the middle of a task. The mode you chose is saved in `config.toml`
+(`policy.mode`) and used on the next start; `--yes` starts in allow all for that run only.
 
 ### Approvals
 
@@ -187,7 +189,10 @@ stops the task.
 
 ## Configuration
 
-`~/.config/dsc/config.toml` is written with the defaults on the first run (`$DSC_HOME` changes the folder).
+Everything lives in `~/.config/deep_seek_cli_free/`: `config.toml`, `auth.json`, `history.json`, `cache/`
+(`$DSC_HOME` changes the folder; a folder `~/.config/dsc` of an earlier version is moved there on the first start).
+`config.toml` is written with the defaults on the first run. `dsc` rewrites it when you switch the mode, so
+comments in it are not kept.
 
 ```toml
 [deepseek]
@@ -210,8 +215,9 @@ max_output_bytes = 8000     # cap of stdout and of stderr sent back (head + tail
 command_timeout_secs = 120
 
 [policy]
+mode = "ask"                # or "allow_all"; the last mode you chose is saved here and used on the next start
 allow = ["ls", "pwd", "df", "du", "uname", "whoami", "date", "which", "stat", "wc", "file", "git status"]
-deny = ["rm -rf /", "rm -rf ~", "mkfs", "dd of=/dev/", "shutdown", "reboot", ":(){", ".ssh/id_", ".aws/credentials", "dsc/auth.json"]
+deny = ["rm -rf /", "rm -rf ~", "mkfs", "dd of=/dev/", "shutdown", "reboot", ":(){", ".ssh/id_", ".aws/credentials", "deep_seek_cli_free/auth.json", "dsc/auth.json"]
 ```
 
 An `allow` entry is a program, or a program with its first arguments (`git status`). It applies only to simple

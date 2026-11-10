@@ -88,11 +88,11 @@ impl Style {
     pub fn faint(&self) -> &'static str {
         self.code("\x1b[38;5;242m")
     }
-    /// `⏵ ask` or `⏵⏵ allow all`, colored, for the hint and progress lines.
+    /// `⏵ ask` (green) or `⏵⏵ allow all` (orange), for the hint and progress lines.
     pub fn mode_label(&self, allow_all: bool) -> String {
         match allow_all {
             true => format!("{}⏵⏵ allow all{}", self.action(), self.reset()),
-            false => format!("{}⏵ ask{}", self.key(), self.reset()),
+            false => format!("{}⏵ ask{}", self.ok(), self.reset()),
         }
     }
     /// A hint: the key light, its meaning darker.
@@ -105,6 +105,15 @@ impl Style {
             self.faint(),
             self.reset()
         )
+    }
+    /// The escape sequences that make the text between them a terminal hyperlink
+    /// (OSC 8): the terminal shows it as a link on hover and opens it on click
+    /// (Ctrl+click in most). Terminals without support ignore them.
+    pub fn hyperlink(&self, url: &str) -> (String, String) {
+        match self.on {
+            true => (format!("\x1b]8;;{url}\x1b\\"), "\x1b]8;;\x1b\\".to_string()),
+            false => (String::new(), String::new()),
+        }
     }
     /// URLs: underlined blue
     pub fn link(&self) -> &'static str {
@@ -137,8 +146,9 @@ impl Style {
             if inside || url.ends_with("://") {
                 out.push_str(url);
             } else {
+                let (open, close) = self.hyperlink(url);
                 out.push_str(&format!(
-                    "{}{}{url}{}{base}",
+                    "{}{}{open}{url}{close}{}{base}",
                     self.reset(),
                     self.link(),
                     self.reset()
@@ -176,24 +186,30 @@ mod tests {
     #[test]
     fn links_colors_urls_and_leaves_the_rest() {
         let s = Style::new(true);
-        let (link, reset) = (s.link(), s.reset());
+        let reset = s.reset();
+        let hyper = |url: &str| {
+            let (open, close) = s.hyperlink(url);
+            format!("{reset}{}{open}{url}{close}{reset}B", s.link())
+        };
         assert_eq!(
             s.links("go to https://a.org/x, then", "B"),
-            format!("go to {reset}{link}https://a.org/x{reset}B, then")
+            format!("go to {}, then", hyper("https://a.org/x"))
         );
         assert_eq!(
             s.links("(http://a.org) xhttp://b no", "B"),
-            format!("({reset}{link}http://a.org{reset}B) xhttp://b no")
+            format!("({}) xhttp://b no", hyper("http://a.org"))
         );
         assert_eq!(s.links("no link here", "B"), "no link here");
         assert_eq!(
             Style::new(false).links("https://a.org", "B"),
             "https://a.org"
         );
-        // Inside `inline` too.
-        assert!(
-            s.inline("see https://a.org", s.gray())
-                .contains(&format!("{link}https://a.org{reset}"))
+        assert_eq!(
+            Style::new(false).hyperlink("https://a.org"),
+            (String::new(), String::new())
         );
+        // Inside `inline` too.
+        let wrapped = "\x1b]8;;https://a.org\x1b\\https://a.org\x1b]8;;\x1b\\";
+        assert!(s.inline("see https://a.org", s.gray()).contains(wrapped));
     }
 }

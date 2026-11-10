@@ -12,12 +12,14 @@ use anyhow::{Result, bail};
 use auth::Auth;
 use clap::Parser;
 use cli::{Cli, Command};
-use config::{Paths, Settings};
+use config::{Mode, Paths, Settings};
 use deepseek::client::{Client, TurnOpts};
 use deepseek::pow;
 use deepseek::session::Conversation;
 use std::collections::HashSet;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 #[tokio::main]
@@ -46,8 +48,10 @@ async fn main() -> Result<()> {
         None => {
             let mut conversation = conversation(&paths, &settings, &cli.run)?;
             let prompt = protocol::first_prompt(&cli.run.task.join(" "), &cwd());
-            let mut terminal = ui::Terminal::new(None, cli.run.yes);
+            let mut terminal =
+                ui::Terminal::new(None, cli.run.yes || settings.policy.mode == Mode::AllowAll);
             let mode = terminal.mode();
+            let mut saver = ModeSaver::new(&paths, &settings, mode.clone());
             let mut interrupts = terminal.interrupts();
             let mut always = HashSet::new();
             terminal.begin();
@@ -62,6 +66,7 @@ async fn main() -> Result<()> {
             )
             .await;
             terminal.finish(&result);
+            saver.sync();
             // The finish line already showed the error; the terminal must be restored before the exit.
             drop(terminal);
             match result {
@@ -69,6 +74,40 @@ async fn main() -> Result<()> {
                 Err(err) if err.is::<Interrupt>() => std::process::exit(130),
                 Err(_) => std::process::exit(1),
             }
+        }
+    }
+}
+
+/// Writes the approval mode to `config.toml` whenever the user switched it, so
+/// the next start uses it. A mode that only comes from `--yes` is not saved.
+struct ModeSaver<'a> {
+    paths: &'a Paths,
+    settings: Settings,
+    flag: Arc<AtomicBool>,
+    /// The value at the start or at the last save
+    last: bool,
+}
+
+impl<'a> ModeSaver<'a> {
+    fn new(paths: &'a Paths, settings: &Settings, flag: Arc<AtomicBool>) -> Self {
+        let last = flag.load(Ordering::Relaxed);
+        Self {
+            paths,
+            settings: settings.clone(),
+            flag,
+            last,
+        }
+    }
+
+    fn sync(&mut self) {
+        let now = self.flag.load(Ordering::Relaxed);
+        if now == self.last {
+            return;
+        }
+        self.last = now;
+        self.settings.policy.mode = if now { Mode::AllowAll } else { Mode::Ask };
+        if let Err(err) = self.settings.save(self.paths) {
+            eprintln!("dsc: the mode was not saved: {err:#}");
         }
     }
 }
@@ -83,8 +122,12 @@ fn cwd() -> String {
 /// remembers the earlier ones. What the user allowed with "always" holds until the exit.
 async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<()> {
     let mut conversation = conversation(paths, settings, run)?;
-    let mut terminal = ui::Terminal::new(Some(paths.history()), run.yes);
+    let mut terminal = ui::Terminal::new(
+        Some(paths.history()),
+        run.yes || settings.policy.mode == Mode::AllowAll,
+    );
     let mode = terminal.mode();
+    let mut saver = ModeSaver::new(paths, settings, mode.clone());
     let mut interrupts = terminal.interrupts();
     let mut always = HashSet::new();
     let mut first = true;
@@ -94,7 +137,13 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         (false, false) => settings.deepseek.model_type.clone(),
     };
     terminal.open_chat(&model, &cwd());
-    while let Some(line) = terminal.input() {
+    loop {
+        let line = terminal.input();
+        // Shift+Tab in the box may have switched the mode.
+        saver.sync();
+        let Some(line) = line else {
+            break;
+        };
         let prompt = match line.as_str() {
             "" => continue,
             "/exit" | "/quit" => break,
@@ -104,6 +153,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             }
             "/mode" => {
                 terminal.toggle_mode();
+                saver.sync();
                 continue;
             }
             "/new" => {
@@ -134,6 +184,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         )
         .await;
         terminal.finish(&result);
+        saver.sync();
         if matches!(
             result.as_ref().err().and_then(|err| err.downcast_ref()),
             Some(Interrupt::Quit)

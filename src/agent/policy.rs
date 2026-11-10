@@ -82,6 +82,7 @@ mod tests {
         Policy {
             allow: vec!["ls".into(), "git status".into()],
             deny: vec!["rm -rf /".into(), ".ssh/id_".into()],
+            ..Policy::default()
         }
     }
 
