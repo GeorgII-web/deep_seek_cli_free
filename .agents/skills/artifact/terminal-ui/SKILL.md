@@ -56,6 +56,7 @@ escape sequences and carries colors over a break). The view is the last rows of 
 | scroll (PgUp, PgDn, wheel 3 rows, Ctrl+Home, Ctrl+End) | `View::scroll` / `top` / `bottom` → `repaint`: every row of the area cleared and drawn from the model, cursor at `out()` |
 | dock grows or shrinks, terminal resized | `Editor::sync_view` → `View::resize` (rewrap on a new width) → `repaint`; `Dock::out` comes from `View::out`, no cursor query |
 | input sent | `Editor::erase` → `View::bottom` first |
+| another conversation (`/sessions`, `/new`, `/model`) | `Terminal::show_output(text)` → `View::replace`: the saved output of that conversation, or a clean area; `Terminal::output` gives the text to save |
 | a window (`token_dialog`, `pick`) | drawn over the screen (no second alternate screen), then `Terminal::redraw`: clear, `Editor::redraw_dock`, `repaint` |
 
 - Everything printed in the screen layout must go through `emit` (`line`, `partial`, `text`), `erase_partial`

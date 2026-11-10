@@ -4,6 +4,8 @@ mod backend;
 mod cli;
 mod config;
 mod deepseek;
+mod mock;
+mod model;
 mod sessions;
 mod ui;
 
@@ -13,10 +15,11 @@ use anyhow::{Result, bail};
 use auth::Auth;
 use clap::Parser;
 use cli::{Cli, Command};
-use config::{Mode, Paths, Settings};
+use config::{Api, Mode, Paths, Settings};
 use deepseek::client::{ApiError, Client, TurnOpts};
 use deepseek::pow;
 use deepseek::session::Conversation;
+use model::Model;
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -47,7 +50,7 @@ async fn main() -> Result<()> {
         Some(Command::Chat) => chat(&paths, &settings, &cli::RunArgs::default()).await,
         None if cli.run.task.is_empty() => chat(&paths, &settings, &cli.run).await,
         None => {
-            let mut conversation = conversation(&paths, &settings, &cli.run)?;
+            let mut conversation = model(&paths, &settings, &cli.run, settings.deepseek.api)?;
             let prompt = protocol::first_prompt(&cli.run.task.join(" "), &cwd());
             let mut terminal =
                 ui::Terminal::new(None, cli.run.yes || settings.policy.mode == Mode::AllowAll);
@@ -111,6 +114,15 @@ impl<'a> ModeSaver<'a> {
             eprintln!("dsc: the mode was not saved: {err:#}");
         }
     }
+
+    /// Saves which model answers (`/model`), keeping the mode of the same file.
+    fn save_api(&mut self, api: Api) {
+        self.sync();
+        self.settings.deepseek.api = api;
+        if let Err(err) = self.settings.save(self.paths) {
+            eprintln!("dsc: the model choice was not saved: {err:#}");
+        }
+    }
 }
 
 fn cwd() -> String {
@@ -126,14 +138,13 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         Some(paths.history()),
         run.yes || settings.policy.mode == Mode::AllowAll,
     );
-    if Auth::load(paths)?.is_none()
-        && relogin(paths, settings, &mut terminal, "You are not logged in yet.")?.is_none()
-    {
-        bail!("not logged in; run `dsc login`");
-    }
-    // One cheap call tells whether the saved token still works; a dead one opens the login window now.
-    let token_note = check_token(paths, settings, &mut terminal).await?;
-    let mut conversation = conversation(paths, settings, run)?;
+    // Which model answers: the saved choice of `/model`. The mock needs no login.
+    let mut api = settings.deepseek.api;
+    let token_note = match api {
+        Api::Deepseek => ensure_login(paths, settings, &mut terminal).await?,
+        Api::Mock => None,
+    };
+    let mut conversation = model(paths, settings, run, api)?;
     let mode = terminal.mode();
     let mut saver = ModeSaver::new(paths, settings, mode.clone());
     let mut interrupts = terminal.interrupts();
@@ -142,13 +153,13 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
     // The conversations that can be continued, and the entry of the one in use.
     let mut store = sessions::Store::load(paths);
     let mut current: Option<sessions::Session> = None;
-    let model = match (run.expert, run.think || settings.deepseek.thinking) {
-        (true, _) => "expert".to_string(),
-        (false, true) => format!("{} + thinking", settings.deepseek.model_type),
-        (false, false) => settings.deepseek.model_type.clone(),
-    };
     terminal.set_mouse(settings.ui.mouse_scroll);
-    terminal.open_chat(&model, &cwd());
+    terminal.open_chat(&api_label(api, settings, run), &cwd());
+    if api == Api::Mock {
+        terminal.info(
+            "The mock model answers: fake replies, no network. `/model` switches to DeepSeek.",
+        );
+    }
     if let Some(note) = token_note {
         terminal.error(&note);
     }
@@ -187,6 +198,62 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 }
                 continue;
             }
+            "/model" => {
+                let rows: Vec<String> = [
+                    (
+                        Api::Deepseek,
+                        "DeepSeek   the real account: your token, every task counts against it",
+                    ),
+                    (
+                        Api::Mock,
+                        "Mock       fake answers inside the app: no network, no account",
+                    ),
+                ]
+                .iter()
+                .map(|(kind, text)| format!("{} {text}", if *kind == api { "●" } else { " " }))
+                .collect();
+                let chosen = match terminal.pick("Model", &rows) {
+                    Some(0) => Api::Deepseek,
+                    Some(_) => Api::Mock,
+                    None => continue,
+                };
+                if chosen == api {
+                    continue;
+                }
+                // The real account needs a working token before the switch.
+                let note = match chosen {
+                    Api::Deepseek => match ensure_login(paths, settings, &mut terminal).await {
+                        Ok(note) => note,
+                        Err(err) => {
+                            terminal.error(&format!("{err:#}; still on the mock"));
+                            continue;
+                        }
+                    },
+                    Api::Mock => None,
+                };
+                api = chosen;
+                conversation = self::model(paths, settings, run, api)?;
+                first = true;
+                current = None;
+                terminal.show_output("");
+                saver.save_api(api);
+                match api {
+                    Api::Deepseek => terminal
+                        .info("Model `DeepSeek`: the real account. A new conversation starts."),
+                    Api::Mock => terminal.info(&format!(
+                        "Model `Mock`: fake answers, no network. Tasks it understands:\n{}",
+                        mock::TASKS
+                    )),
+                }
+                if let Some(note) = note {
+                    terminal.error(&note);
+                }
+                continue;
+            }
+            "/sessions" if conversation.is_mock() => {
+                terminal.info("The mock has no sessions. `/model` switches to DeepSeek.");
+                continue;
+            }
             "/sessions" => {
                 if store.sessions.is_empty() {
                     terminal
@@ -202,9 +269,13 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                     .and_then(|index| store.sessions.get(index).cloned())
                 {
                     // The messages live at DeepSeek: the next task continues below the last answer.
-                    conversation = self::conversation(paths, settings, run)?;
+                    conversation = self::model(paths, settings, run, api)?;
                     conversation.resume(chosen.id.clone(), chosen.parent_message_id);
                     first = false;
+                    // The screen as it was when that conversation was left.
+                    let saved =
+                        std::fs::read_to_string(paths.transcript(&chosen.id)).unwrap_or_default();
+                    terminal.show_output(&saved);
                     terminal.info(&format!(
                         "Switched to `{}` ({} task{}, {}). The model remembers that conversation.",
                         chosen.title,
@@ -217,10 +288,13 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 continue;
             }
             "/new" => {
-                conversation = self::conversation(paths, settings, run)?;
+                conversation = self::model(paths, settings, run, api)?;
                 first = true;
                 current = None;
-                terminal.info("New conversation: the model starts from zero.");
+                // A new conversation starts on a clean screen; the old one is saved with its session.
+                terminal.show_output("");
+                terminal
+                    .info("New conversation: the model starts from zero. `/sessions` goes back.");
                 continue;
             }
             // A path like /etc/hosts is a task, a single word after the slash a command.
@@ -263,6 +337,13 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             ) {
                 break;
             }
+            if conversation.is_mock() {
+                // The mock's `dead` task shows the window; a typed token is thrown away.
+                let _ = terminal
+                    .token_dialog("Mock: this is how a dead token looks. Nothing is saved.");
+                terminal.info("Mock: the token window was shown; nothing was saved.");
+                break;
+            }
             match relogin(
                 paths,
                 settings,
@@ -298,6 +379,12 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             entry.tasks += 1;
             entry.updated = sessions::now();
             store.upsert(entry.clone());
+            // The screen of this conversation, so a later switch can show it again.
+            if let Some(output) = terminal.output() {
+                let file = paths.transcript(&entry.id);
+                let _ = file.parent().map(std::fs::create_dir_all);
+                let _ = std::fs::write(file, output);
+            }
         }
         if quit {
             break;
@@ -331,6 +418,42 @@ fn login(paths: &Paths, import: Option<PathBuf>, token: bool) -> Result<()> {
         paths.auth().display()
     );
     Ok(())
+}
+
+/// The model for a new conversation.
+fn model(paths: &Paths, settings: &Settings, run: &cli::RunArgs, api: Api) -> Result<Model> {
+    Ok(match api {
+        Api::Deepseek => Model::Deepseek(Box::new(conversation(paths, settings, run)?)),
+        Api::Mock => Model::Mock(mock::Mock::default()),
+    })
+}
+
+/// What the banner says about the model in use.
+fn api_label(api: Api, settings: &Settings, run: &cli::RunArgs) -> String {
+    match (api, run.expert, run.think || settings.deepseek.thinking) {
+        (Api::Mock, ..) => "MOCK model · fake answers, no network".into(),
+        (Api::Deepseek, true, _) => "DeepSeek web · expert".into(),
+        (Api::Deepseek, false, true) => {
+            format!("DeepSeek web · {} + thinking", settings.deepseek.model_type)
+        }
+        (Api::Deepseek, false, false) => format!("DeepSeek web · {}", settings.deepseek.model_type),
+    }
+}
+
+/// Makes sure the real account can be used: asks for a token when there is
+/// none, then checks it. Returns a note when the chat goes on without a working token.
+async fn ensure_login(
+    paths: &Paths,
+    settings: &Settings,
+    terminal: &mut ui::Terminal,
+) -> Result<Option<String>> {
+    if Auth::load(paths)?.is_none()
+        && relogin(paths, settings, terminal, "You are not logged in yet.")?.is_none()
+    {
+        bail!("not logged in; run `dsc login`");
+    }
+    // One cheap call tells whether the saved token still works; a dead one opens the login window now.
+    check_token(paths, settings, terminal).await
 }
 
 /// How long a token that worked is trusted without asking DeepSeek again.
@@ -461,6 +584,14 @@ async fn doctor(paths: &Paths, settings: &Settings) -> Result<()> {
         "token     ok (challenge {}, difficulty {})",
         challenge.algorithm, challenge.difficulty
     );
+
+    if challenge.algorithm == deepseek::client::NO_POW {
+        println!(
+            "pow       skipped: this is the mock server ({})",
+            deepseek::client::base()
+        );
+        return Ok(());
+    }
 
     let wasm = match conversation.wasm().await {
         Ok(wasm) => wasm.to_vec(),

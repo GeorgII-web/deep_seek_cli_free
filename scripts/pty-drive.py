@@ -1,23 +1,54 @@
 #!/usr/bin/env python3
 """Drives `dsc` chat in a pseudo-terminal with scripted keys and prints the screen.
 
+It runs against the local mock of DeepSeek (`scripts/mock-deepseek.py`, started and
+stopped here): no request leaves the machine. The real API is used only with
+DSC_LIVE=1, and that needs the user's word (every live run counts against the account).
+
 Usage: scripts/pty-drive.py '<python list of keys>' [rows] [columns]
 A key is a string, or (string, seconds to wait after it). Examples:
-  scripts/pty-drive.py '["/help\\r", "abc", "\\x1b\\r", "def", "\\x1b[A", "X"]'    # no request is sent
-  scripts/pty-drive.py '[("how much disk space is free on /\\r", 14), ("\\x04", 1)]' # one live task
-Keys: \\r Enter, \\x1b\\r Alt+Enter, \\x1b[A up, \\x1b[B down, \\x03 Ctrl-C, \\x04 Ctrl-D, \\x15 Ctrl-U.
-Uses DSC_HOME (default var/home) and target/debug/dsc. Default screen: 24 rows, 60 columns.
-The output shows the lines that scrolled off the top (scrollback), then the screen.
+  scripts/pty-drive.py '["/help\\r", "abc", "\\x1b\\r", "def", "\\x1b[A", "X"]'
+  scripts/pty-drive.py '[("!ls -la\\r", 2), ("long\\r", 2), "\\x1b[5~"]' 30 100      # mock tasks, then PgUp
+Keys: \\r Enter, \\n Ctrl-J (new line), \\x1b[A up, \\x1b[B down, \\x1b[5~ PgUp, \\x1b[6~ PgDn,
+\\x1b[<64;1;1M wheel up, \\x1b[<65;1;1M wheel down, \\x1b Esc, \\x03 Ctrl-C, \\x04 Ctrl-D, \\x1b[Z Shift+Tab.
+Mock tasks: see scripts/mock-deepseek.py (`!<cmd>`, `run <cmd>`, `long`, `slow`, `code`, `dead`, ...).
+Home: DSC_HOME, default var/mock-home (made here: a mock token and a config without throttle).
+MOCK_TOKEN sets the token of a new home (`dead...` = the mock rejects it). target/debug/dsc is run.
+Default screen: 24 rows, 60 columns. The output shows the lines that scrolled off the top, then the
+screen (`-` output area, `#` dock), the cursor, and what the mock was asked.
 """
-import fcntl, os, pty, re, select, struct, sys, termios, time
+import fcntl, json, os, pty, re, select, socket, struct, subprocess, sys, termios, time, urllib.request
 
 keys = eval(sys.argv[1])
 H = int(sys.argv[2]) if len(sys.argv) > 2 else 24
 W = int(sys.argv[3]) if len(sys.argv) > 3 else 60
 
+LIVE = os.environ.get('DSC_LIVE') == '1'
+home = os.path.abspath(os.environ.get('DSC_HOME', 'var/mock-home'))
+mock = None
+if LIVE:
+    print('!!! DSC_LIVE=1: this run talks to the real DeepSeek API', file=sys.stderr)
+    os.environ.pop('DSC_API_BASE', None)
+else:
+    # A free port, the mock on it, and a home that cannot hold a real token.
+    with socket.socket() as probe:
+        probe.bind(('127.0.0.1', 0))
+        port = probe.getsockname()[1]
+    mock = subprocess.Popen([sys.executable, os.path.join(os.path.dirname(os.path.abspath(__file__)), 'mock-deepseek.py'), str(port)],
+                            stdout=subprocess.PIPE, text=True)
+    mock.stdout.readline()
+    os.environ['DSC_API_BASE'] = f'http://127.0.0.1:{port}'
+    os.makedirs(home, exist_ok=True)
+    if not os.path.exists(os.path.join(home, 'auth.json')):
+        with open(os.path.join(home, 'auth.json'), 'w') as f:
+            json.dump({'token': os.environ.get('MOCK_TOKEN', 'mock-token')}, f)
+    if not os.path.exists(os.path.join(home, 'config.toml')):
+        with open(os.path.join(home, 'config.toml'), 'w') as f:
+            f.write('[throttle]\nmin_interval_ms = 0\njitter_ms = 0\nmax_per_minute = 0\nmax_per_hour = 0\nwait_on_429_secs = 1\n')
+
 pid, fd = pty.fork()
 if pid == 0:
-    os.environ['DSC_HOME'] = os.path.abspath(os.environ.get('DSC_HOME', 'var/home'))
+    os.environ['DSC_HOME'] = home
     os.execv('./target/debug/dsc', ['dsc'])
 fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack('HHHH', H, W, 0, 0))
 
@@ -156,3 +187,10 @@ for n, line in enumerate(rows):
     mark = '-' if top <= n <= bottom else '#'
     print(f'{n + 1:3}{mark}' + ''.join(line).rstrip())
 print(f'cursor row {y + 1} column {x + 1}; scroll region rows {top + 1}-{bottom + 1}')
+if mock:
+    try:
+        with urllib.request.urlopen(os.environ['DSC_API_BASE'] + '/_stats', timeout=2) as response:
+            print('mock:', response.read().decode())
+    except OSError as error:
+        print('mock: no stats', error)
+    mock.terminate()

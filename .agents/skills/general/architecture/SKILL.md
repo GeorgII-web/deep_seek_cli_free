@@ -42,6 +42,7 @@ two traits, so its tests script both.
 |---|---|
 | `src/main.rs`, `src/cli.rs`, `src/config.rs`, `src/auth.rs` | `../../artifact/cli-config-auth/SKILL.md` |
 | `src/backend.rs`, `src/deepseek/*` | `../../artifact/deepseek-client/SKILL.md` |
+| `src/model.rs`, `src/mock.rs`, `src/sessions.rs` | `../../artifact/cli-config-auth/SKILL.md` |
 | `src/agent/protocol.rs`, `run.rs`, `tools.rs` | `../../artifact/agent-loop/SKILL.md` |
 | `src/ui/*` | `../../artifact/terminal-ui/SKILL.md` |
 | `src/agent/policy.rs`, the approval question | `../../artifact/approval-policy/SKILL.md` |
@@ -56,6 +57,7 @@ two traits, so its tests script both.
 | `<home>/auth.json` | secret, 0600 |
 | `<home>/history.json` | the last 200 chat inputs |
 | `<home>/sessions.json` | the last 50 conversations started here: remote session id, last answer id, title, folder |
+| `<home>/sessions/<id>.log` | the screen output of a conversation, shown again after a switch |
 | `<home>/cache/sha3.wasm`, `sha3.url` | proof-of-work module and the URL it came from; refetched when `wasm_url` differs |
 | `<home>/cache/throttle.json` | send times of the last hour |
 

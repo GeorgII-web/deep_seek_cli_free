@@ -1,6 +1,6 @@
 //! One conversation with DeepSeek: session id, message chain, proof of work per turn.
 
-use super::client::{ApiError, Client, TurnOpts};
+use super::client::{ApiError, Client, NO_POW, TurnOpts};
 use super::stream::Parser;
 use super::{pow, throttle};
 use crate::backend::{Backend, Event};
@@ -84,6 +84,10 @@ impl Conversation {
     /// Fetches and solves a challenge; returns the `X-DS-PoW-Response` value.
     pub async fn pow_header(&mut self) -> Result<String> {
         let challenge = self.client.create_challenge().await?;
+        if challenge.algorithm == NO_POW {
+            // The local mock: nothing to solve, nothing to download.
+            return Ok(pow::header(&challenge, 0));
+        }
         let wasm = self.wasm().await?.to_vec();
         let solved = challenge.clone();
         let answer = tokio::task::spawn_blocking(move || pow::solve(&wasm, &solved))

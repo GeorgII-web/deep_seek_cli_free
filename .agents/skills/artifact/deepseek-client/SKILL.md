@@ -75,6 +75,12 @@ limits also hold across separate `dsc` runs; the first versions' plain list is s
 The first defaults (3 s gap, 120 per hour) got the account blocked within hours (2026-11-10).
 `Settings::slow_down` replaces a config that still holds exactly those values with the current defaults.
 
+## Another server (`DSC_API_BASE`)
+
+`client::base()` = the environment variable `DSC_API_BASE`, else `https://chat.deepseek.com`; every call, `Origin`
+and `Referer` use it. `scripts/mock-deepseek.py` is the local server for tests. A challenge with algorithm
+`NO_POW` (`none`, sent only by the mock) is not solved: `pow_header` answers 0 and no wasm is downloaded.
+
 ## When the site changes
 
 - `dsc doctor` shows which step fails (token, wasm, proof of work) without sending a prompt.

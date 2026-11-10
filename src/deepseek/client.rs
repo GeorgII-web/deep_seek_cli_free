@@ -7,6 +7,19 @@ use serde_json::{Value, json};
 use std::time::Duration;
 
 pub const BASE: &str = "https://chat.deepseek.com";
+/// Environment variable that points the client at another server: the local
+/// mock of `scripts/mock-deepseek.py`, so tests never reach DeepSeek.
+pub const BASE_ENV: &str = "DSC_API_BASE";
+/// A challenge with this algorithm needs no proof of work; only the mock sends it.
+pub const NO_POW: &str = "none";
+
+/// The server all calls go to: `DSC_API_BASE`, else DeepSeek.
+pub fn base() -> String {
+    std::env::var(BASE_ENV)
+        .ok()
+        .filter(|url| !url.is_empty())
+        .map_or_else(|| BASE.into(), |url| url.trim_end_matches('/').to_string())
+}
 pub const COMPLETION_PATH: &str = "/api/v0/chat/completion";
 /// Used when the login source did not give a wasm URL.
 pub const DEFAULT_WASM_URL: &str =
@@ -55,6 +68,8 @@ pub struct TurnOpts {
 
 pub struct Client {
     http: reqwest::Client,
+    /// See `base()`
+    base: String,
     wasm_url: String,
 }
 
@@ -78,8 +93,9 @@ impl Client {
         set("x-app-version", CLIENT_VERSION, false)?;
         set("x-client-locale", &settings.locale, false)?;
         set("x-client-timezone-offset", "0", false)?;
-        set("origin", BASE, false)?;
-        set("referer", &format!("{BASE}/"), false)?;
+        let base = base();
+        set("origin", &base, false)?;
+        set("referer", &format!("{base}/"), false)?;
 
         let http = reqwest::Client::builder()
             .user_agent(USER_AGENT)
@@ -89,6 +105,7 @@ impl Client {
             .build()?;
         Ok(Self {
             http,
+            base,
             wasm_url: auth
                 .wasm_url
                 .clone()
@@ -102,7 +119,7 @@ impl Client {
 
     /// POST with a JSON body; returns the response after the HTTP status check.
     async fn post(&self, path: &str, body: &Value, pow: Option<&str>) -> Result<reqwest::Response> {
-        let mut request = self.http.post(format!("{BASE}{path}")).json(body);
+        let mut request = self.http.post(format!("{}{path}", self.base)).json(body);
         if let Some(pow) = pow {
             request = request.header("x-ds-pow-response", pow);
         }

@@ -152,8 +152,8 @@ shell prompt.
 | Ctrl-C | clears the box and asks to press it again; twice within two seconds quits, also while a task runs |
 | Ctrl-D | quit (empty box) |
 
-Pasting several lines works. `/new` starts a fresh conversation, `/sessions` lists the earlier ones and switches to the one you pick, `/mode`
-switches the mode, `/login` asks for a new token, `/help` lists the
+Pasting several lines works. `/new` starts a fresh conversation, `/sessions` lists the earlier ones and switches to the one you pick, `/model`
+chooses the real account or the mock, `/mode` switches the mode, `/login` asks for a new token, `/help` lists the
 commands and keys, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
 `~/.config/deep_seek_cli_free/history.json`. After a restart the chat begins a new conversation; `/sessions` goes back to an
@@ -164,12 +164,27 @@ blue and real terminal links: the terminal underlines one under the mouse and op
 Windows Terminal and most others). Colors switch off with
 `NO_COLOR=1` or when the output is not a terminal.
 
+### Models: the real account or the mock
+
+`/model` opens a choice of who answers:
+
+| Model | What it is |
+|---|---|
+| DeepSeek | the real account with your token; every task counts against it |
+| Mock | a fake model inside `dsc`: scripted answers, no network, no account |
+
+The choice is saved (`deepseek.api` in `config.toml`) and used on the next start. Use the mock to try the app, its
+keys and approvals without touching your account. It understands a few tasks: `!<command>` asks to run the
+command, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
+scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back.
+
 ### Sessions
 
 Every conversation you start is remembered after its first task. `/sessions` opens a list (title = the first
-task, number of tasks, age, folder); Up / Down choose, Enter switches, Esc closes. After a switch the model
-remembers that conversation, also after a restart of `dsc`, because the messages themselves are kept by DeepSeek:
-`sessions.json` holds only the session id, the place to continue at and the title. The list contains the
+task, number of tasks, age, folder); Up / Down choose, Enter switches, Esc closes. After a switch the screen
+shows that conversation's earlier output again and the model remembers it, also after a restart of `dsc`, because the messages themselves are kept by DeepSeek:
+`sessions.json` holds only the session id, the place to continue at and the title, and `sessions/<id>.log` the
+screen output. `/new` starts a conversation on a clean screen. The list contains the
 conversations started with `dsc`, the last 50; chats from the DeepSeek website are not in it, since they lack the
 agent rules.
 
@@ -241,6 +256,7 @@ comments in it are not kept.
 
 ```toml
 [deepseek]
+api = "deepseek"            # or "mock": the fake model inside dsc; `/model` switches and saves it
 model_type = "default"      # or "expert"
 thinking = false
 search = false
@@ -311,7 +327,11 @@ cargo test && cargo fmt --check && cargo clippy --all-targets -- -D warnings
 DSC_HOME=var/home cargo run -- doctor      # throwaway home
 ```
 
-The agent loop is tested with a scripted model, the stream parser with recorded answers; no test calls DeepSeek.
+No test and no local try-out may call DeepSeek: the account gets blocked quickly. There are three stand-ins:
+the unit tests script the model (`cargo test`); the mock inside the app (`/model`, `deepseek.api = "mock"`)
+answers without any network; `scripts/mock-deepseek.py` is a local HTTP server in the shape of the DeepSeek
+web API (`DSC_API_BASE=http://127.0.0.1:8765 dsc`), for the client code. `scripts/pty-drive.py` drives the chat
+in a pseudo-terminal against that server and prints the screen.
 `AGENTS.md` is the map for coding agents.
 
 ## Credits

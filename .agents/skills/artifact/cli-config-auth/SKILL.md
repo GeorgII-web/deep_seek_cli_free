@@ -31,7 +31,8 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 | empty | ignored |
 | `/new` | new `Conversation`, the next task gets the rules again |
 | `/mode` | `Terminal::toggle_mode` (ask ⇄ allow all) |
-| `/login` | `relogin`: token window, save, `Conversation::set_client` |
+| `/model` | `Terminal::pick` ("DeepSeek", "Mock"); a change: `ensure_login` for the real account, a new `Model`, clean screen, `ModeSaver::save_api` → `deepseek.api` |
+| `/login` | `relogin`: token window, save, `Model::set_client` |
 | `/sessions` | `Terminal::pick` over `Store::rows`; the chosen one: new `Conversation` + `resume(id, parent)`, `first = false` |
 | `/help` | `Terminal::help` |
 | `/exit`, `/quit`, Ctrl-D on an empty box, Ctrl-C twice | leave |
@@ -40,11 +41,18 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 
 A new command: a row in `COMMANDS` (`src/ui/mod.rs`; feeds the menu and `/help`) and an arm in `chat()`.
 
+Model (`src/model.rs`): the chat's `Backend` is `Model::Deepseek(Conversation)` or `Model::Mock` (`src/mock.rs`),
+built by `model(paths, settings, run, api)`. With the mock there is no login, no token check, no sessions; its
+`dead` task shows the token window and saves nothing. `ModeSaver` owns the one `Settings` copy that is written
+back, for the mode and for the model choice.
+
 Sessions (`src/sessions.rs`): after every task `chat()` writes the conversation in use to `<home>/sessions.json`
 (`Store::upsert`: newest first, 50 kept): `id` = DeepSeek's chat session id, `parent_message_id` = the last
 answer (`Conversation::state`), `title` = the first task, `cwd`, `tasks`, `updated`. The messages stay at
 DeepSeek; switching only points the next prompt at that session, so the model has the whole history and the
-rules of the first prompt. Only conversations started here are listed. `/new` clears `current`. A session
+rules of the first prompt. Only conversations started here are listed. After every task the screen output (`Terminal::output`) is saved
+to `<home>/sessions/<id>.log` (`Paths::transcript`); a switch shows it again (`Terminal::show_output`). `/new` and
+`/model` clear `current` and the screen. A session
 deleted on the website fails at the next task with DeepSeek's error.
 
 No local transcript (`TASKS.md`). Inputs are kept in `<home>/history.json` (`Paths::history`).
@@ -66,7 +74,7 @@ when the user switched it; a mode that only comes from `--yes` is never written.
 
 | Section | Struct | Keys |
 |---|---|---|
-| `[deepseek]` | `Deepseek` | `model_type`, `thinking`, `search`, `locale`, `timeout_secs` |
+| `[deepseek]` | `Deepseek` | `api` (`deepseek` or `mock`, see `/model`), `model_type`, `thinking`, `search`, `locale`, `timeout_secs` |
 | `[throttle]` | `Throttle` | see `../deepseek-client/SKILL.md` |
 | `[agent]` | `Agent` | `max_steps`, `max_output_bytes`, `command_timeout_secs` |
 | `[ui]` | `Ui` | `mouse_scroll` (the wheel scrolls the output; `Terminal::set_mouse`) |

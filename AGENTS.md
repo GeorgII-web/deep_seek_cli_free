@@ -10,13 +10,15 @@ The repo is public: no personal paths, names or data in any tracked file.
 
 | Path | Role |
 |---|---|
-| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; `ModeSaver` (writes `policy.mode` when the user switched the mode); `check_token` (the saved token is tested when the chat starts, at most every 15 minutes), `relogin` (token window → `auth.json` → new `Client`; when the token is missing or dead at the start, dies during a task, or on `/login`); no task or `chat` → `chat()` (tasks in one conversation, `/new`, `/sessions`, `/mode`, `/login`, `/help`, `/exit`; ends on `Interrupt::Quit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
+| `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; `ModeSaver` (writes `policy.mode` when the user switched the mode); `check_token` (the saved token is tested when the chat starts, at most every 15 minutes), `relogin` (token window → `auth.json` → new `Client`; when the token is missing or dead at the start, dies during a task, or on `/login`); no task or `chat` → `chat()` (tasks in one conversation, `/new`, `/sessions`, `/model`, `/mode`, `/login`, `/help`, `/exit`; ends on `Interrupt::Quit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
 | `src/backend.rs` | `Backend` trait (`ask(prompt, sink) -> answer text`, one value = one conversation) and `Event` (`Thinking`, `Text`, `Status`); the agent knows only this |
+| `src/mock.rs` | `Mock`: the fake model inside the app (scripted answers by task, no network); `TASKS` lists what it understands |
+| `src/model.rs` | `Model`: `Deepseek(Conversation)` or `Mock`, the `Backend` the chat uses; `/model` switches it |
 | `src/sessions.rs` | `Session`, `Store` (`<home>/sessions.json`: conversations that can be continued), `title`, `age` |
 | `src/cli.rs` | clap: `Cli` = optional `Command` (`chat`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`) |
 | `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/deep_seek_cli_free`; `config()`, `auth()`, `cache()`), `migrate` (one-time move of the old folder `~/.config/dsc`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` (with `mode`) with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing, `save` rewrites the file |
 | `src/auth.rs` | `Auth` (`token`, `cookie`, `wasm_url`): `load`, `require`, `import` (FreeDeepseekAPI file), `new`, `save` (0600), `remove`; browser login over CDP `[ ]` |
-| `src/deepseek/client.rs` | `Client`: headers, `create_session`, `create_challenge`, `completion` (returns the SSE response), `fetch_wasm`; `ApiError` (`TokenDead`, `RateLimited`), envelope check `biz_data` |
+| `src/deepseek/client.rs` | `Client`: headers, `create_session`, `create_challenge`, `completion` (returns the SSE response), `fetch_wasm`; `ApiError` (`TokenDead`, `RateLimited`), envelope check `biz_data`; `base()` = `DSC_API_BASE` or DeepSeek |
 | `src/deepseek/pow.rs` | `solve(wasm, challenge)` in `wasmi`, `header()` = `X-DS-PoW-Response` value |
 | `src/deepseek/session.rs` | `Conversation`: session id, `parent_message_id`, wasm cache, `pow_header()`, `send()` with throttle and 429 retries, `impl Backend` (`ask` = send + parse + keep the answer id as next parent), `state` / `resume` (continue an earlier conversation), `set_client`; built with the `TurnOpts` of the run |
 | `src/deepseek/throttle.rs` | `delay_ms` (gap, per-minute and per-hour caps), `acquire` (wait + record in `<home>/cache/throttle.json`), `cooldown` (pause after a 429, kept across runs) |
@@ -34,7 +36,8 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/ui/render.rs` | `Markdown`: hides the `dsc` block, trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings, links |
 | `src/ui/spinner.rs`, `style.rs` | progress line with a clock, key hint and mode; every color code, two grays for hints (`key`, `faint`) |
 | `.github/workflows/ci.yml`, `release.yml` | the checks on every push; on a tag `v<version>` the Linux binary as a GitHub release |
-| `scripts/pty-drive.py` | drives the chat in a pseudo-terminal with scripted keys and prints scrollback, screen and cursor |
+| `scripts/mock-deepseek.py` | local HTTP stand-in for the DeepSeek web API (challenge, session, SSE completion; tasks like `src/mock.rs`) |
+| `scripts/pty-drive.py` | drives the chat in a pseudo-terminal with scripted keys against that mock (starts it itself) and prints scrollback, screen and cursor; the real API only with `DSC_LIVE=1` |
 
 ## Skills (`.agents/skills`, read the one that matches before working)
 
@@ -56,7 +59,10 @@ The repo is public: no personal paths, names or data in any tracked file.
   `Backend` trait.
 - No action runs without passing `agent::policy`; the default is ask.
 - What an action prints goes to DeepSeek: the default allow list has no program that prints file content.
-- Never run `dsc --yes` against the live account from an agent session; test the loop with the scripted backend.
+- **No local test or try-out calls the real DeepSeek API.** Use the unit tests, the built-in mock or
+  `scripts/mock-deepseek.py` (`scripts/pty-drive.py` does). A live call needs the user's word for that one run:
+  test runs got the user's account blocked twice on 2026-11-10.
+- Never run `dsc --yes` against the live account from an agent session.
 - Secrets (`auth.json`, tokens, cookies) never in the repo, logs or error messages.
 - Work and temp files go to git-ignored `var/`.
 

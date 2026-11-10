@@ -52,6 +52,16 @@ impl Paths {
         self.home.join("sessions.json")
     }
 
+    /// The saved screen output of one conversation, by its session id.
+    pub fn transcript(&self, session_id: &str) -> PathBuf {
+        // The id comes from the server: only harmless characters reach the file name.
+        let name: String = session_id
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            .collect();
+        self.home.join("sessions").join(format!("{name}.log"))
+    }
+
     pub fn cache(&self) -> PathBuf {
         self.home.join("cache")
     }
@@ -86,12 +96,25 @@ pub struct Settings {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Deepseek {
+    /// What answers: the real account or the built-in mock; `/model` switches and saves it
+    pub api: Api,
     /// `default` (fast) or `expert`
     pub model_type: String,
     pub thinking: bool,
     pub search: bool,
     pub locale: String,
     pub timeout_secs: u64,
+}
+
+/// Who answers the prompts.
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum Api {
+    /// chat.deepseek.com with the user's token
+    #[default]
+    Deepseek,
+    /// The fake model inside the app (`src/mock.rs`): no network, no account
+    Mock,
 }
 
 /// Request rate limits towards DeepSeek, see `deepseek::throttle`.
@@ -189,6 +212,7 @@ pub struct Policy {
 impl Default for Deepseek {
     fn default() -> Self {
         Self {
+            api: Api::Deepseek,
             model_type: "default".into(),
             thinking: false,
             search: false,

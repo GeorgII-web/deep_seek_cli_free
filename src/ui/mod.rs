@@ -54,6 +54,10 @@ const COMMANDS: &[editor::Command] = &[
         "start a fresh conversation (the model forgets the earlier tasks)",
     ),
     ("/mode", "switch between ask and allow all (also Shift+Tab)"),
+    (
+        "/model",
+        "choose the real DeepSeek account or the built-in mock",
+    ),
     ("/sessions", "list earlier conversations and switch to one"),
     ("/login", "enter a new DeepSeek token"),
     ("/help", "commands and keys"),
@@ -457,7 +461,7 @@ impl Terminal {
             }
         }
         self.line(&format!(
-            "{}{}  ✻ dsc{} {}{} · DeepSeek web · {model}{}",
+            "{}{}  ✻ dsc{} {}{} · {model}{}",
             s.bold(),
             s.accent(),
             s.reset(),
@@ -555,6 +559,30 @@ impl Terminal {
             .flatten();
         self.redraw();
         token
+    }
+
+    /// Screen layout: everything on the output area as text with its colors, to
+    /// save it with a conversation. `None` in the inline layout.
+    pub fn output(&self) -> Option<String> {
+        let view = self.view.as_ref()?;
+        Some(
+            view.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .transcript(),
+        )
+    }
+
+    /// Screen layout: replaces the output area by `text` (the saved output of
+    /// the conversation switched to; empty = a clean area).
+    pub fn show_output(&mut self, text: &str) {
+        self.close_output();
+        if let Some(view) = &self.view {
+            view.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .replace(text);
+            self.gap = text.is_empty();
+            self.hidden_result.clear();
+        }
     }
 
     /// Opens a list window (see `dialog::pick`) and returns the chosen index.

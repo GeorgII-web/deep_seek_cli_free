@@ -311,6 +311,22 @@ impl View {
         ));
     }
 
+    /// Forgets everything and shows `text` instead (the saved output of another conversation).
+    pub fn replace(&mut self, text: &str) {
+        self.closed.clear();
+        self.wrapped.clear();
+        self.open.clear();
+        self.offset = 0;
+        if !text.is_empty() {
+            self.push(text);
+            // What comes next starts on a line of its own.
+            if !self.open.is_empty() {
+                self.push("\n");
+            }
+        }
+        self.repaint();
+    }
+
     /// The whole output as text, for the terminal after the chat closes.
     pub fn transcript(&self) -> String {
         let mut text = self.closed.join("\n");
@@ -400,6 +416,19 @@ mod tests {
         assert!(v.drop_lines(2));
         assert_eq!(v.closed, ["a"]);
         assert_eq!(v.visible(), ["a", ""]);
+    }
+
+    #[test]
+    fn replace_swaps_the_whole_output() {
+        let mut v = view(10, 3);
+        v.push("old 1\nold 2\nold");
+        v.offset = 1;
+        v.replace("new a\nnew b");
+        assert_eq!(v.closed, ["new a", "new b"]);
+        assert_eq!((v.open.as_str(), v.offset), ("", 0));
+        assert_eq!(v.transcript(), "new a\nnew b");
+        v.replace("");
+        assert_eq!(v.visible(), [""]);
     }
 
     #[test]
