@@ -35,6 +35,9 @@ pub trait Ui {
     fn running(&mut self, action: &Action);
     /// What the action returned (the text that goes to the model)
     fn result(&mut self, text: &str);
+    /// The model ended the task without a text answer: the last result is the
+    /// answer and must be visible in full
+    fn result_is_answer(&mut self);
     /// A remark of the CLI itself
     fn note(&mut self, text: &str);
 }
@@ -64,6 +67,10 @@ pub async fn run<B: Backend, U: Ui>(
 
         prompt = match protocol::parse(&answer) {
             Parsed::Final => return Ok(()),
+            Parsed::Done => {
+                ui.result_is_answer();
+                return Ok(());
+            }
             Parsed::Invalid(message) => {
                 ui.note("the model sent a broken action block; asking it to repeat");
                 message
@@ -219,6 +226,7 @@ mod tests {
         decisions: VecDeque<Decision>,
         asked: Vec<String>,
         notes: Vec<String>,
+        answers_by_result: u32,
     }
 
     impl Ui for FakeUi {
@@ -231,6 +239,9 @@ mod tests {
         fn action(&mut self, _: &Action) {}
         fn running(&mut self, _: &Action) {}
         fn result(&mut self, _: &str) {}
+        fn result_is_answer(&mut self) {
+            self.answers_by_result += 1;
+        }
         fn note(&mut self, text: &str) {
             self.notes.push(text.to_string());
         }
@@ -401,6 +412,18 @@ mod tests {
         assert_eq!(err.downcast_ref::<Interrupt>(), Some(&Interrupt::Stop));
         assert_eq!(backend.prompts.len(), 1);
         drop(stopper.await);
+    }
+
+    #[tokio::test]
+    async fn done_block_ends_the_task_and_marks_the_result_as_the_answer() {
+        let done = block(r#"{"tool":"done"}"#);
+        let mut backend = Script::new(&[&block(r#"{"tool":"shell","cmd":"echo listing"}"#), &done]);
+        let mut ui = FakeUi::default();
+        run_task(&mut backend, &mut ui, "list", &settings(), false)
+            .await
+            .unwrap();
+        assert_eq!(backend.prompts.len(), 2);
+        assert_eq!(ui.answers_by_result, 1);
     }
 
     #[tokio::test]

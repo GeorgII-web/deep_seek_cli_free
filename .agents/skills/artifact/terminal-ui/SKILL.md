@@ -75,7 +75,7 @@ There is 810G free.                         the answer, markdown styled
 | reasoning | `Event::Thinking` | printed dim, a blank line before the answer |
 | answer | `Markdown` | the `dsc` block is never shown; blank lines at the edges dropped, at most one inside; with colors: inline code colored (backticks removed), code blocks colored with a gray bar `  │ ` in front of each line and the fence lines dropped, `**bold**`, heading lines, links (`http://`, `https://` at a word start, up to whitespace or a closing mark, punctuation at the end left out; not inside code): the URL is collected, then printed underlined blue inside an OSC 8 hyperlink (`Style::hyperlink`), so the terminal gives the hover effect and opens it on click; a line start is held back until it cannot be a fence |
 | question | `approve` | `read_choice`; Esc, Ctrl-C, Ctrl-D = no; `e` opens the box with the command (`remember = false`); the question line is erased after the key |
-| result | `result` | `Result: ` prefix and `--- stdout ---` dropped, `--- stderr ---` → `stderr:`; a text starting with `Denied` is not repeated |
+| result | `result` | `Result: ` prefix and `--- stdout ---` dropped, `--- stderr ---` → `stderr:`; a text starting with `Denied` is not repeated; the lines beyond `RESULT_LINES` are kept in `hidden_result` and printed by `result_is_answer` (the model's `done`), replacing the `… +N lines` line |
 | finish | `finish` | seconds since `begin`, answers of the model, actions that ran; `✗ stopped` or `✗ quit` after an interrupt |
 | spacing | `blank()` | one empty line between the echo, each action block, the answer, the finish line and the next input |
 | chrome text | `info`, `error`, `note`, the `why` line, the banner | `code` spans colored through `Style::inline`; `help` prints commands and keys in columns |
@@ -134,11 +134,13 @@ and the hint line (the dock grows by that many rows). A command typed out in ful
 | Key with the menu open | Effect |
 |---|---|
 | Up, Down | move the selection (wraps) |
-| Enter, Tab | put the selected command into the box; nothing runs until the next Enter |
+| Enter | run the selected command at once (`Input::Submit`) |
+| Tab | complete: put the selected command into the box |
 | Esc | close the menu for this text; the text stays |
 | any edit | new matches, selection back to the first |
 
-`COMMANDS` lives in `src/ui/mod.rs` (`Editor::set_commands`); `chat()` in `src/main.rs` runs them.
+`COMMANDS` lives in `src/ui/mod.rs` (`Editor::set_commands`); `chat()` in `src/main.rs` runs them. A submitted
+command is not echoed into the output (`Terminal::input`): only its effect is shown.
 
 History: `<home>/history.json`, the last 200 inputs, consecutive duplicates skipped; only the chat passes a file.
 

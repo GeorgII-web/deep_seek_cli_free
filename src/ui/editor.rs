@@ -255,7 +255,12 @@ pub struct Editor {
 /// A slash command: name with the slash, what it does.
 pub type Command = (&'static str, &'static str);
 
-const MENU_HINTS: &[(&str, &str)] = &[("↑↓", "choose"), ("Enter", "insert"), ("Esc", "close")];
+const MENU_HINTS: &[(&str, &str)] = &[
+    ("↑↓", "choose"),
+    ("Enter", "run"),
+    ("Tab", "complete"),
+    ("Esc", "close"),
+];
 
 /// The commands the menu offers for `text`: those starting with it, while `text`
 /// is one word starting with `/`. A command typed out in full offers nothing,
@@ -569,8 +574,7 @@ impl Editor {
             let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
             let alt = key.modifiers.contains(KeyModifiers::ALT);
             let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-            // With the menu open the arrows choose and Enter inserts the command
-            // into the box; it is sent only by the next Enter.
+            // With the menu open the arrows choose and Enter runs the command.
             if !items.is_empty() {
                 match key.code {
                     KeyCode::Up => {
@@ -581,7 +585,12 @@ impl Editor {
                         selected = (selected + 1) % items.len();
                         continue;
                     }
-                    KeyCode::Enter | KeyCode::Tab if !alt && !shift => {
+                    // Enter runs the chosen command at once; Tab only completes it in the box.
+                    KeyCode::Enter if !alt && !shift => {
+                        self.erase()?;
+                        return Ok(Input::Submit(items[selected].0.to_string()));
+                    }
+                    KeyCode::Tab => {
                         buffer = Buffer::new(items[selected].0);
                         continue;
                     }

@@ -53,6 +53,9 @@ impl Action {
 pub enum Parsed {
     /// No action block: the answer is the final one
     Final,
+    /// The `done` block: the task ends without a text answer, because the output
+    /// of the last action already is what the user asked for
+    Done,
     /// The first action block; `extra` = further blocks that are ignored
     Action { action: Action, extra: usize },
     /// A block that cannot be used; the text goes back to the model
@@ -74,13 +77,15 @@ Tools (the block holds one JSON object on one line):
 - {{"tool":"shell","cmd":"<bash command>","timeout_s":60,"why":"<reason>"}} runs in bash; timeout_s is optional
 - {{"tool":"read_file","path":"<path>","why":"<reason>"}}
 - {{"tool":"write_file","path":"<path>","content":"<whole file content>","why":"<reason>"}}
+- {{"tool":"done"}} ends the task without a text answer
 
 Rules:
 - One action per answer. Never write the result yourself; wait for mine.
 - Commands are not interactive: no editors, no pagers, no prompts, no sudo password.
 - The user may deny an action; then try another way or ask the user.
 - Prefer commands that only read. Change or delete something only when the task needs it.
-- When the task is done or cannot be done, answer in plain text without a block. Keep it short.
+- The user sees the output of every action on the screen, exactly as you get it. When that output already is what the user asked for (a file listing, the content of a file, a status, a version), do not repeat, reformat or summarize it: send {{"tool":"done"}} as your whole answer.
+- Write a text answer only when it adds something the output does not show: a conclusion, a number you worked out, an explanation the user asked for, or the reason the task cannot be done. Then answer in plain text without a block and keep it short.
 
 Working directory: {cwd}
 
@@ -91,7 +96,7 @@ Task: {task}"#
 /// A further task in a conversation that already got the rules.
 pub fn next_prompt(task: &str) -> String {
     format!(
-        "New task from the user. The same rules apply: one {FENCE} block per answer, plain text when done.\n\nTask: {task}"
+        "New task from the user. The same rules apply: one {FENCE} block per answer; when an output already is the answer, send the done block instead of repeating it.\n\nTask: {task}"
     )
 }
 
@@ -114,7 +119,13 @@ pub fn parse(answer: &str) -> Parsed {
     let Some(first) = blocks.first() else {
         return Parsed::Final;
     };
-    match serde_json::from_str::<Action>(first.join("\n").trim()) {
+    let block = first.join("\n");
+    let is_done = serde_json::from_str::<serde_json::Value>(block.trim())
+        .is_ok_and(|value| value.get("tool").and_then(|tool| tool.as_str()) == Some("done"));
+    if is_done {
+        return Parsed::Done;
+    }
+    match serde_json::from_str::<Action>(block.trim()) {
         Ok(action) => Parsed::Action {
             action,
             extra: blocks.len() - 1,
@@ -229,5 +240,17 @@ mod tests {
             shell_result(None, true, "", " "),
             "Result: timed out, killed\n(no output)\n"
         );
+    }
+
+    #[test]
+    fn done_block_ends_without_an_answer() {
+        assert_eq!(parse("```dsc\n{\"tool\":\"done\"}\n```"), Parsed::Done);
+        assert_eq!(
+            parse("\n\n```dsc\n{ \"tool\" : \"done\", \"why\": \"shown\" }\n```\n"),
+            Parsed::Done
+        );
+        let prompt = first_prompt("t", "/w");
+        assert!(prompt.contains(r#"{"tool":"done"}"#));
+        assert!(prompt.contains("do not repeat"));
     }
 }

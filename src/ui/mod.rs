@@ -99,6 +99,9 @@ pub struct Terminal {
     /// Where the key watcher sends what the keys mean; set by `interrupts`
     interrupt_tx: Option<UnboundedSender<Interrupt>>,
     watch: Option<Watch>,
+    /// Lines of the last result that the preview left out; printed when the model
+    /// says the result is the answer
+    hidden_result: Vec<String>,
     /// The approval mode: true = allow all (run without asking), false = ask.
     /// Shared with the box, the progress line, the key watcher and the agent loop.
     allow_all: Arc<AtomicBool>,
@@ -134,6 +137,7 @@ impl Terminal {
             actions: 0,
             interrupt_tx: None,
             watch: None,
+            hidden_result: Vec::new(),
             allow_all,
         }
     }
@@ -354,7 +358,10 @@ impl Terminal {
         }
         match self.editor.read("", INPUT_HINTS, true) {
             Ok(Input::Submit(text)) => {
-                self.echo(&text);
+                // A command is not part of the conversation: it is not echoed, its effect is shown.
+                if !COMMANDS.iter().any(|(name, _)| *name == text) {
+                    self.echo(&text);
+                }
                 Some(text)
             }
             Ok(Input::Exit) => None,
@@ -363,6 +370,13 @@ impl Terminal {
                 None
             }
         }
+    }
+
+    /// One line of an action's output, indented under the action.
+    fn result_line(&self, mark: &str, line: &str) {
+        let s = self.style;
+        let line = s.links(line, s.gray());
+        self.line(&format!("{}  {mark} {line}{}", s.gray(), s.reset()));
     }
 
     /// The submitted input as part of the scrollback.
@@ -475,7 +489,7 @@ impl Terminal {
             heading("Input box"),
             row(
                 "/",
-                "list the commands: arrows choose, Enter inserts, Enter again sends",
+                "list the commands: arrows choose, Enter runs, Tab completes",
             ),
             row("Enter", "send"),
             row("Alt+Enter, Ctrl-J, \\ Enter", "new line"),
@@ -676,6 +690,7 @@ impl Ui for Terminal {
     }
 
     fn running(&mut self, _: &Action) {
+        self.hidden_result.clear();
         self.actions += 1;
         self.spinner.start("Running");
     }
@@ -699,16 +714,33 @@ impl Ui for Terminal {
             .collect();
         for (i, line) in lines.iter().take(RESULT_LINES).enumerate() {
             let mark = if i == 0 { "⎿" } else { " " };
-            let line = s.links(line, s.gray());
-            self.line(&format!("{}  {mark} {line}{}", s.gray(), s.reset()));
+            self.result_line(mark, line);
         }
-        if lines.len() > RESULT_LINES {
+        self.hidden_result = lines.iter().skip(RESULT_LINES).cloned().collect();
+        if !self.hidden_result.is_empty() {
             self.line(&format!(
                 "{}    … +{} lines{}",
                 s.gray(),
-                lines.len() - RESULT_LINES,
+                self.hidden_result.len(),
                 s.reset()
             ));
+        }
+        self.gap = false;
+        self.blank();
+    }
+
+    fn result_is_answer(&mut self) {
+        self.close_output();
+        let hidden = std::mem::take(&mut self.hidden_result);
+        if hidden.is_empty() {
+            return;
+        }
+        // The "… +N lines" line and the blank line after it are replaced by the lines themselves.
+        if self.style.on() {
+            self.partial("\x1b[2A\r\x1b[2K");
+        }
+        for line in &hidden {
+            self.result_line(" ", line);
         }
         self.gap = false;
         self.blank();

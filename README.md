@@ -110,7 +110,7 @@ shell prompt.
 | Key in the input box | Effect |
 |---|---|
 | Enter | send |
-| `/` | list the commands: Up / Down choose, Enter (or Tab) puts the command into the box, Enter again runs it; Esc closes the list |
+| `/` | list the commands: Up / Down choose, Enter runs the chosen one at once, Tab only completes it in the box, Esc closes the list |
 | Alt+Enter, Ctrl-J, or `\` then Enter | new line |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
@@ -239,6 +239,9 @@ cli → agent loop → Backend trait → DeepSeek web client (HTTP, proof of wor
   ```
   ````
   `dsc` runs it and sends the result as the next message. An answer without a block is the final answer.
+- **No repeated output**: you see the output of every command. When that output already is the answer (a file
+  listing, a file's content), the model is told to send a silent "done" block instead of printing it again; a
+  long output is then shown in full instead of the first 8 lines.
 - **Proof of work**: each request needs a solved challenge. `dsc` downloads the site's own wasm module once and
   runs it in an embedded interpreter ([wasmi](https://github.com/wasmi-labs/wasmi)), about 1 s per request.
 - **History** stays on DeepSeek's side; each turn sends only the new text.
