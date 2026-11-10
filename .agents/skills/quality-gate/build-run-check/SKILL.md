@@ -1,6 +1,6 @@
 ---
 name: build-run-check
-description: How to check, run and publish deep_seek_cli_free — the gates (`cargo test`, `cargo fmt --check`, clippy with `-D warnings`), the opt-in solver test against the site wasm, a throwaway home with `DSC_HOME`, live checks and their limits, recording a new SSE fixture, the build profiles, and the rules of the public GitHub repo (noreply commit email, no personal data, push with each change). Use when reporting a change done, testing against the live site, or before a commit or push.
+description: How to check, run and publish deep_seek_cli_free — the gates (`cargo test`, `cargo fmt --check`, clippy with `-D warnings`), the opt-in solver test against the site wasm, a throwaway home with `DSC_HOME`, live checks and their limits, recording a new SSE fixture, the build profiles, the GitHub workflows (checks on push, release on a version tag), and the rules of the public GitHub repo (noreply commit email, no personal data, push with each change). Use when reporting a change done, testing against the live site, or before a commit or push.
 ---
 
 # Build, run, check
@@ -40,6 +40,18 @@ DSC_TEST_WASM=$PWD/var/tmp/sha3.wasm cargo test -- --ignored --nocapture
 - Every live prompt counts against the user's account: a few per change, the throttle stays on.
 - Record a new stream shape: put a temporary dump of `chunk` into the loop of `Conversation::ask`, save the body
   under `src/deepseek/fixtures/`, add a parser test, remove the dump. A fixture holds only the test prompt's answer.
+
+## GitHub workflows
+
+| File | Trigger | Does |
+|---|---|---|
+| `.github/workflows/ci.yml` | push to `main`, pull request | `cargo fmt --check`, clippy `-D warnings`, `cargo test` on `ubuntu-24.04` |
+| `.github/workflows/release.yml` | pushed tag `v*` | checks the tag equals `version` in `Cargo.toml`, the gates, `cargo build --release --locked` on `ubuntu-22.04` (the binary then needs glibc 2.35+), packs `dsc-x86_64-linux.tar.gz` (`dsc`, `README.md`, `LICENSE`) with a `.sha256`, publishes a release with generated notes |
+
+Release steps: bump `version` in `Cargo.toml` (and `Cargo.lock` by a build), commit, push, wait for `ci` to be
+green, then `git tag v<version> && git push origin v<version>`. The asset name is fixed, because the README
+download command uses `releases/latest/download/dsc-x86_64-linux.tar.gz`. A tag is published work: only on the
+user's word. Run state without a login: `https://api.github.com/repos/GeorgII-web/deep_seek_cli_free/actions/runs`.
 
 ## Public repo
 

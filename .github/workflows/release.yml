@@ -1,0 +1,41 @@
+# Builds the Linux binary and publishes it as a GitHub release.
+# Trigger: a pushed tag v<version>, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
+# The tag must match `version` in Cargo.toml.
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    # The oldest runner image: the binary then needs only glibc 2.35 or newer.
+    runs-on: ubuntu-22.04
+    env:
+      ASSET: dsc-x86_64-linux.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches the version in Cargo.toml
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, Cargo.toml $version"; exit 1; }
+      - run: rustup toolchain install stable --profile minimal --component clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test
+      - run: cargo build --release --locked
+      - name: Package
+        run: |
+          ./target/release/dsc --version
+          tar -czf "$ASSET" -C target/release dsc -C ../.. README.md LICENSE
+          sha256sum "$ASSET" > "$ASSET.sha256"
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ env.ASSET }}
+            ${{ env.ASSET }}.sha256
+          generate_release_notes: true

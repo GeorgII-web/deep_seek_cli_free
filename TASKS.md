@@ -9,7 +9,7 @@ when done.
 | 13 | Stream command output live while it runs | long commands show progress |
 | 14 | Verify `--search` and `--expert` live; map their fragment types | both give an answer |
 | 11 | `dsc login` over CDP (own Chrome profile) | fresh login without FreeDeepseekAPI |
-| 12 | Release build (musl static), GitHub release workflow | `cargo build --release --target x86_64-unknown-linux-musl` gives one binary |
+| 12 | Fully static binary (musl) and an aarch64 build in the release workflow | the download runs on any Linux, also ARM |
 
 ## Open questions
 

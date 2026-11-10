@@ -30,6 +30,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/ui/editor.rs` | `Buffer`, `Editor` (multiline input box inline or docked with a scroll region above, history, slash-command menu), `command_matches`, `read_choice` (one key) |
 | `src/ui/render.rs` | `Markdown`: hides the `dsc` block, trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings, links |
 | `src/ui/spinner.rs`, `style.rs` | progress line with a clock, key hint and mode; every color code, two grays for hints (`key`, `faint`) |
+| `.github/workflows/ci.yml`, `release.yml` | the checks on every push; on a tag `v<version>` the Linux binary as a GitHub release |
 | `scripts/pty-drive.py` | drives the chat in a pseudo-terminal with scripted keys and prints scrollback, screen and cursor |
 
 ## Skills (`.agents/skills`, read the one that matches before working)
@@ -42,7 +43,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | [agent-loop](.agents/skills/artifact/agent-loop/SKILL.md) | action block protocol, first prompt, tools, loop steps, `Ui` trait, adding a tool |
 | [terminal-ui](.agents/skills/artifact/terminal-ui/SKILL.md) | look of a run, input box and its keys, progress line, markdown rendering, colors, checking the screen with `scripts/pty-drive.py` |
 | [approval-policy](.agents/skills/artifact/approval-policy/SKILL.md) | allow, deny, ask, "always", edit, default lists |
-| [build-run-check](.agents/skills/quality-gate/build-run-check/SKILL.md) | gates, solver test, live checks, recording a fixture, build profiles, public repo rules |
+| [build-run-check](.agents/skills/quality-gate/build-run-check/SKILL.md) | gates, solver test, live checks, recording a fixture, build profiles, GitHub workflows and release steps, public repo rules |
 
 ## Rules
 

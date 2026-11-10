@@ -30,6 +30,26 @@ resume of a chat after a restart, login through the browser. See [TASKS.md](TASK
 
 ## Install
 
+### Download (Linux x86_64)
+
+```bash
+curl -fsSL https://github.com/GeorgII-web/deep_seek_cli_free/releases/latest/download/dsc-x86_64-linux.tar.gz | tar -xz dsc
+./dsc --version
+```
+
+That gives one file, `dsc`, in the current folder (glibc 2.35 or newer: Ubuntu 22.04+, Debian 12+, Fedora 36+,
+WSL). To have it everywhere:
+
+```bash
+mkdir -p ~/.local/bin && mv dsc ~/.local/bin/     # ~/.local/bin must be in your PATH
+```
+
+Then [log in](#log-in) once and run `dsc`.
+
+All versions and checksums: [releases](https://github.com/GeorgII-web/deep_seek_cli_free/releases).
+
+### Build from source
+
 Needs a Rust toolchain (edition 2024, Rust 1.88 or newer) and a C compiler.
 
 ```bash
@@ -250,6 +270,9 @@ cli → agent loop → Backend trait → DeepSeek web client (HTTP, proof of wor
 Details: [architecture](.agents/skills/general/architecture/SKILL.md).
 
 ## Development
+
+Every push runs the checks on GitHub (`.github/workflows/ci.yml`). A release: set `version` in `Cargo.toml`, push
+it, then push the tag `v<version>`; `.github/workflows/release.yml` builds the binary and publishes the release.
 
 ```bash
 cargo test && cargo fmt --check && cargo clippy --all-targets -- -D warnings
