@@ -39,7 +39,7 @@ DSC_TEST_WASM=$PWD/var/tmp/sha3.wasm cargo test -- --ignored --nocapture
 | `scripts/pty-drive.py '<keys>' [rows] [columns]` | a person at a terminal | starts the HTTP mock on a free port, a home `var/mock-home` (mock token, no throttle), runs `target/debug/dsc` in a pseudo-terminal, prints scrollback, screen (`-` output, `#` dock), cursor and the mock's request counts |
 
 Both mocks understand the same tasks (`mock::TASKS`): `!<cmd>`, `run <cmd>`, `read`, `write`, `think`, `slow`,
-`long`, `code`, `broken`, `two`, `dead`, `429`; anything else is echoed.
+`long`, `code`, `broken`, `two`, `early` (done at once), `dead`, `429`; anything else is echoed.
 
 ```bash
 scripts/pty-drive.py '[("", 1), ("!echo hi\r", 2), ("y", 2)]' 24 100        # a task, the question, yes

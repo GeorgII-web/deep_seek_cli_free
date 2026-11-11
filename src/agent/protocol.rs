@@ -77,7 +77,7 @@ Tools (the block holds one JSON object on one line):
 - {{"tool":"shell","cmd":"<bash command>","timeout_s":60,"why":"<reason>"}} runs in bash; timeout_s is optional
 - {{"tool":"read_file","path":"<path>","why":"<reason>"}}
 - {{"tool":"write_file","path":"<path>","content":"<whole file content>","why":"<reason>"}}
-- {{"tool":"done"}} ends the task without a text answer
+- {{"tool":"done"}} ends the task without a text answer; allowed only right after the result of an action you ran for this task
 
 Rules:
 - One action per answer. Never write the result yourself; wait for mine.
@@ -85,6 +85,7 @@ Rules:
 - The user may deny an action; then try another way or ask the user.
 - Prefer commands that only read. Change or delete something only when the task needs it.
 - The user sees the output of every action on the screen, exactly as you get it. When that output already is what the user asked for (a file listing, the content of a file, a status, a version), do not repeat, reformat or summarize it: send {{"tool":"done"}} as your whole answer.
+- The done block is never the first answer to a task: first run the action the task needs. Each task starts from nothing, even when a similar one was done before; the user sees only what you run or write now.
 - Write a text answer only when it adds something the output does not show: a conclusion, a number you worked out, an explanation the user asked for, or the reason the task cannot be done. Then answer in plain text without a block and keep it short.
 
 Working directory: {cwd}
@@ -96,9 +97,13 @@ Task: {task}"#
 /// A further task in a conversation that already got the rules.
 pub fn next_prompt(task: &str) -> String {
     format!(
-        "New task from the user. The same rules apply: one {FENCE} block per answer; when an output already is the answer, send the done block instead of repeating it.\n\nTask: {task}"
+        "New task from the user. The same rules apply: one {FENCE} block per answer. Start with the action this task needs (or a text answer when it needs none); the done block comes only after the result of an action of this task.\n\nTask: {task}"
     )
 }
+
+/// What the model gets when it ends a task with the done block before any
+/// action ran: nothing would be on the user's screen.
+pub const DONE_TOO_EARLY: &str = "You sent the done block, but no action ran in this task, so the user sees nothing. Run the action the task needs now, or answer in plain text.";
 
 /// Finds the action in an answer of the model.
 pub fn parse(answer: &str) -> Parsed {
@@ -252,5 +257,7 @@ mod tests {
         let prompt = first_prompt("t", "/w");
         assert!(prompt.contains(r#"{"tool":"done"}"#));
         assert!(prompt.contains("do not repeat"));
+        assert!(prompt.contains("never the first answer to a task"));
+        assert!(next_prompt("t").contains("only after the result of an action of this task"));
     }
 }

@@ -31,6 +31,7 @@ pub const TASKS: &str = "\
 `slow`            a long answer, one word every 0.3 s (try Esc, scrolling)
 `long`            80 lines; `code` = bold, inline code, a code block, a link
 `broken`          an action block that is not JSON; `two` = two action blocks
+`early`           the done block at once (the app asks again), then a sentence
 `dead`            the \"token dead\" error; `429` = the \"too many requests\" error
 anything else    `Mock answer to: <task>`";
 
@@ -67,6 +68,9 @@ impl Mock {
                 .after
                 .take()
                 .unwrap_or_else(|| "Mock: finished.".into())));
+        }
+        if prompt.starts_with("You sent the done block") {
+            return Ok(say("Mock: a real answer after the early done.".into()));
         }
         let task = prompt.rsplit("Task: ").next().unwrap_or(prompt).trim();
         let done = block(r#"{"tool":"done"}"#);
@@ -113,6 +117,7 @@ impl Mock {
                     .into(),
             ),
             "broken" => say(format!("{FENCE}\nthis is not json\n```")),
+            "early" => say(block(r#"{"tool":"done"}"#)),
             "two" => {
                 self.after = Some("Mock: finished.".into());
                 say(format!("{}\n\n{}", shell("echo first"), shell("echo second")))

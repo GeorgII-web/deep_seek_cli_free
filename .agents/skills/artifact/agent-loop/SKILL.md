@@ -38,7 +38,9 @@ directory, the task. The model answers either plain text (final answer, the loop
 - No repeated output: the user sees every result, so the prompt tells the model to send `{"tool":"done"}` as its
   whole answer when the output already is what was asked, and to write text only when it adds something (a
   conclusion, a computed number, an explanation, the reason for a failure). `parse` checks for `done` before the
-  actions; the block is hidden like every `dsc` block.
+  actions; the block is hidden like every `dsc` block. The prompts say that `done` is never the first answer to a
+  task and that each task starts from nothing; `next_prompt` repeats it, because a model that already did a
+  similar task tends to end the new one at once.
 - `parse`: lines between a `` ```dsc `` line and a `` ``` `` line; an unclosed block counts. The **first** block
   runs; further blocks are ignored and the model is told so. Broken JSON, an unknown tool or field → `Invalid`,
   its text goes back to the model.
@@ -59,7 +61,10 @@ directory, the task. The model answers either plain text (final answer, the loop
 1. The caller builds `prompt`: `first_prompt(task, cwd)` for a new conversation, `next_prompt(task)` for a
    further task in the same one (a short reminder of the rules + the task).
 2. `backend.ask(prompt)`; pieces go to `Ui::event`, then `Ui::answer_end`.
-3. `parse(answer)`: `Final` → return; `Done` → `Ui::result_is_answer`, return; `Invalid` → its text is the next
+3. `parse(answer)`: `Final` → return; `Done` → when an action of this task put output on the screen (`shown`:
+   the last action was not denied): `Ui::result_is_answer`, return; otherwise the model gets
+   `protocol::DONE_TOO_EARLY` and must act or answer (a model that sends `done` at once would leave the user
+   with nothing); `Invalid` → its text is the next
    prompt; `Action` → `act`.
 4. `act`: `Ui::action` (what the model asked for), `policy::check` (see `../approval-policy/SKILL.md`), maybe
    `Ui::approve`, then `Ui::running` and `execute`; the result text is shown with `Ui::result` and becomes the

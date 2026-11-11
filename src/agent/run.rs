@@ -57,6 +57,8 @@ pub async fn run<B: Backend, U: Ui>(
     interrupts: &mut Interrupts,
 ) -> Result<()> {
     interrupts.clear();
+    // Whether an action of this task put its output on the user's screen.
+    let mut shown = false;
     for _ in 0..settings.agent.max_steps {
         let answer = {
             let mut sink = |event: &Event| ui.event(event);
@@ -69,9 +71,14 @@ pub async fn run<B: Backend, U: Ui>(
 
         prompt = match protocol::parse(&answer) {
             Parsed::Final => return Ok(()),
-            Parsed::Done => {
+            // "The output is the answer" needs an output: an action that ran in this task.
+            Parsed::Done if shown => {
                 ui.result_is_answer();
                 return Ok(());
+            }
+            Parsed::Done => {
+                ui.note("the model ended without doing or saying anything; asking it again");
+                protocol::DONE_TOO_EARLY.to_string()
             }
             Parsed::Invalid(message) => {
                 ui.note("the model sent a broken action block; asking it to repeat");
@@ -83,6 +90,8 @@ pub async fn run<B: Backend, U: Ui>(
                     result.push_str("\nNote: only your first action block was run. Send one block per answer.\n");
                 }
                 ui.result(&result);
+                // A denied action showed nothing.
+                shown = !result.starts_with("Denied");
                 result
             }
         };
@@ -429,6 +438,26 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(ui.live, "live\n");
+    }
+
+    #[tokio::test]
+    async fn done_without_an_action_is_sent_back() {
+        let done = block(r#"{"tool":"done"}"#);
+        // First answer: done at once. Then a denied action and done again. Then a real answer.
+        let denied = block(r#"{"tool":"shell","cmd":"true x"}"#);
+        let mut backend = Script::new(&[&done, &denied, &done, "Here is the answer."]);
+        let mut ui = FakeUi {
+            decisions: [Decision::No].into(),
+            ..Default::default()
+        };
+        run_task(&mut backend, &mut ui, "get it", &settings(), false)
+            .await
+            .unwrap();
+        assert_eq!(backend.prompts[1], protocol::DONE_TOO_EARLY);
+        assert!(backend.prompts[2].starts_with("Denied by the user"));
+        assert_eq!(backend.prompts[3], protocol::DONE_TOO_EARLY);
+        assert_eq!(ui.answers_by_result, 0);
+        assert_eq!(ui.notes.len(), 2);
     }
 
     #[tokio::test]

@@ -21,6 +21,7 @@ What the model "answers" depends on the task (the text after "Task: " in the pro
   slow              a long answer, one word every 0.3 s (to try Esc and scrolling)
   long              80 numbered lines               code           markdown: bold, inline code, a code block, a link
   broken            a dsc block that is not JSON    two            two action blocks in one answer
+  early             the done block at once (dsc must ask again), then a sentence
   dead              the "invalid token" error       429            HTTP 429 with Retry-After: 1
   anything else     "Mock answer to: <task>"
 A tool result as the prompt is answered by what the task planned (done block or a sentence).
@@ -55,8 +56,12 @@ def plan(prompt, session):
     if prompt.startswith(RESULT_STARTS):
         after = session.pop('after', 'Mock: finished.')
         return '', after, DELAY
+    if prompt.startswith('You sent the done block'):
+        return '', 'Mock: a real answer after the early done.', DELAY
     task = prompt.rsplit('Task: ', 1)[-1].strip()
     done = block({'tool': 'done'})
+    if task == 'early':
+        return '', done, DELAY
     if task.startswith('!'):
         session['after'] = done
         return '', block({'tool': 'shell', 'cmd': task[1:].strip(), 'why': 'mock: the task asked for it'}), DELAY
