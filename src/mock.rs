@@ -40,6 +40,10 @@ anything else     `Mock answer to: <task>`";
 pub struct Mock {
     /// What to answer to the result of the action asked for last
     after: Option<String>,
+    /// The conversation's id (it starts with `sessions::MOCK_PREFIX`) and how many
+    /// messages it has: enough to list it under `/sessions` and come back to it
+    session: String,
+    messages: u64,
     /// Pause before an answer starts
     wait: Duration,
     /// Pause between two pieces of an answer
@@ -69,11 +73,26 @@ struct Plan {
 impl Mock {
     /// A mock that answers at the speed of the settings (`[mock]`).
     pub fn new(speed: &MockSpeed) -> Self {
+        let millis = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis());
         Self {
-            after: None,
+            session: format!("{}{millis}", crate::sessions::MOCK_PREFIX),
             wait: Duration::from_millis(speed.wait_ms),
             delay: Duration::from_millis(speed.word_ms),
+            ..Self::default()
         }
+    }
+
+    /// What `/sessions` needs to come back: the id and the place in the conversation. `None` before the first answer.
+    pub fn state(&self) -> Option<(String, Option<u64>)> {
+        (self.messages > 0).then(|| (self.session.clone(), Some(self.messages)))
+    }
+
+    /// Continues an earlier mock conversation (the mock keeps no memory: only the id and the count go on).
+    pub fn resume(&mut self, session: String, messages: Option<u64>) {
+        self.session = session;
+        self.messages = messages.unwrap_or(0);
     }
 
     fn plan(&mut self, prompt: &str) -> Result<Plan> {
@@ -196,6 +215,8 @@ impl Backend for Mock {
             sink(&Event::Text(piece.to_string()));
             tokio::time::sleep(plan.delay).await;
         }
+        // A prompt and its answer.
+        self.messages += 2;
         Ok(plan.answer)
     }
 }
@@ -257,6 +278,26 @@ mod tests {
                 .0
                 .contains("fetched from your machine")
         );
+    }
+
+    #[tokio::test]
+    async fn the_mock_has_a_session_to_come_back_to() {
+        let mut mock = Mock::new(&MockSpeed {
+            wait_ms: 0,
+            word_ms: 0,
+        });
+        assert_eq!(mock.state(), None);
+        ask(&mut mock, "Task: hello").await;
+        let (id, place) = mock.state().unwrap();
+        assert!(crate::sessions::is_mock(&id));
+        assert_eq!(place, Some(2));
+        let mut later = Mock::new(&MockSpeed {
+            wait_ms: 0,
+            word_ms: 0,
+        });
+        later.resume(id.clone(), place);
+        ask(&mut later, "Task: again").await;
+        assert_eq!(later.state(), Some((id, Some(4))));
     }
 
     #[tokio::test]

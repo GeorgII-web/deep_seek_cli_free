@@ -29,6 +29,14 @@ pub struct Session {
     pub updated: u64,
 }
 
+/// How the ids of the built-in mock's sessions start.
+pub const MOCK_PREFIX: &str = "builtin-mock-";
+
+/// Whether a session belongs to the built-in mock model.
+pub fn is_mock(id: &str) -> bool {
+    id.starts_with(MOCK_PREFIX)
+}
+
 pub fn now() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -85,9 +93,19 @@ impl Store {
         );
     }
 
-    /// The lines of the list: a mark for the session in use, title, tasks, age, folder.
-    pub fn rows(&self, now: u64, current: Option<&str>) -> Vec<String> {
+    /// The sessions of one model: those of the built-in mock (`mock` true) or
+    /// those at DeepSeek. A session can only be continued by the model it was started with.
+    pub fn of_model(&self, mock: bool) -> Vec<Session> {
         self.sessions
+            .iter()
+            .filter(|session| is_mock(&session.id) == mock)
+            .cloned()
+            .collect()
+    }
+
+    /// The lines of a list of sessions: a mark for the one in use, title, tasks, age, folder.
+    pub fn rows(sessions: &[Session], now: u64, current: Option<&str>) -> Vec<String> {
+        sessions
             .iter()
             .map(|session| {
                 let mark = if current == Some(session.id.as_str()) {
@@ -175,12 +193,29 @@ mod tests {
         let (paths, mut store) = store("rows");
         store.upsert(session("a", "first", 100));
         store.upsert(session("b", "second", 1000));
-        let rows = store.rows(1000, Some("a"));
+        let rows = Store::rows(&store.sessions, 1000, Some("a"));
         assert!(rows[0].starts_with("  second"), "{rows:?}");
         assert!(
             rows[0].contains("2 tasks") && rows[0].contains("just now") && rows[0].ends_with("/w")
         );
         assert!(rows[1].starts_with("● first") && rows[1].contains("15 min ago"));
+        fs::remove_dir_all(paths.home).unwrap();
+    }
+
+    #[test]
+    fn sessions_are_listed_per_model() {
+        let (paths, mut store) = store("models");
+        store.upsert(session("real-1", "at deepseek", 1));
+        store.upsert(session(&format!("{MOCK_PREFIX}7"), "at the mock", 2));
+        let ids = |mock: bool| {
+            store
+                .of_model(mock)
+                .iter()
+                .map(|s| s.id.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(ids(false), ["real-1"]);
+        assert_eq!(ids(true), [format!("{MOCK_PREFIX}7")]);
         fs::remove_dir_all(paths.home).unwrap();
     }
 }

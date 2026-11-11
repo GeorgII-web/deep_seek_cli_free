@@ -185,9 +185,8 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             .find(|session| session.id == *code)
             .cloned()
         {
-            Some(_) if api == Api::Mock => {
-                terminal.error("sessions belong to the DeepSeek model; switch with `/model` first")
-            }
+            Some(chosen) if sessions::is_mock(&chosen.id) != (api == Api::Mock) => terminal
+                .error("that session belongs to the other model; switch with `/model` first"),
             Some(chosen) => {
                 conversation.resume(chosen.id.clone(), chosen.parent_message_id);
                 first = false;
@@ -290,23 +289,26 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 }
                 continue;
             }
-            "/sessions" if conversation.is_mock() => {
-                terminal.info("The mock has no sessions. `/model` switches to DeepSeek.");
-                continue;
-            }
             "/sessions" => {
-                if store.sessions.is_empty() {
-                    terminal
-                        .info("No earlier conversations yet: one is saved after its first task.");
+                // Each model has its own conversations: the mock's are not at DeepSeek.
+                let listed = store.of_model(conversation.is_mock());
+                if listed.is_empty() {
+                    terminal.info("No earlier conversations with this model yet: one is saved after its first task.");
                     continue;
                 }
-                let rows = store.rows(
+                let rows = sessions::Store::rows(
+                    &listed,
                     sessions::now(),
                     current.as_ref().map(|session| session.id.as_str()),
                 );
+                let title = if conversation.is_mock() {
+                    "Sessions of the mock"
+                } else {
+                    "Sessions"
+                };
                 if let Some(chosen) = terminal
-                    .pick("Sessions", &rows)
-                    .and_then(|index| store.sessions.get(index).cloned())
+                    .pick(title, &rows)
+                    .and_then(|index| listed.get(index).cloned())
                 {
                     // The messages live at DeepSeek: the next task continues below the last answer.
                     conversation = self::model(paths, settings, run, api)?;
@@ -317,11 +319,16 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                         std::fs::read_to_string(paths.transcript(&chosen.id)).unwrap_or_default();
                     terminal.show_output(&saved);
                     terminal.info(&format!(
-                        "Switched to `{}` ({} task{}, {}). The model remembers that conversation.",
+                        "Switched to `{}` ({} task{}, {}). {}",
                         chosen.title,
                         chosen.tasks,
                         if chosen.tasks == 1 { "" } else { "s" },
-                        sessions::age(sessions::now(), chosen.updated)
+                        sessions::age(sessions::now(), chosen.updated),
+                        if conversation.is_mock() {
+                            "The screen is back; the mock itself keeps no memory."
+                        } else {
+                            "The model remembers that conversation."
+                        }
                     ));
                     terminal.set_title(&format!("dsc · {}", chosen.title));
                     current = Some(chosen);

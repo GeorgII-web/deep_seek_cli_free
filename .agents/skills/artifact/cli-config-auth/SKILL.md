@@ -37,7 +37,7 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 | `/permissions` | `Terminal::toggle_mode` (ask ⇄ allow all) |
 | `/model` | `Terminal::pick` ("DeepSeek", "Mock"); a change: `ensure_login` for the real account, a new `Model`, clean screen, `ModeSaver::save_api` → `deepseek.api` |
 | `/login` | `relogin`: token window, save, `Model::set_client` |
-| `/sessions` | `Terminal::pick` over `Store::rows`; the chosen one: new `Conversation` + `resume(id, parent)`, `first = false` |
+| `/sessions` | `Terminal::pick` over `Store::rows` of `Store::of_model(mock?)` (each model lists only its own conversations); the chosen one: new `Conversation` + `resume(id, parent)`, `first = false` |
 | `/help` | `Terminal::help` |
 | `/exit`, `/quit`, Ctrl-D on an empty box, Ctrl-C twice | leave |
 | other `/word` | "unknown command"; a text with a second `/` or a space (a path, a sentence) is a task |
@@ -46,7 +46,8 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 A new command: a row in `COMMANDS` (`src/ui/mod.rs`; feeds the menu and `/help`) and an arm in `chat()`.
 
 Model (`src/model.rs`): the chat's `Backend` is `Model::Deepseek(Conversation)` or `Model::Mock` (`src/mock.rs`),
-built by `model(paths, settings, run, api)`. With the mock there is no login, no token check, no sessions; `Mock::new(&settings.mock)` sets its speed
+built by `model(paths, settings, run, api)`. With the mock there is no login and no token check. It has sessions of its own (`Mock::state` / `resume`: an id
+starting with `sessions::MOCK_PREFIX` and a message count; no memory), saved and listed like the real ones; `Mock::new(&settings.mock)` sets its speed
 (`Mock::default()` has no pauses: unit tests); `mock_help()` (what it is, where the speed is set, `mock::TASKS`)
 is printed when the chat starts on the mock and when `/model` switches to it; its
 `dead` task shows the token window and saves nothing. `ModeSaver` owns the one `Settings` copy that is written

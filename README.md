@@ -222,7 +222,8 @@ The terminal tab is named after the conversation (`dsc · <first task>`), so sev
 apart. `sessions.json` holds only the session id, the place to continue at and the title, and `sessions/<id>.log` the
 screen output. `/new` starts a conversation on a clean screen. The list contains the
 conversations started with `dsc`, the last 50; chats from the DeepSeek website are not in it, since they lack the
-agent rules.
+agent rules. The mock has sessions of its own, so `/sessions` can be tried without the real account: each model
+lists only its own conversations.
 
 ### Flags
 

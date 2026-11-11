@@ -23,17 +23,18 @@ impl Model {
         }
     }
 
-    /// What is needed to continue the conversation later; the mock has nothing to continue.
+    /// What is needed to continue the conversation later.
     pub fn state(&self) -> Option<(String, Option<u64>)> {
         match self {
             Self::Deepseek(conversation) => conversation.state(),
-            Self::Mock(_) => None,
+            Self::Mock(mock) => mock.state(),
         }
     }
 
     pub fn resume(&mut self, session_id: String, parent_message_id: Option<u64>) {
-        if let Self::Deepseek(conversation) = self {
-            conversation.resume(session_id, parent_message_id);
+        match self {
+            Self::Deepseek(conversation) => conversation.resume(session_id, parent_message_id),
+            Self::Mock(mock) => mock.resume(session_id, parent_message_id),
         }
     }
 }
