@@ -24,9 +24,13 @@ Root filesystem: 810G available (1007G total, 16% used).
 
 ## Status
 
-Early, works end to end. Done: login by token, direct HTTP client, proof of work, streamed answers, reasoning
-mode, the agent loop with approvals, interactive chat with a multiline input box, request throttling. Open:
-resume of a chat after a restart, login through the browser. See [TASKS.md](TASKS.md).
+Version 0.2. It works end to end: the agent loop with approvals, a chat on its own screen (input box at the
+bottom, scrollable and foldable output, mouse selection), sessions you can return to, a token window, a built-in
+mock model to try everything without the account, deep thinking, DeepSeek's own web search, and very careful
+request throttling. Not built yet: login through the browser, a static and an ARM binary. See
+[TASKS.md](TASKS.md).
+
+DeepSeek blocks the free account quickly when requests come too fast; that is why the defaults are slow.
 
 ## Install
 
@@ -127,7 +131,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.1.0 · DeepSeek web · default
+  ✻ dsc 0.2.0 · DeepSeek web · default
 
 > how much disk space is free on / ?
 
