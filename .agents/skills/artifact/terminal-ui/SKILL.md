@@ -130,6 +130,10 @@ after) and `drop` → `watch_stop`: thread joined, raw mode off.
 | Shift+Tab | switches the mode flag; the progress line shows it |
 | other keys | swallowed (no type-ahead) |
 
+The terminal cursor is hidden while the watcher runs (`ESC[?25l` in `watch_start`, `ESC[?25h` in `watch_stop`):
+the progress marks show where the work is, a blinking cursor next to them only distracts. It is back for the
+input box, an approval question, a window and at exit.
+
 ## Mode and hint lines
 
 `Terminal::allow_all` (`Arc<AtomicBool>`, false = ask) is shared with the box, the progress thread, the key

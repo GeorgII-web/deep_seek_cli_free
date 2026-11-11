@@ -399,6 +399,9 @@ impl Terminal {
             thread: Some(thread),
             _raw: raw,
         });
+        // While a task runs the progress marks show where the work is; the
+        // terminal cursor would only blink next to them.
+        screen_write("\x1b[?25l");
     }
 
     /// Stops reading keys and leaves raw mode; needed before the box or a question reads keys.
@@ -408,6 +411,8 @@ impl Terminal {
             if let Some(thread) = watch.thread.take() {
                 let _ = thread.join();
             }
+            // Back for the input box, a question or the shell.
+            screen_write("\x1b[?25h");
         }
     }
 
