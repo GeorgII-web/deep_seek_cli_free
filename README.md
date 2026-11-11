@@ -145,7 +145,7 @@ There is 809G free on / (out of 1007G, 16% used).
 The step in progress is marked right where it happens: a spinner and the seconds under a running command
 (`⎿ ⠧ running… 2s`), `⠧ Waiting for DeepSeek… 3s` where the answer will appear, and a spinner after the last
 word while the answer is written. A command's output appears line by line while it runs. When it has finished, a long output folds to one line
-(`⎿ exit code 0 · 23 lines ▸ show`); click that line, or press Ctrl-O for the last one, to open and close it. Up
+(`⎿ ✓ exit code 0 · 23 lines ▸ show`; a failed one is red with `✗`); click that line, or press Ctrl-O for the last one, to open and close it. Up
 to five lines stay open, and so does an output that is itself the answer to your task.
 
 While `dsc` works, the line under the box shows what it waits for and for how long

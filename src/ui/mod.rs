@@ -38,6 +38,17 @@ use tokio::sync::mpsc::UnboundedSender;
 /// An action's output of up to this many lines stays open when the action ends; a longer one folds.
 const FOLD_OPEN_LINES: usize = 5;
 
+/// Whether the first line of an action's result says it went wrong: an error
+/// of the tool, a command that did not exit with 0, a timeout, a kill.
+fn outcome_failed(outcome: &str) -> bool {
+    if let Some(code) = outcome.strip_prefix("exit code ") {
+        return code.split_whitespace().next() != Some("0");
+    }
+    outcome.starts_with("Error")
+        || outcome.starts_with("timed out")
+        || outcome.starts_with("killed")
+}
+
 /// What a command printed, made safe for the screen: escape sequences and
 /// control characters are dropped, a carriage return ends the line.
 fn clean_output(piece: &str) -> String {
@@ -1079,7 +1090,18 @@ impl Ui for Terminal {
             1 => format!("{outcome} · 1 line"),
             n => format!("{outcome} · {n} lines"),
         };
-        let base = format!("{}  ⎿ {summary}{}", s.gray(), s.reset());
+        // A failed action stands out: red with a cross; a good one gets a green check.
+        let base = match outcome_failed(&summary) {
+            true => format!("{}  ⎿ ✗ {summary}{}", s.err(), s.reset()),
+            false => format!(
+                "{}  ⎿ {}✓{}{} {summary}{}",
+                s.gray(),
+                s.ok(),
+                s.reset(),
+                s.gray(),
+                s.reset()
+            ),
+        };
         match &self.view {
             Some(view) => {
                 // The block ends: a long output folds to its header; a click or Ctrl-O opens it.
@@ -1130,7 +1152,28 @@ impl Ui for Terminal {
 
 #[cfg(test)]
 mod tests {
-    use super::clean_output;
+    use super::{clean_output, outcome_failed};
+
+    #[test]
+    fn failed_outcomes_are_recognized() {
+        for failed in [
+            "Error: read x: No such file or directory (os error 2)",
+            "exit code 1 · 3 lines",
+            "exit code 127",
+            "timed out, killed",
+            "killed by a signal",
+        ] {
+            assert!(outcome_failed(failed), "{failed}");
+        }
+        for good in [
+            "exit code 0",
+            "exit code 0 · 12 lines",
+            "Written: a.txt (3 bytes)",
+            "src/main.rs · 40 lines",
+        ] {
+            assert!(!outcome_failed(good), "{good}");
+        }
+    }
 
     #[test]
     fn command_output_is_cleaned() {
