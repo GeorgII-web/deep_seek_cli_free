@@ -92,6 +92,14 @@ impl Style {
     pub fn failed_bg(&self) -> &'static str {
         self.code("\x1b[48;5;52m")
     }
+    /// Background of the rows of the command menu
+    pub fn menu_bg(&self) -> &'static str {
+        self.code("\x1b[48;5;236m")
+    }
+    /// ... and of the row that is selected
+    pub fn menu_selected_bg(&self) -> &'static str {
+        self.code("\x1b[48;5;24m")
+    }
     /// Background of the user's prompt in the output
     pub fn prompt_bg(&self) -> &'static str {
         self.code("\x1b[48;5;237m")

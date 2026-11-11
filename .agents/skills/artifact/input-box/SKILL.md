@@ -34,7 +34,8 @@ at the box width (wide characters count two columns); a box taller than the scre
 
 Command menu (chat prompt only, `remember = true`): while the input is one word starting with `/`,
 `command_matches(COMMANDS, text)` gives the commands that start with it and `menu_lines` draws them between the box
-and the hint line (the dock grows by that many rows). A command typed out in full offers nothing, so Enter sends it.
+and the hint line (the dock grows by that many rows). Every row has a background over the width of the box
+(`Style::menu_bg`, the selected one `menu_selected_bg`), so the list is visible even as a single row. A command typed out in full offers nothing, so Enter sends it.
 
 | Key with the menu open | Effect |
 |---|---|

@@ -350,22 +350,31 @@ impl Editor {
                     .chars()
                     .take(max.saturating_sub(name_columns + 4))
                     .collect();
+                // Every row has a background over the width of the box, so the list
+                // stands out from the output even when it is a single row.
+                let fill = " ".repeat(max.saturating_sub(4 + name_columns + what.chars().count()));
                 match i == selected {
-                    true => format!(
-                        "  {}{}❯ {name}{}{pad}{}{what}{}",
-                        s.bold(),
-                        s.accent(),
-                        s.reset(),
-                        s.key(),
-                        s.reset()
-                    ),
-                    false => format!(
-                        "    {}{name}{}{pad}{}{what}{}",
-                        s.key(),
-                        s.reset(),
-                        s.faint(),
-                        s.reset()
-                    ),
+                    true => {
+                        let bg = s.menu_selected_bg();
+                        format!(
+                            "{bg}  {}{}❯ {name}{}{bg}{pad}{}{what}{fill}{}",
+                            s.bold(),
+                            s.accent(),
+                            s.reset(),
+                            s.key(),
+                            s.reset()
+                        )
+                    }
+                    false => {
+                        let bg = s.menu_bg();
+                        format!(
+                            "{bg}    {}{name}{}{bg}{pad}{}{what}{fill}{}",
+                            s.key(),
+                            s.reset(),
+                            s.faint(),
+                            s.reset()
+                        )
+                    }
                 }
             })
             .collect()
