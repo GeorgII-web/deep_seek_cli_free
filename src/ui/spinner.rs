@@ -41,6 +41,8 @@ fn busy_word(seed: usize, secs: u64) -> &'static str {
     WORDS[(seed + (secs / WORD_SECS) as usize) % WORDS.len()]
 }
 
+/// The key that switches the mode, shown next to it (the same text as under the idle box).
+const MODE_KEY: &str = "Shift + Tab";
 /// How long a notice stays.
 const NOTICE: Duration = Duration::from_secs(2);
 
@@ -183,44 +185,72 @@ impl Spinner {
                 state.drawn = true;
                 let secs = state.since.elapsed().as_secs();
                 let dot = format!("{} · {}", style.faint(), style.reset());
-                let mut suffix = match (&state.notice, hint) {
-                    (Some((text, at)), _) if at.elapsed() < NOTICE => {
-                        format!("{dot}{}{text}{}", style.action(), style.reset())
-                    }
-                    (_, Some((key, what))) => format!("{dot}{}", style.hint(key, what)),
-                    _ => String::new(),
+                // What follows the progress text: a notice for a moment, else the key hint.
+                let (after, after_columns) = match (&state.notice, hint) {
+                    (Some((text, at)), _) if at.elapsed() < NOTICE => (
+                        format!("{dot}{}{text}{}", style.action(), style.reset()),
+                        3 + text.chars().count(),
+                    ),
+                    (_, Some((key, what))) => (
+                        format!("{dot}{}", style.hint(key, what)),
+                        3 + key.chars().count() + 1 + what.chars().count(),
+                    ),
+                    _ => (String::new(), 0),
                 };
-                // The same order as under the box: model, then mode.
+                // Model, then mode: the same as under the idle box, with their columns.
+                let mut labels = String::new();
+                let mut label_columns = 0;
                 if let Some(model) = &model {
-                    suffix.push_str(&format!(
-                        "{dot}{}",
-                        style.model_label(model.load(Ordering::Relaxed))
-                    ));
+                    let mock = model.load(Ordering::Relaxed);
+                    labels.push_str(&style.model_label(mock));
+                    label_columns += if mock { 6 } else { 10 };
                 }
                 if let Some(mode) = &mode {
-                    suffix.push_str(&format!(
-                        "{dot}{}",
-                        style.mode_label(mode.load(Ordering::Relaxed))
-                    ));
+                    let allow_all = mode.load(Ordering::Relaxed);
+                    if !labels.is_empty() {
+                        labels.push_str(&dot);
+                        label_columns += 3;
+                    }
+                    labels.push_str(&style.mode_label(allow_all));
+                    label_columns += if allow_all { 12 } else { 5 };
+                    // The key that switches the mode works while a task runs too.
+                    if docked {
+                        labels.push_str(&format!("{dot}{}", style.hint(MODE_KEY, "")));
+                        label_columns += 3 + MODE_KEY.chars().count();
+                    }
                 }
-                // Docked, the step and its seconds are shown in the output itself (the
-                // status line, the header of a running action), so the bottom line only
-                // says that work goes on: the icon and a word that changes now and then.
-                // Inline it is the only progress line and keeps the real label and clock.
-                let text = match docked {
-                    true => format!("{}…", busy_word(state.seed, secs)),
-                    false => format!("{label}… {secs}s"),
-                };
-                let line = format!(
-                    "{}{} {text}{}{suffix}",
-                    style.accent(),
-                    FRAMES[state.frame],
-                    style.reset()
-                );
+                let frame_text = FRAMES[state.frame];
                 if docked {
+                    // The row under the box keeps its shape while work goes on: model and
+                    // mode stay at the left, where they are when the box is idle; the icon
+                    // with a word that changes now and then, and the key to interrupt, are
+                    // at the right edge. The step and its seconds are in the output itself.
+                    let word = busy_word(state.seed, secs);
+                    let progress_columns = 1 + 1 + word.chars().count() + 1 + after_columns;
+                    let columns =
+                        crossterm::terminal::size().map_or(80, |(columns, _)| columns as usize);
+                    let room = columns.saturating_sub(3);
+                    let gap =
+                        " ".repeat(room.saturating_sub(label_columns + progress_columns).max(2));
+                    let line = format!(
+                        "{labels}{gap}{}{frame_text} {word}…{}{after}",
+                        style.accent(),
+                        style.reset()
+                    );
                     // Save cursor, write the last row, restore: the output is not touched.
                     screen_write(&format!("\x1b7\x1b[{};1H\x1b[2K  {line}\x1b8", last_row()));
                 } else {
+                    // Inline it is the only progress line: the real step and its clock.
+                    let labels = if labels.is_empty() {
+                        String::new()
+                    } else {
+                        format!("{dot}{labels}")
+                    };
+                    let line = format!(
+                        "{}{frame_text} {label}… {secs}s{}{after}{labels}",
+                        style.accent(),
+                        style.reset()
+                    );
                     let _screen = screen_lock();
                     let mut err = std::io::stderr().lock();
                     let _ = write!(err, "\r\x1b[2K{line}");
