@@ -77,7 +77,8 @@ The first defaults (3 s gap, 120 per hour) got the account blocked within hours 
 
 ## Another server (`DSC_API_BASE`)
 
-`client::base()` = the environment variable `DSC_API_BASE`, else `https://chat.deepseek.com`; every call, `Origin`
+`client::base()` = the environment variable `DSC_API_BASE`, else `https://chat.deepseek.com`, and an error where
+the real API must not be used: in the unit tests, and with `DSC_HOME` set unless `DSC_LIVE=1` (`choose_base`); every call, `Origin`
 and `Referer` use it. `scripts/mock-deepseek.py` is the local server for tests. A challenge with algorithm
 `NO_POW` (`none`, sent only by the mock) is not solved: `pow_header` answers 0 and no wasm is downloaded.
 

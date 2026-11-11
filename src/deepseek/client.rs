@@ -13,13 +13,46 @@ pub const BASE_ENV: &str = "DSC_API_BASE";
 /// A challenge with this algorithm needs no proof of work; only the mock sends it.
 pub const NO_POW: &str = "none";
 
-/// The server all calls go to: `DSC_API_BASE`, else DeepSeek.
-pub fn base() -> String {
-    std::env::var(BASE_ENV)
-        .ok()
-        .filter(|url| !url.is_empty())
-        .map_or_else(|| BASE.into(), |url| url.trim_end_matches('/').to_string())
+/// Set to `1` to allow the real API in a run that looks like a test (see `base`).
+pub const LIVE_ENV: &str = "DSC_LIVE";
+
+/// The server all calls go to: `DSC_API_BASE` when set (the mock), else DeepSeek.
+///
+/// The real API is refused wherever a run is a test, so that no test can reach
+/// the user's account by mistake:
+/// - in the unit tests, always;
+/// - with a custom home (`DSC_HOME`, which only tests set), unless `DSC_LIVE=1` says it is meant.
+pub fn base() -> Result<String> {
+    choose_base(
+        std::env::var(BASE_ENV).ok().as_deref(),
+        std::env::var_os("DSC_HOME").is_some(),
+        std::env::var(LIVE_ENV).is_ok_and(|live| live == "1"),
+        cfg!(test),
+    )
 }
+
+/// The rule of `base`, without the environment.
+fn choose_base(
+    mock: Option<&str>,
+    custom_home: bool,
+    live: bool,
+    unit_test: bool,
+) -> Result<String> {
+    if let Some(url) = mock.filter(|url| !url.is_empty()) {
+        return Ok(url.trim_end_matches('/').to_string());
+    }
+    if unit_test {
+        return Err(anyhow!("the unit tests never use the real DeepSeek API"));
+    }
+    if custom_home && !live {
+        return Err(anyhow!(
+            "DSC_HOME is set, which marks a test run: the real DeepSeek API is off. \
+             Set {BASE_ENV} to a mock server, or {LIVE_ENV}=1 to use the real API on purpose"
+        ));
+    }
+    Ok(BASE.into())
+}
+
 pub const COMPLETION_PATH: &str = "/api/v0/chat/completion";
 /// Used when the login source did not give a wasm URL.
 pub const DEFAULT_WASM_URL: &str =
@@ -93,7 +126,7 @@ impl Client {
         set("x-app-version", CLIENT_VERSION, false)?;
         set("x-client-locale", &settings.locale, false)?;
         set("x-client-timezone-offset", "0", false)?;
-        let base = base();
+        let base = base()?;
         set("origin", &base, false)?;
         set("referer", &format!("{base}/"), false)?;
 
@@ -286,5 +319,25 @@ mod tests {
                 .to_string()
                 .contains("too fast")
         );
+    }
+
+    #[test]
+    fn the_real_api_is_refused_in_anything_that_looks_like_a_test() {
+        let mock = Some("http://127.0.0.1:8765/");
+        // A mock address always wins.
+        assert_eq!(
+            choose_base(mock, true, false, true).unwrap(),
+            "http://127.0.0.1:8765"
+        );
+        // A normal run of the installed app.
+        assert_eq!(choose_base(None, false, false, false).unwrap(), BASE);
+        // The unit tests, with or without the switch.
+        assert!(choose_base(None, false, true, true).is_err());
+        // A custom home: only on purpose.
+        assert!(choose_base(None, true, false, false).is_err());
+        assert_eq!(choose_base(None, true, true, false).unwrap(), BASE);
+        assert!(choose_base(Some(""), true, false, false).is_err());
+        // And the real environment of this test run.
+        assert!(base().is_err() || std::env::var(BASE_ENV).is_ok());
     }
 }

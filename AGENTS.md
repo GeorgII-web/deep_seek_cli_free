@@ -59,6 +59,8 @@ The repo is public: no personal paths, names or data in any tracked file.
   `Backend` trait.
 - No action runs without passing `agent::policy`; the default is ask.
 - What an action prints goes to DeepSeek: the default allow list has no program that prints file content.
+- The code enforces the next rule: `client::base()` refuses the real API in unit tests and in any run with
+  `DSC_HOME` set, unless `DSC_LIVE=1`. Never set `DSC_LIVE` without the user's word.
 - **No local test or try-out calls the real DeepSeek API.** Use the unit tests, the built-in mock or
   `scripts/mock-deepseek.py` (`scripts/pty-drive.py` does). A live call needs the user's word for that one run:
   test runs got the user's account blocked twice on 2026-11-10.

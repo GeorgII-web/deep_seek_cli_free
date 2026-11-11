@@ -31,6 +31,19 @@ DSC_TEST_WASM=$PWD/var/tmp/sha3.wasm cargo test -- --ignored --nocapture
 
 **No local test or try-out calls the real API.** The account was blocked twice on 2026-11-10 by test runs.
 
+Guards in the code (`deepseek::client::base`), so a mistake cannot reach the account:
+
+- the unit tests never get the real address (`cfg!(test)`);
+- a run with `DSC_HOME` set (only tests set it) is refused the real API unless `DSC_LIVE=1`; `DSC_API_BASE`
+  (the mock) always wins.
+
+Proof that nothing leaves the machine, in a network namespace that has only loopback:
+
+```bash
+unshare -rn cargo test
+unshare -rn sh -c 'ip link set lo up; scripts/pty-drive.py "[(\"\", 1), (\"long\\r\", 2)]" 30 100'
+```
+
 | Stand-in | What it replaces | Use |
 |---|---|---|
 | `Script` + `FakeUi` (`src/agent/run.rs` tests) | model and terminal | `cargo test`: the loop |

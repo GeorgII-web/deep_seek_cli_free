@@ -642,7 +642,7 @@ async fn doctor(paths: &Paths, settings: &Settings) -> Result<()> {
     if challenge.algorithm == deepseek::client::NO_POW {
         println!(
             "pow       skipped: this is the mock server ({})",
-            deepseek::client::base()
+            deepseek::client::base().unwrap_or_default()
         );
         return Ok(());
     }

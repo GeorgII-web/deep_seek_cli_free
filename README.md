@@ -358,7 +358,8 @@ cargo test && cargo fmt --check && cargo clippy --all-targets -- -D warnings
 DSC_HOME=var/home cargo run -- doctor      # throwaway home
 ```
 
-No test and no local try-out may call DeepSeek: the account gets blocked quickly. There are three stand-ins:
+No test and no local try-out may call DeepSeek: the account gets blocked quickly. The code enforces it: the
+unit tests cannot get the real address, and a run with `DSC_HOME` set is refused the real API unless `DSC_LIVE=1`. There are three stand-ins:
 the unit tests script the model (`cargo test`); the mock inside the app (`/model`, `deepseek.api = "mock"`)
 answers without any network; `scripts/mock-deepseek.py` is a local HTTP server in the shape of the DeepSeek
 web API (`DSC_API_BASE=http://127.0.0.1:8765 dsc`), for the client code. `scripts/pty-drive.py` drives the chat
