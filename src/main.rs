@@ -171,9 +171,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
     terminal.set_mouse(settings.ui.mouse_scroll);
     terminal.open_chat(&api_label(api, settings, run), &cwd());
     if api == Api::Mock {
-        terminal.info(
-            "The mock model answers: fake replies, no network. `/model` switches to DeepSeek.",
-        );
+        terminal.info(&mock_help());
     }
     if let Some(note) = token_note {
         terminal.error(&note);
@@ -285,10 +283,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 match api {
                     Api::Deepseek => terminal
                         .info("Model `DeepSeek`: the real account. A new conversation starts."),
-                    Api::Mock => terminal.info(&format!(
-                        "Model `Mock`: fake answers, no network. Tasks it understands:\n{}",
-                        mock::TASKS
-                    )),
+                    Api::Mock => terminal.info(&mock_help()),
                 }
                 if let Some(note) = note {
                     terminal.error(&note);
@@ -474,11 +469,21 @@ fn login(paths: &Paths, import: Option<PathBuf>, token: bool) -> Result<()> {
     Ok(())
 }
 
+/// What the mock is and the tasks it understands: shown when the chat starts on
+/// the mock and when `/model` switches to it.
+fn mock_help() -> String {
+    format!(
+        "Model `Mock`: fake answers inside the app, no network, no account. `/model` switches to DeepSeek.\n\
+         Its speed is set in `config.toml` under `[mock]` (`wait_ms`, `word_ms`). Tasks it understands:\n{}",
+        mock::TASKS
+    )
+}
+
 /// The model for a new conversation.
 fn model(paths: &Paths, settings: &Settings, run: &cli::RunArgs, api: Api) -> Result<Model> {
     Ok(match api {
         Api::Deepseek => Model::Deepseek(Box::new(conversation(paths, settings, run)?)),
-        Api::Mock => Model::Mock(mock::Mock::default()),
+        Api::Mock => Model::Mock(mock::Mock::new(&settings.mock)),
     })
 }
 

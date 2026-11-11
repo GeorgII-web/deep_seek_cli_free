@@ -12,7 +12,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 |---|---|
 | `src/main.rs` | entry (tokio): parse CLI, `Paths`, `Settings`, dispatch; a task → `agent::run::run` with a `Conversation` and `ui::Terminal`; `ModeSaver` (writes `policy.mode` when the user switched the mode); `check_token` (the saved token is tested when the chat starts, at most every 15 minutes), `relogin` (token window → `auth.json` → new `Client`; when the token is missing or dead at the start, dies during a task, or on `/login`); no task or `chat` → `chat()` (tasks in one conversation, `/new`, `/sessions`, `/model`, `/mode`, `/login`, `/help`, `/exit`; ends on `Interrupt::Quit`); `login()`, logout, `doctor()` (paths, token, wasm, proof of work; sends no prompt) |
 | `src/backend.rs` | `Backend` trait (`ask(prompt, sink) -> answer text`, one value = one conversation) and `Event` (`Thinking`, `Text`, `Status`); the agent knows only this |
-| `src/mock.rs` | `Mock`: the fake model inside the app (scripted answers by task, no network); `TASKS` lists what it understands |
+| `src/mock.rs` | `Mock`: the fake model inside the app (scripted answers by task, no network, paced by `[mock]` so the UI can be watched); `TASKS` lists what it understands |
 | `src/model.rs` | `Model`: `Deepseek(Conversation)` or `Mock`, the `Backend` the chat uses; `/model` switches it |
 | `src/sessions.rs` | `Session`, `Store` (`<home>/sessions.json`: conversations that can be continued), `title`, `age` |
 | `src/cli.rs` | clap: `Cli` = optional `Command` (`chat`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search`, `--expert`, `--session`) |

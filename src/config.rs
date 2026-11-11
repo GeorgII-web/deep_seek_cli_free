@@ -90,6 +90,7 @@ pub struct Settings {
     pub throttle: Throttle,
     pub agent: Agent,
     pub ui: Ui,
+    pub mock: MockSpeed,
     pub policy: Policy,
 }
 
@@ -181,6 +182,25 @@ pub struct Agent {
     /// Cap of stdout and of stderr sent back to the model (head + tail kept)
     pub max_output_bytes: usize,
     pub command_timeout_secs: u64,
+}
+
+/// How fast the built-in mock model answers: slow enough to watch the UI work.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[serde(default, deny_unknown_fields)]
+pub struct MockSpeed {
+    /// Pause before the answer starts (the "waiting" phase)
+    pub wait_ms: u64,
+    /// Pause between two words of an answer; the `slow` task takes four times as long
+    pub word_ms: u64,
+}
+
+impl Default for MockSpeed {
+    fn default() -> Self {
+        Self {
+            wait_ms: 2000,
+            word_ms: 150,
+        }
+    }
 }
 
 /// Look and feel of the chat.

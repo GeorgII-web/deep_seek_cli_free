@@ -195,7 +195,9 @@ Windows Terminal and most others). Colors switch off with
 
 The choice is saved (`deepseek.api` in `config.toml`) and used on the next start. The model in use is always
 shown at the bottom, next to the mode: `◆ DeepSeek` or `◆ Mock`. Use the mock to try the app, its
-keys and approvals without touching your account. It understands a few tasks: `!<command>` asks to run the
+keys and approvals without touching your account. It answers slowly on purpose, so you can watch the interface
+work: two seconds of "waiting", then word by word (`[mock]` in the config sets the speed). When the chat starts
+on the mock, it lists the tasks it understands: `!<command>` asks to run the
 command, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
 scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back.
 
@@ -309,6 +311,10 @@ command_timeout_secs = 120
 
 [ui]
 mouse_scroll = true         # the mouse works inside dsc: wheel scrolls, click folds, drag selects, right click copies or pastes
+
+[mock]                      # speed of the built-in mock model
+wait_ms = 2000              # pause before an answer starts
+word_ms = 150               # pause between two words; the `slow` task takes four times as long
 
 [policy]
 mode = "ask"                # or "allow_all"; the last mode you chose is saved here and used on the next start

@@ -42,7 +42,9 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 A new command: a row in `COMMANDS` (`src/ui/mod.rs`; feeds the menu and `/help`) and an arm in `chat()`.
 
 Model (`src/model.rs`): the chat's `Backend` is `Model::Deepseek(Conversation)` or `Model::Mock` (`src/mock.rs`),
-built by `model(paths, settings, run, api)`. With the mock there is no login, no token check, no sessions; its
+built by `model(paths, settings, run, api)`. With the mock there is no login, no token check, no sessions; `Mock::new(&settings.mock)` sets its speed
+(`Mock::default()` has no pauses: unit tests); `mock_help()` (what it is, where the speed is set, `mock::TASKS`)
+is printed when the chat starts on the mock and when `/model` switches to it; its
 `dead` task shows the token window and saves nothing. `ModeSaver` owns the one `Settings` copy that is written
 back, for the mode and for the model choice.
 
@@ -85,6 +87,7 @@ when the user switched it; a mode that only comes from `--yes` is never written.
 | `[throttle]` | `Throttle` | see `../deepseek-client/SKILL.md` |
 | `[agent]` | `Agent` | `max_steps`, `max_output_bytes`, `command_timeout_secs` |
 | `[ui]` | `Ui` | `mouse_scroll` (the app handles the mouse: wheel, click to fold, drag to select, right click to copy or paste; `Terminal::set_mouse`) |
+| `[mock]` | `MockSpeed` | `wait_ms` (pause before an answer), `word_ms` (pause between words): the built-in mock is slow on purpose, to watch the UI |
 | `[policy]` | `Policy` | `mode`, `allow`, `deny`, see `../approval-policy/SKILL.md` |
 
 A new key: the struct field, its default, the README config block, the skill of its section.

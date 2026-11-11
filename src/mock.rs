@@ -4,13 +4,11 @@
 
 use crate::agent::protocol::FENCE;
 use crate::backend::{Backend, Event};
+use crate::config::MockSpeed;
 use crate::deepseek::client::ApiError;
 use anyhow::Result;
 use std::time::Duration;
 
-/// Pause between two pieces of an answer; none in the unit tests.
-const DELAY: Duration = Duration::from_millis(if cfg!(test) { 0 } else { 15 });
-const SLOW: Duration = Duration::from_millis(if cfg!(test) { 0 } else { 300 });
 /// How a prompt starts when it is the result of an action.
 const RESULT_STARTS: [&str; 7] = [
     "Result:",
@@ -28,17 +26,22 @@ pub const TASKS: &str = "\
 `run <command>`   asks to run it, then answers with a sentence
 `read <path>`     asks to read the file; `write <path>` asks to write `mock` to it
 `think <text>`    reasoning first, then an answer
-`slow`            a long answer, one word every 0.3 s (try Esc, scrolling)
+`slow`            a long answer at a quarter of the speed (try Esc, scrolling)
 `long`            80 lines; `code` = bold, inline code, a code block, a link
 `broken`          an action block that is not JSON; `two` = two action blocks
 `early`           the done block at once (the app asks again), then a sentence
 `dead`            the \"token dead\" error; `429` = the \"too many requests\" error
-anything else    `Mock answer to: <task>`";
+anything else     `Mock answer to: <task>`";
 
+/// `Mock::default()` answers without any pause (the unit tests); the app uses `Mock::new`.
 #[derive(Default)]
 pub struct Mock {
     /// What to answer to the result of the action asked for last
     after: Option<String>,
+    /// Pause before an answer starts
+    wait: Duration,
+    /// Pause between two pieces of an answer
+    delay: Duration,
 }
 
 fn block(json: &str) -> String {
@@ -57,11 +60,21 @@ struct Plan {
 }
 
 impl Mock {
+    /// A mock that answers at the speed of the settings (`[mock]`).
+    pub fn new(speed: &MockSpeed) -> Self {
+        Self {
+            after: None,
+            wait: Duration::from_millis(speed.wait_ms),
+            delay: Duration::from_millis(speed.word_ms),
+        }
+    }
+
     fn plan(&mut self, prompt: &str) -> Result<Plan> {
+        let delay = self.delay;
         let say = |answer: String| Plan {
             thinking: String::new(),
             answer,
-            delay: DELAY,
+            delay,
         };
         if RESULT_STARTS.iter().any(|start| prompt.starts_with(start)) {
             return Ok(say(self
@@ -109,7 +122,7 @@ impl Mock {
             "slow" => Plan {
                 thinking: String::new(),
                 answer: (1..=40).map(|n| format!("word{n}")).collect::<Vec<_>>().join(" "),
-                delay: SLOW,
+                delay: delay * 4,
             },
             "long" => say((1..=80).map(|n| format!("line {n} of the long mock answer")).collect::<Vec<_>>().join("\n")),
             "code" => say(
@@ -125,7 +138,7 @@ impl Mock {
             task if task.starts_with("think") => Plan {
                 thinking: "The user wants a thought. Two plus two is four.".into(),
                 answer: "Mock thought: 4.".into(),
-                delay: DELAY,
+                delay,
             },
             task => say(format!("Mock answer to: {task}")),
         })
@@ -140,7 +153,7 @@ fn pieces(text: &str) -> Vec<&str> {
 impl Backend for Mock {
     async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
         sink(&Event::Status("Waiting for the mock".into()));
-        tokio::time::sleep(DELAY * 10).await;
+        tokio::time::sleep(self.wait).await;
         let plan = self.plan(prompt)?;
         for piece in pieces(&plan.thinking) {
             sink(&Event::Thinking(piece.to_string()));
