@@ -53,6 +53,12 @@ impl Conversation {
         self.parent_message_id = parent_message_id;
     }
 
+    /// Deep thinking and web search for the requests from now on.
+    pub fn set_thinking(&mut self, thinking: bool, search: bool) {
+        self.opts.thinking = thinking;
+        self.opts.search = search;
+    }
+
     /// Continues the same conversation with another login (a new token of the same account).
     pub fn set_client(&mut self, client: Client) {
         self.client = client;

@@ -44,6 +44,8 @@ pub struct Mock {
     /// messages it has: enough to list it under `/sessions` and come back to it
     session: String,
     messages: u64,
+    /// Deep thinking is on: every answer comes with some reasoning first
+    thinking: bool,
     /// Pause before an answer starts
     wait: Duration,
     /// Pause between two pieces of an answer
@@ -82,6 +84,10 @@ impl Mock {
             delay: Duration::from_millis(speed.word_ms),
             ..Self::default()
         }
+    }
+
+    pub fn set_thinking(&mut self, on: bool) {
+        self.thinking = on;
     }
 
     /// What `/sessions` needs to come back: the id and the place in the conversation. `None` before the first answer.
@@ -206,7 +212,12 @@ impl Backend for Mock {
     async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
         sink(&Event::Status("Waiting for the mock".into()));
         tokio::time::sleep(self.wait).await;
-        let plan = self.plan(prompt)?;
+        let mut plan = self.plan(prompt)?;
+        if self.thinking && plan.thinking.is_empty() {
+            plan.thinking =
+                "Mock reasoning: the user asks something. I look at it from two sides and decide."
+                    .into();
+        }
         for piece in pieces(&plan.thinking) {
             sink(&Event::Thinking(piece.to_string()));
             tokio::time::sleep(plan.delay).await;
@@ -301,6 +312,31 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn with_thinking_on_every_answer_reasons_first() {
+        let mut mock = Mock::default();
+        let mut thought = String::new();
+        mock.ask("Task: hello", &mut |event| {
+            if let Event::Thinking(text) = event {
+                thought.push_str(text)
+            }
+        })
+        .await
+        .unwrap();
+        assert_eq!(thought, "");
+        mock.set_thinking(true);
+        let answer = mock
+            .ask("Task: hello", &mut |event| {
+                if let Event::Thinking(text) = event {
+                    thought.push_str(text)
+                }
+            })
+            .await
+            .unwrap();
+        assert!(thought.starts_with("Mock reasoning"));
+        assert_eq!(answer, "Mock answer to: hello");
+    }
+
+    #[tokio::test]
     async fn plain_task_long_and_follow_up_prompt() {
         let mut mock = Mock::default();
         assert_eq!(
@@ -310,7 +346,9 @@ mod tests {
             "Mock answer to: hello"
         );
         assert_eq!(
-            ask(&mut mock, &protocol::next_prompt("again")).await.0,
+            ask(&mut mock, &protocol::next_prompt("again", true))
+                .await
+                .0,
             "Mock answer to: again"
         );
         assert_eq!(ask(&mut mock, "Task: long").await.0.lines().count(), 80);

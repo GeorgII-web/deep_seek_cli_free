@@ -143,7 +143,7 @@ There is 809G free on / (out of 1007G, 16% used).
 ╭──────────────────────────────────────────────────────────────╮
 │ > which command did you run for that?                        │
 ╰──────────────────────────────────────────────────────────────╯
-  ◆ DeepSeek · ⏵ ask · Shift + Tab                          Ctrl + C twice quit · ↑↓ history
+  ◆ DeepSeek · ✦ Think · ⏵ ask · Shift + Tab                          Ctrl + C twice quit · ↑↓ history
 ```
 
 The step in progress is marked right where it happens: a spinner and the seconds under a running command
@@ -180,7 +180,7 @@ key.
 | Ctrl-D | quit (empty box) |
 
 Pasting several lines works. `/new` starts a fresh conversation, `/sessions` lists the earlier ones and switches to the one you pick, `/model`
-chooses the real account or the mock, `/permissions` switches the mode, `/login` asks for a new token, `/help` lists the
+chooses the real account or the mock, `/think` switches deep thinking, `/permissions` switches the mode, `/login` asks for a new token, `/help` lists the
 commands and keys, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
 `~/.config/deep_seek_cli_free/history.json`. After a restart the chat begins a new conversation; `/sessions` goes back to an
@@ -209,6 +209,13 @@ command, `browse <url>` answers as if it had read the page on its side, `curl <u
 machine, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
 scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back.
 
+### Deep thinking
+
+`/think` switches deep thinking on and off. The bottom line shows it: `✦ Think` is pink while it is on and gray
+while it is off. With it on, the model reasons before it answers and the reasoning is shown dimmed above the
+answer; answers take longer. DeepSeek's web search is switched off while thinking is on and comes back when you
+turn thinking off. The choice is saved (`deepseek.thinking`) and used on the next start.
+
 ### Sessions
 
 Every conversation you start is remembered after its first task. `/sessions` opens a list (title = the first
@@ -234,7 +241,7 @@ lists only its own conversations.
 | Flag | Meaning |
 |---|---|
 | `-y`, `--yes` | start in the mode `allow all`: actions run without asking (the deny list still applies) |
-| `--think` | reasoning mode; the reasoning is shown dimmed |
+| `--think` | deep thinking for this run; the reasoning is shown dimmed. In the chat, `/think` switches it |
 | `--no-search` | switch DeepSeek's own web search off for this run (pages are then fetched from this machine) |
 | `--expert` | the "expert" model instead of the fast one (not tested yet) |
 | `--session=<code>` | continue an earlier conversation; `dsc` prints the code when it exits |

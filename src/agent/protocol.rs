@@ -105,9 +105,16 @@ Task: {task}"#
 }
 
 /// A further task in a conversation that already got the rules.
-pub fn next_prompt(task: &str) -> String {
+pub fn next_prompt(task: &str, web: bool) -> String {
+    // The user can switch the web search between tasks (deep thinking turns it off).
+    let web = match web {
+        true => "Web search on your side is on for this task.",
+        false => {
+            "Web search on your side is off for this task: fetch web pages from the user's machine when the task needs them."
+        }
+    };
     format!(
-        "New task from the user. The same rules apply: one {FENCE} block per answer. Start with the action this task needs (or a text answer when it needs none); the done block comes only after the result of an action of this task.\n\nTask: {task}"
+        "New task from the user. The same rules apply: one {FENCE} block per answer. Start with the action this task needs (or a text answer when it needs none); the done block comes only after the result of an action of this task. {web}\n\nTask: {task}"
     )
 }
 
@@ -271,6 +278,8 @@ mod tests {
         assert!(prompt.contains(r#"{"tool":"done"}"#));
         assert!(prompt.contains("do not repeat"));
         assert!(prompt.contains("never the first answer to a task"));
-        assert!(next_prompt("t").contains("only after the result of an action of this task"));
+        assert!(next_prompt("t", true).contains("only after the result of an action of this task"));
+        assert!(next_prompt("t", true).contains("search on your side is on"));
+        assert!(next_prompt("t", false).contains("search on your side is off"));
     }
 }

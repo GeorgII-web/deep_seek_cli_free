@@ -83,6 +83,8 @@ pub struct Spinner {
     mode: Option<Arc<AtomicBool>>,
     /// Who answers, shown after the mode (true = the mock)
     model: Option<Arc<AtomicBool>>,
+    /// Deep thinking on or off, shown after the model
+    think: Option<Arc<AtomicBool>>,
     /// Screen layout: the output, whose running block gets the same spinner frame
     view: Option<Arc<Mutex<View>>>,
     style: Style,
@@ -110,6 +112,7 @@ impl Spinner {
             hint: None,
             mode: None,
             model: None,
+            think: None,
             view: None,
             style,
             started: false,
@@ -138,6 +141,11 @@ impl Spinner {
 
     pub fn notifier(&self) -> Notifier {
         Notifier(self.state.clone())
+    }
+
+    /// Call before the first `start`.
+    pub fn set_think(&mut self, think: Arc<AtomicBool>) {
+        self.think = Some(think);
     }
 
     /// Call before the first `start`.
@@ -172,6 +180,7 @@ impl Spinner {
         let (state, style, docked, hint) = (self.state.clone(), self.style, self.docked, self.hint);
         let mode = self.mode.clone();
         let model = self.model.clone();
+        let think = self.think.clone();
         let view = self.view.clone();
         // A plain thread: it must tick also while the async runtime is busy.
         std::thread::spawn(move || {
@@ -204,6 +213,14 @@ impl Spinner {
                     let mock = model.load(Ordering::Relaxed);
                     labels.push_str(&style.model_label(mock));
                     label_columns += if mock { 6 } else { 10 };
+                }
+                if let Some(think) = &think {
+                    if !labels.is_empty() {
+                        labels.push_str(&dot);
+                        label_columns += 3;
+                    }
+                    labels.push_str(&style.think_label(think.load(Ordering::Relaxed)));
+                    label_columns += 7;
                 }
                 if let Some(mode) = &mode {
                     let allow_all = mode.load(Ordering::Relaxed);

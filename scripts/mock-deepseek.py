@@ -9,7 +9,7 @@ It answers the three calls dsc makes, in the real shapes:
   POST /api/v0/chat/create_pow_challenge   a challenge with algorithm "none" (dsc then skips the proof of work)
   POST /api/v0/chat_session/create         a new session id
   POST /api/v0/chat/completion             an answer as the SSE patch stream
-  GET  /_stats                             {"requests": N, "completions": N}
+  GET  /_stats                             {"requests": N, "completions": N, "last": {thinking_enabled, search_enabled}}
 
 A token that starts with "dead" gets the "invalid token" answer on every call.
 
@@ -157,6 +157,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def completion(self, body):
         stats['completions'] += 1
+        # What the last request asked for, so a test can see the switches.
+        stats['last'] = {'thinking_enabled': body.get('thinking_enabled'), 'search_enabled': body.get('search_enabled')}
         session = sessions.setdefault(body.get('chat_session_id') or 'mock-0', {'next': 1})
         prompt = body.get('prompt') or ''
         task = prompt.rsplit('Task: ', 1)[-1].strip()

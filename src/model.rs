@@ -23,6 +23,14 @@ impl Model {
         }
     }
 
+    /// Deep thinking on or off, and whether DeepSeek's web search goes with it.
+    pub fn set_thinking(&mut self, thinking: bool, search: bool) {
+        match self {
+            Self::Deepseek(conversation) => conversation.set_thinking(thinking, search),
+            Self::Mock(mock) => mock.set_thinking(thinking),
+        }
+    }
+
     /// What is needed to continue the conversation later.
     pub fn state(&self) -> Option<(String, Option<u64>)> {
         match self {

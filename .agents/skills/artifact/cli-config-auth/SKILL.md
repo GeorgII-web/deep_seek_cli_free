@@ -17,6 +17,11 @@ Entry `main()` in `src/main.rs`: `Cli::parse` → `Paths::new` → `Settings::lo
 | `dsc logout` | `Auth::remove` |
 | `dsc doctor` | `doctor()`: paths, model, throttle, then token (`create_challenge`), wasm, proof of work; sends no prompt, not throttled |
 
+Deep thinking (`thinking` in `chat()`: `--think`, the config, `/think`) and DeepSeek's web search do not go
+together: every request gets `search_enabled = web_search(..) && !thinking` (`new_model`, `/think`), and the
+prompts get the same value (`first_prompt(.., web)`, `next_prompt(task, web)`, which states it for the task).
+The `search` key itself is not changed, so the search is back when thinking is switched off.
+
 `web_search(settings, run)` = `deepseek.search` (default true) or `--search`, unless `--no-search`: it sets
 `search_enabled` of every request and the web rule of the first prompt. `Settings::upgrade` (`version` key) turns
 `search` on once in a config written before that default.
@@ -36,6 +41,7 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 | `/new` | new `Conversation`, the next task gets the rules again |
 | `/permissions` | `Terminal::toggle_mode` (ask ⇄ allow all) |
 | `/model` | `Terminal::pick` ("DeepSeek", "Mock"); a change: `ensure_login` for the real account, a new `Model`, clean screen, `ModeSaver::save_api` → `deepseek.api` |
+| `/think` | deep thinking on or off: `Model::set_thinking(thinking, web)`, `Terminal::set_think`, `ModeSaver::save_thinking` → `deepseek.thinking` |
 | `/login` | `relogin`: token window, save, `Model::set_client` |
 | `/sessions` | `Terminal::pick` over `Store::rows` of `Store::of_model(mock?)` (each model lists only its own conversations); the chosen one: new `Conversation` + `resume(id, parent)`, `first = false` |
 | `/help` | `Terminal::help` |

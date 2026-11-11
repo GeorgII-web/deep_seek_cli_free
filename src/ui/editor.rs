@@ -262,6 +262,8 @@ pub struct Editor {
     mode: Option<Arc<AtomicBool>>,
     /// Who answers (true = the mock): shown in the hint line next to the mode
     model: Option<Arc<AtomicBool>>,
+    /// Deep thinking on or off: shown after the model
+    think: Option<Arc<AtomicBool>>,
     /// Slash commands offered in a menu while the input is the start of one: name, meaning
     commands: &'static [Command],
     /// Docked: the scrollable output above the dock; the box tells it the size of
@@ -315,6 +317,7 @@ impl Editor {
             dock: None,
             mode: None,
             model: None,
+            think: None,
             commands: &[],
             view: None,
         }
@@ -322,6 +325,10 @@ impl Editor {
 
     pub fn set_view(&mut self, view: Arc<Mutex<View>>) {
         self.view = Some(view);
+    }
+
+    pub fn set_think(&mut self, think: Arc<AtomicBool>) {
+        self.think = Some(think);
     }
 
     pub fn set_model(&mut self, model: Arc<AtomicBool>) {
@@ -396,6 +403,14 @@ impl Editor {
             let mock = model.load(Ordering::Relaxed);
             left.push_str(&s.model_label(mock));
             left_columns += if mock { 6 } else { 10 };
+        }
+        if let Some(think) = &self.think {
+            if !left.is_empty() {
+                left.push_str(&dot);
+                left_columns += 3;
+            }
+            left.push_str(&s.think_label(think.load(Ordering::Relaxed)));
+            left_columns += 7;
         }
         if let Some(mode) = &self.mode {
             let allow_all = mode.load(Ordering::Relaxed);

@@ -126,6 +126,15 @@ impl Style {
             false => format!("{}◆ DeepSeek{}", self.accent(), self.reset()),
         }
     }
+    /// `✦ Think`: pink while deep thinking is on, gray while it is off.
+    pub fn think_label(&self, on: bool) -> String {
+        let color = if on {
+            self.code("\x1b[38;5;212m")
+        } else {
+            self.faint()
+        };
+        format!("{color}✦ Think{}", self.reset())
+    }
     /// A hint: the key light, its meaning darker.
     pub fn hint(&self, key: &str, what: &str) -> String {
         let space = if what.is_empty() { "" } else { " " };

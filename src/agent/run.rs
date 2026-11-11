@@ -497,7 +497,7 @@ mod tests {
         run(
             &mut backend,
             &mut ui,
-            protocol::next_prompt("b"),
+            protocol::next_prompt("b", true),
             &cfg,
             &AtomicBool::new(false),
             &mut always,

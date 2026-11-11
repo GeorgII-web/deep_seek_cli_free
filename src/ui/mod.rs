@@ -112,6 +112,10 @@ const COMMANDS: &[editor::Command] = &[
         "/model",
         "choose the real DeepSeek account or the built-in mock",
     ),
+    (
+        "/think",
+        "deep thinking on or off (web search is off while it is on)",
+    ),
     ("/sessions", "list earlier conversations and switch to one"),
     ("/login", "enter a new DeepSeek token"),
     ("/help", "commands and keys"),
@@ -263,6 +267,8 @@ pub struct Terminal {
     live_lines: usize,
     /// Who answers: true = the built-in mock, false = DeepSeek. Shown under the box and on the progress line.
     mock: Arc<AtomicBool>,
+    /// Deep thinking is on. Shown under the box and on the progress line.
+    think: Arc<AtomicBool>,
     /// The approval mode: true = allow all (run without asking), false = ask.
     /// Shared with the box, the progress line, the key watcher and the agent loop.
     allow_all: Arc<AtomicBool>,
@@ -276,6 +282,7 @@ impl Terminal {
         let interactive = std::io::stdin().is_terminal() && std::io::stderr().is_terminal();
         let allow_all = Arc::new(AtomicBool::new(allow_all));
         let mock = Arc::new(AtomicBool::new(false));
+        let think = Arc::new(AtomicBool::new(false));
         let mut spinner = Spinner::new(std::io::stderr().is_terminal(), style);
         let mut editor = Editor::new(style, history_file);
         if interactive {
@@ -284,6 +291,8 @@ impl Terminal {
             editor.set_mode(allow_all.clone());
             spinner.set_model(mock.clone());
             editor.set_model(mock.clone());
+            spinner.set_think(think.clone());
+            editor.set_think(think.clone());
             editor.set_commands(COMMANDS);
         }
         Self {
@@ -307,8 +316,14 @@ impl Terminal {
             live: String::new(),
             live_lines: 0,
             mock,
+            think,
             allow_all,
         }
+    }
+
+    /// Tells the UI whether deep thinking is on, for the lines at the bottom.
+    pub fn set_think(&mut self, on: bool) {
+        self.think.store(on, Ordering::Relaxed);
     }
 
     /// Tells the UI who answers now, for the lines at the bottom.
