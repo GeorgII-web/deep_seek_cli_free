@@ -57,7 +57,7 @@ escape sequences and carries colors over a break). The view is the last rows of 
 | scrolled up | `push` only records; the view stays on the same rows (`offset` grows), nothing is written |
 | a block (`begin_fold`, `end_fold`) | the lines pushed between them are the body under the header line; `end_fold(folded_text, open_text, folded)` sets the two header texts and hides the body when folded; `rewrap` skips hidden bodies, `wrapped` keeps the line each row comes from |
 | the running step | `Spinner` thread → `View::animate(frame)`: rewrites the header of the block being written and draws only that row (between save and restore cursor); nothing happens without a block being written. The thread releases its own state lock before it takes the view's |
-| select and copy | `mouse_event`: left button down → `select_start`, drag → `select_to` (repaint, the selected part inverted and shown without colors), up → `select_end` gives the text (rows of one wrapped line joined, line ends between lines, trailing blanks dropped), which is sent to the clipboard with OSC 52 and confirmed by `View::flash` on the dock border; press and release on one cell is a click. Shift+drag is the terminal's own selection |
+| select, copy, paste | `mouse_event`: left button down → `select_start`, drag → `select_to` (repaint, the selected part inverted and shown without colors); the text stays selected, nothing is copied. Copy = right button down with a selection, or Ctrl-C (`copy_selection`: `View::copy_selection` takes the text, rows of one wrapped line joined, and ends the selection; OSC 52 puts it on the terminal's clipboard; `View::flash` confirms on the dock border). Paste = right button down without a selection (`mouse_event` returns `View::copied`, the box inserts it) or Ctrl-V in the box (terminals that paste themselves send a paste event with the system clipboard; where the key reaches the app, `View::copied` is inserted). Press and release on one cell is a click. With a selection, Ctrl-C does not count towards quitting. Shift+drag is the terminal's own selection |
 | the step in progress, outside a block | `Spinner` thread → `View::mark(text)`: drawn after the end of the output, not recorded; while the answer streams just the frame, before that `<frame> <label>… Ns`; `Terminal::emit` wipes it (`take_mark` → `ESC[K`) before the next output, `Spinner::stop` → `unmark` |
 | click, Ctrl-O | `mouse_event` → `View::click(row)`: a left click on the header row of a finished block with a body toggles it (`toggle` keeps the rows above in place); Ctrl-O → `toggle_last`; `unfold_last` keeps the view at the bottom |
 | scroll (PgUp, PgDn, wheel 3 rows, Ctrl+Home, Ctrl+End) | `View::scroll` / `top` / `bottom` → `repaint`: every row of the area cleared and drawn from the model, cursor at `out()` |
@@ -191,7 +191,8 @@ at the box width (wide characters count two columns); a box taller than the scre
 | `/` as the first character | command menu, see below |
 | Shift+Tab | switch the mode (ask ⇄ allow all) |
 | Esc | clear the box |
-| Ctrl-C | clear the box and show "Press Ctrl-C again to exit" for `AGAIN` (2 s); a second one in that time quits |
+| Ctrl-C | with text selected in the output: copy it; else clear the box and show "Press Ctrl-C again to exit" for `AGAIN` (2 s); a second one in that time quits |
+| Ctrl-V, right click with nothing selected | paste the copied text into the box |
 | Ctrl-D | quit on an empty box, else delete |
 | paste | bracketed paste keeps line ends; tabs become spaces, control characters are dropped |
 

@@ -215,6 +215,8 @@ pub struct View {
     selection: Option<(Place, Place)>,
     /// A short message on the dock border ("copied"), with the time it was set
     flash: Option<(String, Instant)>,
+    /// The text copied last
+    copied: String,
     columns: usize,
     /// Rows of the output area (the screen above the dock)
     rows: usize,
@@ -236,6 +238,7 @@ impl View {
             marked: false,
             selection: None,
             flash: None,
+            copied: String::new(),
             columns: columns.max(1),
             rows: rows.max(1),
             offset: 0,
@@ -591,9 +594,8 @@ impl View {
         }
     }
 
-    /// The button went up: the selected text, when the mouse moved in between.
-    /// Rows of one wrapped line are joined; the selection stays shown until the next click.
-    pub fn select_end(&mut self) -> Option<String> {
+    /// The selected text, when there is a selection. Rows of one wrapped line are joined.
+    pub fn select_end(&self) -> Option<String> {
         let ((first, from), (last, to)) = self.selected()?;
         let all = self.all_rows();
         let mut text = String::new();
@@ -618,6 +620,32 @@ impl View {
         let trimmed = text.trim_end_matches(' ').len();
         text.truncate(trimmed);
         (!text.is_empty()).then_some(text)
+    }
+
+    /// Ends the selection: it is no longer shown.
+    pub fn select_clear(&mut self) {
+        if std::mem::take(&mut self.selection).is_some_and(|(anchor, head)| anchor != head) {
+            self.repaint();
+        }
+    }
+
+    /// Whether text is selected.
+    #[cfg(test)]
+    pub fn has_selection(&self) -> bool {
+        self.selected().is_some()
+    }
+
+    /// Takes the selected text as the copied text and ends the selection.
+    pub fn copy_selection(&mut self) -> Option<String> {
+        let text = self.select_end()?;
+        self.copied = text.clone();
+        self.select_clear();
+        Some(text)
+    }
+
+    /// What was copied last (for a paste when the terminal does not paste itself).
+    pub fn copied(&self) -> &str {
+        &self.copied
     }
 
     /// Whether the last press and release were on the same cell: a click, not a selection.
@@ -1006,6 +1034,27 @@ mod tests {
         v.restore(serde_json::from_str(broken).unwrap());
         assert_eq!(v.visible(), ["a", "b", ""]);
         assert!(!v.click(1));
+    }
+
+    #[test]
+    fn selecting_copies_nothing_until_asked() {
+        let mut v = view(20, 4);
+        v.push("hello world\n");
+        v.select_start(0, 0);
+        v.select_to(0, 5);
+        assert!(v.has_selection());
+        assert_eq!(v.copied(), "");
+        // Copying takes the text and ends the selection; the copied text stays for a paste.
+        assert_eq!(v.copy_selection().as_deref(), Some("hello"));
+        assert_eq!(v.copied(), "hello");
+        assert!(!v.has_selection());
+        assert_eq!(v.copy_selection(), None);
+        assert_eq!(v.copied(), "hello");
+        // A click (no drag) is not a selection.
+        v.select_start(0, 3);
+        assert!(v.selection_is_click() && !v.has_selection());
+        v.select_clear();
+        assert!(!v.selection_is_click());
     }
 
     #[test]

@@ -679,8 +679,11 @@ impl Editor {
                 }
                 // The wheel scrolls the output; the box is drawn again by the loop.
                 Event::Mouse(mouse) => {
-                    if let Some(view) = &self.view {
-                        super::mouse_event(view, mouse);
+                    if let Some(view) = &self.view
+                        && let Some(paste) = super::mouse_event(view, mouse)
+                    {
+                        // Right click without a selection: what was copied goes into the box.
+                        buffer.insert_str(&paste);
                     }
                     continue;
                 }
@@ -738,6 +741,24 @@ impl Editor {
                         self.remember(&text);
                     }
                     return Ok(Input::Submit(text));
+                }
+                // With text selected in the output, Ctrl-C copies it.
+                KeyCode::Char('c')
+                    if ctrl && self.view.as_deref().is_some_and(super::copy_selection) =>
+                {
+                    continue;
+                }
+                // Ctrl-V: most terminals paste themselves (that arrives as a paste);
+                // where the key reaches the app, the text copied here is inserted.
+                KeyCode::Char('v') if ctrl => {
+                    if let Some(view) = &self.view {
+                        let copied = view
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner())
+                            .copied()
+                            .to_string();
+                        buffer.insert_str(&copied);
+                    }
                 }
                 KeyCode::Char('c') if ctrl && !armed_now => {
                     buffer = Buffer::default();

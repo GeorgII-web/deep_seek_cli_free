@@ -149,30 +149,54 @@ struct Watch {
 const WHEEL_ROWS: isize = 3;
 
 /// Scrolls the output for a wheel event. Shared by the key watcher and the input box.
-/// The mouse on the output: the wheel scrolls it, a click on the header of a
-/// block folds or unfolds it, a drag selects text and copies it on release.
-/// Shared by the key watcher and the input box.
-pub(crate) fn mouse_event(view: &Mutex<View>, mouse: crossterm::event::MouseEvent) {
-    use crossterm::event::MouseButton::Left;
+/// Copies the selected text: to the terminal's clipboard (OSC 52) and into the
+/// view, for a paste inside the app. Returns false when nothing is selected.
+pub(crate) fn copy_selection(view: &Mutex<View>) -> bool {
     let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let Some(text) = view.copy_selection() else {
+        return false;
+    };
+    let encoded = base64::engine::general_purpose::STANDARD.encode(&text);
+    screen_write(&format!("\x1b]52;c;{encoded}\x07"));
+    view.flash(&format!("✓ copied {} characters", text.chars().count()));
+    true
+}
+
+/// The mouse on the output: the wheel scrolls it, a click on the header of a
+/// block folds or unfolds it, a drag selects text (nothing is copied yet). The
+/// right button copies the selection; without a selection it asks for a paste:
+/// the returned text goes into the input box. Shared by the key watcher and the box.
+pub(crate) fn mouse_event(
+    view: &Mutex<View>,
+    mouse: crossterm::event::MouseEvent,
+) -> Option<String> {
+    use crossterm::event::MouseButton::{Left, Right};
     let (row, column) = (mouse.row as usize, mouse.column as usize);
+    if mouse.kind == MouseEventKind::Down(Right) {
+        if copy_selection(view) {
+            return None;
+        }
+        let copied = view
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .copied()
+            .to_string();
+        return (!copied.is_empty()).then_some(copied);
+    }
+    let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     match mouse.kind {
         MouseEventKind::ScrollUp => view.scroll(WHEEL_ROWS),
         MouseEventKind::ScrollDown => view.scroll(-WHEEL_ROWS),
         MouseEventKind::Down(Left) => view.select_start(row, column),
         MouseEventKind::Drag(Left) => view.select_to(row, column),
-        MouseEventKind::Up(Left) => {
-            if view.selection_is_click() {
-                view.click(row);
-            } else if let Some(text) = view.select_end() {
-                // The terminal puts it on the clipboard (OSC 52).
-                let encoded = base64::engine::general_purpose::STANDARD.encode(&text);
-                screen_write(&format!("\x1b]52;c;{encoded}\x07"));
-                view.flash(&format!("✓ copied {} characters", text.chars().count()));
-            }
+        // Press and release on one cell is a click; a drag leaves the text selected.
+        MouseEventKind::Up(Left) if view.selection_is_click() => {
+            view.select_clear();
+            view.click(row);
         }
         _ => {}
     }
+    None
 }
 
 /// Scrolls the output for PgUp, PgDn, Ctrl+Home and Ctrl+End, and folds or
@@ -348,7 +372,8 @@ impl Terminal {
                     Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => key,
                     Ok(TermEvent::Mouse(mouse)) => {
                         if let Some(view) = &view {
-                            mouse_event(view, mouse);
+                            // A paste has no place while a task runs.
+                            let _ = mouse_event(view, mouse);
                         }
                         continue;
                     }
@@ -368,6 +393,10 @@ impl Terminal {
                         mode.fetch_xor(true, Ordering::Relaxed);
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        // With text selected, Ctrl-C copies it and is not a step towards quitting.
+                        if view.as_deref().is_some_and(copy_selection) {
+                            continue;
+                        }
                         if armed.is_some_and(|at| at.elapsed() < AGAIN) {
                             let _ = sender.send(Interrupt::Quit);
                         } else {
@@ -827,7 +856,15 @@ impl Terminal {
                 "Click on ▸ or ▾, Ctrl-O",
                 "unfold or fold the output of an action (Ctrl-O: the last one)",
             ),
-            row("Drag with the mouse", "select text; it is copied when you let go (Shift+drag: the terminal's own selection)"),
+            row(
+                "Drag with the mouse",
+                "select text (Shift+drag: the terminal's own selection)",
+            ),
+            row("Right click, Ctrl-C", "copy the selected text"),
+            row(
+                "Right click, Ctrl-V",
+                "paste into the input box (right click: when nothing is selected)",
+            ),
             row("Ctrl-A, Ctrl-E", "start, end of the line"),
             row(
                 "Ctrl-W, Ctrl-U, Ctrl-K",

@@ -108,8 +108,9 @@ dsc --yes "create a .gitignore for a Rust project"
 
 `dsc` without a task (or `dsc chat`) opens a chat on its own screen: nothing of your terminal's earlier history
 is visible, the input box stays fixed at the bottom, and only the output above it scrolls: mouse wheel, PgUp /
-PgDn, Ctrl+Home, Ctrl+End. Drag over the output to select text: it is highlighted and copied to the clipboard when you release the
-button (Shift+drag uses the terminal's own selection instead). A mark on the box shows when you are scrolled up; new output does not move the
+PgDn, Ctrl+Home, Ctrl+End. Drag over the output to select text: it is highlighted and stays selected. A right click or Ctrl-C copies it;
+with nothing selected, a right click pastes the copied text into the input box, like Ctrl-V (Shift+drag uses
+the terminal's own selection instead). A mark on the box shows when you are scrolled up; new output does not move the
 view until you go back down. When you quit, the conversation is printed into your normal terminal, so it is
 still there afterwards. Every input is a task in the same conversation, so the model remembers what it did
 before:
@@ -161,12 +162,14 @@ shell prompt.
 | Shift+Enter, Ctrl-J, or `\` then Enter | new line (Shift+Enter needs a terminal that reports it; Ctrl-J always works) |
 | PgUp / PgDn, mouse wheel | scroll the output; Ctrl+Home = top, Ctrl+End = bottom |
 | Click on `▸ show` / `▾ hide`, Ctrl-O | unfold or fold the output of a command (Ctrl-O: the last one) |
-| Drag with the mouse | select text in the output; it is copied to the clipboard when you let go |
+| Drag with the mouse | select text in the output (nothing is copied yet) |
+| Right click, or Ctrl-C | copy the selected text to the clipboard |
+| Right click (nothing selected), or Ctrl-V | paste into the input box |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
 | Shift+Tab | switch the mode: `ask` ⇄ `allow all`, also while a task runs |
 | Esc | clear the box; while a task runs: stop the task |
-| Ctrl-C | clears the box and asks to press it again; twice within two seconds quits, also while a task runs |
+| Ctrl-C | with text selected: copies it. Otherwise clears the box and asks to press it again; twice within two seconds quits, also while a task runs |
 | Ctrl-D | quit (empty box) |
 
 Pasting several lines works. `/new` starts a fresh conversation, `/sessions` lists the earlier ones and switches to the one you pick, `/model`
@@ -305,7 +308,7 @@ max_output_bytes = 8000     # cap of stdout and of stderr sent back (head + tail
 command_timeout_secs = 120
 
 [ui]
-mouse_scroll = true         # the mouse works inside dsc: wheel scrolls, click folds, drag selects and copies
+mouse_scroll = true         # the mouse works inside dsc: wheel scrolls, click folds, drag selects, right click copies or pastes
 
 [policy]
 mode = "ask"                # or "allow_all"; the last mode you chose is saved here and used on the next start

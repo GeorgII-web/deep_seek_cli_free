@@ -84,7 +84,7 @@ when the user switched it; a mode that only comes from `--yes` is never written.
 | `[deepseek]` | `Deepseek` | `api` (`deepseek` or `mock`, see `/model`), `model_type`, `thinking`, `search`, `locale`, `timeout_secs` |
 | `[throttle]` | `Throttle` | see `../deepseek-client/SKILL.md` |
 | `[agent]` | `Agent` | `max_steps`, `max_output_bytes`, `command_timeout_secs` |
-| `[ui]` | `Ui` | `mouse_scroll` (the app handles the mouse: wheel, click to fold, drag to select; `Terminal::set_mouse`) |
+| `[ui]` | `Ui` | `mouse_scroll` (the app handles the mouse: wheel, click to fold, drag to select, right click to copy or paste; `Terminal::set_mouse`) |
 | `[policy]` | `Policy` | `mode`, `allow`, `deny`, see `../approval-policy/SKILL.md` |
 
 A new key: the struct field, its default, the README config block, the skill of its section.
