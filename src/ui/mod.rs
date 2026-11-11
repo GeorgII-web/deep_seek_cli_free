@@ -88,14 +88,13 @@ fn clean_output(piece: &str) -> String {
     }
     out
 }
-/// Hints under the input box: key, what it does. As many as fit are shown.
+/// Hints under the input box: key, what it does. Only the two worth seeing all
+/// the time; `/help` has the rest.
 const INPUT_HINTS: &[(&str, &str)] = &[
-    ("Shift+Tab", "mode"),
-    ("Enter", "send"),
-    ("Shift+Enter", "new line"),
-    ("Ctrl-C twice", "quit"),
+    // Next to the mode it switches; everything else about keys is in `/help`.
+    ("Shift + Tab", ""),
+    ("Ctrl + C twice", "quit"),
     ("↑↓", "history"),
-    ("/help", ""),
 ];
 const EDIT_HINTS: &[(&str, &str)] = &[("Enter", "run"), ("Ctrl-D", "cancel")];
 /// The slash commands of the chat: offered in the menu when the input starts with `/`.
@@ -350,7 +349,7 @@ impl Terminal {
         }
         let (sender, interrupts) = Interrupts::channel();
         self.interrupt_tx = Some(sender);
-        self.spinner.set_hint("Esc", "to stop");
+        self.spinner.set_hint("Esc", "interrupt");
         interrupts
     }
 

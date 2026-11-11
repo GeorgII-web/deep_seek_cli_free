@@ -42,7 +42,7 @@ pub struct Spinner {
     enabled: bool,
     /// Draw on the last screen row (below the docked box) instead of the current line
     docked: bool,
-    /// Key hint after the clock: key and what it does, e.g. ("Esc", "to stop")
+    /// Key hint after the clock: key and what it does, e.g. ("Esc", "interrupt")
     hint: Option<(&'static str, &'static str)>,
     /// The approval mode shown at the end of the line (true = allow all)
     mode: Option<Arc<AtomicBool>>,

@@ -273,7 +273,7 @@ pub struct Editor {
 pub type Command = (&'static str, &'static str);
 
 /// The key that switches the mode: its hint stays on the left, next to the mode.
-const MODE_KEY: &str = "Shift+Tab";
+const MODE_KEY: &str = "Shift + Tab";
 const MENU_HINTS: &[(&str, &str)] = &[
     ("↑↓", "choose"),
     ("Enter", "run"),
