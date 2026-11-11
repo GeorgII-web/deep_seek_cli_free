@@ -137,28 +137,39 @@ pub struct Throttle {
 }
 
 impl Throttle {
-    /// The defaults of the first versions; they proved too fast for the free account.
-    fn first_defaults() -> Self {
-        Self {
-            min_interval_ms: 3000,
-            jitter_ms: 2000,
-            max_per_hour: 120,
-            retries_on_429: 2,
-            wait_on_429_secs: 60,
-            ..Self::default()
-        }
+    /// Defaults of earlier versions. They proved too fast: the free account was
+    /// blocked at about 25 requests an hour with 7 to 35 s between them (2026-11-11).
+    fn earlier_defaults() -> [Self; 2] {
+        [
+            Self {
+                min_interval_ms: 3000,
+                jitter_ms: 2000,
+                max_per_hour: 120,
+                retries_on_429: 2,
+                wait_on_429_secs: 60,
+                ..Self::default()
+            },
+            Self {
+                min_interval_ms: 6000,
+                jitter_ms: 4000,
+                max_per_minute: 5,
+                max_per_hour: 60,
+                retries_on_429: 2,
+                wait_on_429_secs: 120,
+            },
+        ]
     }
 }
 
 impl Default for Throttle {
     fn default() -> Self {
         Self {
-            min_interval_ms: 6000,
-            jitter_ms: 4000,
-            max_per_minute: 5,
-            max_per_hour: 60,
+            min_interval_ms: 30_000,
+            jitter_ms: 15_000,
+            max_per_minute: 2,
+            max_per_hour: 12,
             retries_on_429: 2,
-            wait_on_429_secs: 120,
+            wait_on_429_secs: 300,
         }
     }
 }
@@ -295,10 +306,10 @@ impl Settings {
             .with_context(|| format!("write {}", file.display()))
     }
 
-    /// A config still holding the first throttle defaults gets the current, slower
-    /// ones; values the user changed are kept. Returns true when something changed.
+    /// A config still holding the throttle defaults of an earlier version gets the
+    /// current, slower ones; values the user changed are kept. Returns true when something changed.
     fn slow_down(&mut self) -> bool {
-        if self.throttle == Throttle::first_defaults() {
+        if Throttle::earlier_defaults().contains(&self.throttle) {
             self.throttle = Throttle::default();
             return true;
         }
@@ -420,7 +431,20 @@ mod tests {
         assert!(
             fs::read_to_string(paths.config())
                 .unwrap()
-                .contains("min_interval_ms = 6000")
+                .contains("min_interval_ms = 30000")
+        );
+
+        let second = "[throttle]\nmin_interval_ms = 6000\njitter_ms = 4000\nmax_per_minute = 5\nmax_per_hour = 60\nretries_on_429 = 2\nwait_on_429_secs = 120\n";
+        fs::write(paths.config(), second).unwrap();
+        let upgraded = Settings::load_or_create(&paths).unwrap().throttle;
+        assert_eq!(
+            (
+                upgraded.min_interval_ms,
+                upgraded.jitter_ms,
+                upgraded.max_per_minute,
+                upgraded.max_per_hour
+            ),
+            (30_000, 15_000, 2, 12)
         );
 
         fs::write(paths.config(), old.replace("3000", "1000")).unwrap();

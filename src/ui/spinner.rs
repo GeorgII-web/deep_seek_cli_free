@@ -187,13 +187,9 @@ impl Spinner {
                 drop(state);
                 if let Some(view) = &view {
                     let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-                    // A running action: its header. Else the end of the output: while
-                    // the answer streams just the spinner, before that also what is awaited.
+                    // A running action: its header. Else the status line at the start of the answer.
                     view.animate(frame);
-                    match label.as_str() {
-                        "Answering" | "Thinking" => view.mark(frame),
-                        _ => view.mark(&format!("{frame} {label}… {secs}s")),
-                    }
+                    view.animate_status(frame, &label);
                 }
             }
         });
@@ -208,13 +204,6 @@ impl Spinner {
         }
         if self.docked {
             screen_write(&format!("\x1b7\x1b[{};1H\x1b[2K\x1b8", last_row()));
-            // The mark at the end of the output goes too. The state lock is released first.
-            drop(state);
-            if let Some(view) = &self.view {
-                view.lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .unmark();
-            }
         } else {
             let _screen = screen_lock();
             let mut err = std::io::stderr().lock();

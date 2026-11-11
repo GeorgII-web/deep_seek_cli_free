@@ -245,6 +245,8 @@ pub struct Terminal {
     view: Option<Arc<Mutex<View>>>,
     /// Screen layout: the mouse wheel scrolls the output (the terminal reports the mouse to the app)
     mouse: bool,
+    /// The status line of the answer in progress is up (screen layout)
+    status_on: bool,
     /// Output of the running command not yet ended by a line end
     live: String,
     /// Body lines of the action's block so far (live output, or lines of its result)
@@ -291,6 +293,7 @@ impl Terminal {
             watch: None,
             view: None,
             mouse: true,
+            status_on: false,
             live: String::new(),
             live_lines: 0,
             mock,
@@ -461,10 +464,8 @@ impl Terminal {
             return false;
         };
         let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        // A progress mark after the output is wiped by the text that takes its place.
-        let wipe = if view.take_mark() { "\x1b[K" } else { "" };
         if view.push(text) {
-            screen_write(&format!("{wipe}{}", self.eol(text)));
+            screen_write(&self.eol(text));
         }
         true
     }
@@ -731,6 +732,35 @@ impl Terminal {
         chosen
     }
 
+    /// Screen layout: puts up the status line for the answer that is awaited: a
+    /// line of its own at the start of the answer, where the spinner shows what
+    /// is going on. The progress thread animates it; `end_status` removes it.
+    fn begin_status(&mut self) {
+        if self.status_on {
+            return;
+        }
+        let Some(view) = &self.view else {
+            return;
+        };
+        view.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .begin_status();
+        self.status_on = true;
+        // The line itself; the next tick of the progress thread fills it.
+        self.line(&format!("{}…{}", self.style.gray(), self.style.reset()));
+    }
+
+    /// Takes the status line away again; the answer moves up into its place.
+    fn end_status(&mut self) {
+        if std::mem::take(&mut self.status_on)
+            && let Some(view) = &self.view
+        {
+            view.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .end_status();
+        }
+    }
+
     /// One blank line, unless the last thing printed was one.
     fn blank(&mut self) {
         if !std::mem::replace(&mut self.gap, true) {
@@ -749,6 +779,8 @@ impl Terminal {
     /// End of a task: one line with the time it took.
     pub fn finish(&mut self, result: &anyhow::Result<()>) {
         self.close_output();
+        // A step that failed or was stopped left its status line up.
+        self.end_status();
         self.spinner.stop();
         self.watch_stop();
         self.blank();
@@ -1002,6 +1034,7 @@ impl Drop for Terminal {
 
 impl Ui for Terminal {
     fn event(&mut self, event: &Event) {
+        self.begin_status();
         match event {
             Event::Status(label) => {
                 // Inline, a status in the middle of printed text would tear the line.
@@ -1030,6 +1063,7 @@ impl Ui for Terminal {
         let rest = self.markdown.finish();
         self.print_text(&rest);
         self.close_output();
+        self.end_status();
         self.answers += 1;
     }
 

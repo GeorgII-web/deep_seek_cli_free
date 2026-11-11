@@ -209,8 +209,13 @@ pub struct View {
     fold_active: bool,
     /// When that block started: its header shows the seconds
     fold_started: Instant,
-    /// A progress mark is drawn after the end of the output (it is not part of the output)
-    marked: bool,
+    /// The next complete line is the status line
+    status_pending: bool,
+    /// The status line: one line at the start of the answer being awaited or
+    /// written, with the spinner; it is removed when that step ends
+    status: Option<usize>,
+    /// When the status line was put up: it shows the seconds
+    status_started: Instant,
     /// Text selected with the mouse: where the button went down and where it is now
     selection: Option<(Place, Place)>,
     /// A short message on the dock border ("copied"), with the time it was set
@@ -235,7 +240,9 @@ impl View {
             fold_pending: false,
             fold_active: false,
             fold_started: Instant::now(),
-            marked: false,
+            status_pending: false,
+            status: None,
+            status_started: Instant::now(),
             selection: None,
             flash: None,
             copied: String::new(),
@@ -268,7 +275,10 @@ impl View {
                     .map(|row| (index, row)),
             );
             self.closed.push(line);
-            if std::mem::take(&mut self.fold_pending) {
+            if std::mem::take(&mut self.status_pending) {
+                self.status = Some(index);
+                self.status_started = Instant::now();
+            } else if std::mem::take(&mut self.fold_pending) {
                 self.folds.push(Fold {
                     header: index,
                     end: index + 1,
@@ -297,6 +307,7 @@ impl View {
     /// Drops the oldest `count` lines and the blocks that started in them.
     fn forget(&mut self, count: usize) {
         self.closed.drain(..count);
+        self.status = self.status.and_then(|index| index.checked_sub(count));
         self.folds.retain(|fold| fold.header >= count);
         for fold in &mut self.folds {
             fold.header -= count;
@@ -330,12 +341,17 @@ impl View {
             s.gray(),
             s.reset()
         );
-        self.closed[header] = text.clone();
-        let Some(position) = self.wrapped.iter().position(|(line, _)| *line == header) else {
+        self.rewrite_line(header, text);
+    }
+
+    /// Replaces the text of line `index` (one row) and draws just that row when it is in view.
+    fn rewrite_line(&mut self, index: usize, text: String) {
+        self.closed[index] = text.clone();
+        let Some(position) = self.wrapped.iter().position(|(line, _)| *line == index) else {
             return;
         };
         self.wrapped[position].1 = text.clone();
-        let first_row = self.total().saturating_sub(self.rows + self.offset);
+        let first_row = self.first_row();
         if (first_row..first_row + self.rows).contains(&position) {
             // Save cursor, write the row, restore: output that arrives meanwhile is not disturbed.
             screen_write(&format!(
@@ -345,40 +361,49 @@ impl View {
         }
     }
 
-    /// The step in progress when no block is being written (waiting for the
-    /// model, the answer streaming in): `text` is drawn right after the end of
-    /// the output. It is not recorded; the next output overwrites it (`take_mark`).
-    pub fn mark(&mut self, text: &str) {
-        if self.offset > 0 || self.fold_active || self.fold_pending {
+    /// The next complete line becomes the status line: the place of the progress
+    /// icon while the model is awaited and while it writes, at the start of its answer.
+    pub fn begin_status(&mut self) {
+        self.status_pending = true;
+    }
+
+    /// The step in progress outside a block: the status line shows the spinner
+    /// `frame`, what is going on and the seconds.
+    pub fn animate_status(&mut self, frame: &str, label: &str) {
+        let Some(index) = self.status else {
             return;
-        }
-        let (row, column) = self.out();
-        let lead = if self.open.is_empty() { "" } else { " " };
-        // It must fit on the row, or it would wrap into the next one.
-        if column as usize + lead.len() + columns_of(text) >= self.columns {
-            return;
-        }
+        };
         let s = self.style;
-        screen_write(&format!(
-            "\x1b7\x1b[{row};{column}H\x1b[K{lead}{}{text}{}\x1b8",
+        let secs = self.status_started.elapsed().as_secs();
+        let text = format!(
+            "{}{frame}{} {}{label}… {secs}s{}",
             s.accent(),
+            s.reset(),
+            s.gray(),
             s.reset()
-        ));
-        self.marked = true;
+        );
+        self.rewrite_line(index, text);
     }
 
-    /// Whether a mark is on the screen; the caller erases it (`ESC[K` at the
-    /// cursor, which stands where the mark starts) before it writes output.
-    pub fn take_mark(&mut self) -> bool {
-        std::mem::take(&mut self.marked)
-    }
-
-    /// Removes the mark when the work is over.
-    pub fn unmark(&mut self) {
-        if std::mem::take(&mut self.marked) && self.offset == 0 {
-            let (row, column) = self.out();
-            screen_write(&format!("\x1b7\x1b[{row};{column}H\x1b[K\x1b8"));
+    /// The step ended: the status line is taken out and the rest moves up.
+    /// Returns true when there was one (the view was drawn again).
+    pub fn end_status(&mut self) -> bool {
+        self.status_pending = false;
+        let Some(index) = self.status.take() else {
+            return false;
+        };
+        self.closed.remove(index);
+        for fold in &mut self.folds {
+            if fold.header > index {
+                fold.header -= 1;
+                fold.end -= 1;
+            }
         }
+        self.selection = None;
+        self.rewrap();
+        self.offset = self.offset.min(self.max_offset());
+        self.repaint();
+        true
     }
 
     /// Lines in the body of the block being written.
@@ -752,6 +777,8 @@ impl View {
         self.folds.clear();
         self.fold_pending = false;
         self.fold_active = false;
+        self.status = None;
+        self.status_pending = false;
         self.open.clear();
         self.offset = 0;
         if !text.is_empty() {
@@ -808,6 +835,8 @@ impl View {
         self.folds.sort_by_key(|fold| fold.header);
         self.fold_pending = false;
         self.fold_active = false;
+        self.status = None;
+        self.status_pending = false;
         self.selection = None;
         self.offset = 0;
         // What comes next starts on a line of its own.
@@ -960,29 +989,29 @@ mod tests {
     }
 
     #[test]
-    fn the_mark_is_only_drawn_at_the_end_of_plain_output() {
-        let mut v = view(20, 5);
-        v.push("some text");
-        v.mark("⠹");
-        assert!(v.take_mark());
-        assert!(!v.take_mark());
-        // Not while a block runs (its header is animated), not scrolled up, not without room.
-        v.push("\n");
+    fn the_status_line_sits_at_the_start_of_the_answer_and_goes_away() {
+        let mut v = view(40, 10);
+        v.push("before\n");
+        v.begin_status();
+        v.push("...\n");
+        v.push("the answer ");
+        v.animate_status("⠹", "Answering");
+        assert_eq!(v.visible(), ["before", "⠹ Answering… 0s", "the answer "]);
+        v.push("goes on\n");
+        // A block after it keeps working when the line is removed.
         v.begin_fold();
-        v.mark("⠹");
-        v.push("running\n");
-        v.mark("⠹");
-        assert!(!v.take_mark());
-        v.end_fold("a".into(), "b".into(), false);
-        v.push("1\n2\n3\n4\n5\n6\n");
-        v.offset = 2;
-        v.mark("⠹");
-        assert!(!v.take_mark());
-        v.offset = 0;
-        v.push("exactly eighteen ch");
-        v.mark("⠹");
-        assert!(!v.take_mark());
-        // The mark never becomes part of the output.
+        v.push("running\nb1\nb2\n");
+        v.end_fold("2 [show]".into(), "2 [hide]".into(), true);
+        assert!(v.end_status());
+        assert_eq!(
+            v.visible(),
+            ["before", "the answer goes on", "2 [show]", ""]
+        );
+        assert!(v.click(2));
+        assert_eq!(v.visible().len(), 6);
+        // Nothing to animate or to end any more; it never reaches the saved text.
+        v.animate_status("⠸", "x");
+        assert!(!v.end_status());
         assert!(!v.transcript().contains('⠹'));
     }
 

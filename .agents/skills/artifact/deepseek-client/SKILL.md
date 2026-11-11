@@ -60,20 +60,22 @@ Every completion call goes through `throttle::acquire` (in `Conversation::send`)
 
 | Key | Default | Meaning |
 |---|---|---|
-| `min_interval_ms` | 6000 | minimum gap between two requests |
-| `jitter_ms` | 4000 | random extra gap, 0..=value |
-| `max_per_minute` | 5 | requests in any 60 seconds, 0 = no cap |
-| `max_per_hour` | 60 | requests in any 60 minutes, 0 = no cap; when a cap is reached the CLI waits and shows it in the progress line |
+| `min_interval_ms` | 30000 | minimum gap between two requests |
+| `jitter_ms` | 15000 | random extra gap, 0..=value |
+| `max_per_minute` | 2 | requests in any 60 seconds, 0 = no cap |
+| `max_per_hour` | 12 | requests in any 60 minutes, 0 = no cap; when a cap is reached the CLI waits and shows it in the progress line |
 | `retries_on_429` | 2 | retries after HTTP 429 |
-| `wait_on_429_secs` | 120 | pause before the first such retry without `Retry-After`; doubled for each further one |
+| `wait_on_429_secs` | 300 | pause before the first such retry without `Retry-After`; doubled for each further one |
 
 State in `<home>/cache/throttle.json` (`State`: `sent` = send times of the last hour, `cooldown_until`), so the
 limits also hold across separate `dsc` runs; the first versions' plain list is still read. Every 429 calls
 `throttle::cooldown`, also the last one that fails the task: the next request, even of a new run, waits it out.
 `delay_ms` = the largest of the gap and the two window waits (`window_wait`).
 
-The first defaults (3 s gap, 120 per hour) got the account blocked within hours (2026-11-10).
-`Settings::slow_down` replaces a config that still holds exactly those values with the current defaults.
+History: 3 s gap and 120 per hour got the account blocked within hours (2026-11-10); 6 to 10 s, 5 per minute
+and 60 per hour got it blocked at about 25 requests in an hour (2026-11-11). The user chose the current values.
+`Settings::slow_down` replaces a config that still holds exactly one of those earlier sets
+(`Throttle::earlier_defaults`) with the current defaults; values the user changed are kept.
 
 ## Another server (`DSC_API_BASE`)
 

@@ -144,8 +144,8 @@ There is 809G free on / (out of 1007G, 16% used).
 ```
 
 The step in progress is marked right where it happens: a spinner and the seconds under a running command
-(`⎿ ⠧ running… 2s`), `⠧ Waiting for DeepSeek… 3s` where the answer will appear, and a spinner after the last
-word while the answer is written. A command's output appears line by line while it runs. When it has finished, a long output folds to one line
+(`⎿ ⠧ running… 2s`), and a line of its own at the start of the answer (`⠧ Waiting for DeepSeek… 3s`, then `⠧ Answering… 5s`)
+that disappears when the answer is complete. A command's output appears line by line while it runs. When it has finished, a long output folds to one line
 (`⎿ ✓ exit code 0 · 23 lines ▸ show`; a failed one is red with `✗`); click that line, or press Ctrl-O for the last one, to open and close it. Up
 to five lines stay open, and so does an output that is itself the answer to your task.
 
@@ -294,13 +294,13 @@ search = false
 locale = "en"
 timeout_secs = 180
 
-[throttle]                  # keeps the request rate low, so the account is not blocked
-min_interval_ms = 6000      # minimum gap between two requests, also across runs
-jitter_ms = 4000            # random extra gap
-max_per_minute = 5          # 0 = no cap
-max_per_hour = 60           # 0 = no cap
+[throttle]                  # keeps the request rate very low, so the account is not blocked
+min_interval_ms = 30000     # minimum gap between two requests, also across runs
+jitter_ms = 15000           # random extra gap: 30 to 45 s in all
+max_per_minute = 2          # 0 = no cap
+max_per_hour = 12           # 0 = no cap
 retries_on_429 = 2          # retries when DeepSeek says "too many requests"
-wait_on_429_secs = 120      # pause before the first retry; doubled for each further one
+wait_on_429_secs = 300      # pause before the first retry; doubled for each further one
 
 [agent]
 max_steps = 25              # answers of the model per task
@@ -316,9 +316,11 @@ allow = ["ls", "pwd", "df", "du", "uname", "whoami", "date", "which", "stat", "w
 deny = ["rm -rf /", "rm -rf ~", "mkfs", "dd of=/dev/", "shutdown", "reboot", ":(){", ".ssh/id_", ".aws/credentials", "deep_seek_cli_free/auth.json", "dsc/auth.json"]
 ```
 
+These limits are slow on purpose: the free account was blocked at about 25 requests an hour. A task that runs
+a command needs two or three requests, so expect a minute or more per task; raise the numbers at your own risk.
 When `dsc` has to wait for one of these limits, the progress line says so. A pause after "too many requests" is
-remembered, so a new start does not run straight into the limit again. A config that still has the first, faster
-defaults is moved to these values automatically; numbers you changed yourself are kept.
+remembered, so a new start does not run straight into the limit again. A config that still has the faster
+defaults of an earlier version is moved to these values automatically; numbers you changed yourself are kept.
 
 An `allow` entry is a program, or a program with its first arguments (`git status`). It applies only to simple
 commands: anything with `; & | > < $ ( )` asks.
