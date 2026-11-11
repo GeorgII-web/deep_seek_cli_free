@@ -653,26 +653,29 @@ impl Terminal {
         token
     }
 
-    /// Screen layout: everything on the output area as text with its colors, to
+    /// Screen layout: the output area with its foldable blocks, as JSON, to
     /// save it with a conversation. `None` in the inline layout.
     pub fn output(&self) -> Option<String> {
         let view = self.view.as_ref()?;
-        Some(
-            view.lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .transcript(),
-        )
+        let snapshot = view
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .snapshot();
+        serde_json::to_string(&snapshot).ok()
     }
 
-    /// Screen layout: replaces the output area by `text` (the saved output of
-    /// the conversation switched to; empty = a clean area).
-    pub fn show_output(&mut self, text: &str) {
+    /// Screen layout: replaces the output area by a saved one (what `output`
+    /// gave for the conversation switched to; empty = a clean area). Text that
+    /// is not such a save is shown as plain lines.
+    pub fn show_output(&mut self, saved: &str) {
         self.close_output();
         if let Some(view) = &self.view {
-            view.lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .replace(text);
-            self.gap = text.is_empty();
+            let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            match serde_json::from_str(saved) {
+                Ok(snapshot) => view.restore(snapshot),
+                Err(_) => view.replace(saved),
+            }
+            self.gap = saved.is_empty();
             self.live.clear();
         }
     }

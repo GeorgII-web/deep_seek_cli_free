@@ -63,7 +63,7 @@ escape sequences and carries colors over a break). The view is the last rows of 
 | scroll (PgUp, PgDn, wheel 3 rows, Ctrl+Home, Ctrl+End) | `View::scroll` / `top` / `bottom` → `repaint`: every row of the area cleared and drawn from the model, cursor at `out()` |
 | dock grows or shrinks, terminal resized | `Editor::sync_view` → `View::resize` (rewrap on a new width) → `repaint`; `Dock::out` comes from `View::out`, no cursor query |
 | input sent | `Editor::erase` → `View::bottom` first |
-| another conversation (`/sessions`, `/new`, `/model`) | `Terminal::show_output(text)` → `View::replace`: the saved output of that conversation, or a clean area; `Terminal::output` gives the text to save |
+| another conversation (`/sessions`, `--session`, `/new`, `/model`) | `Terminal::output` = `View::snapshot` as JSON (lines, open line, finished blocks with both header texts and their folded state); `Terminal::show_output(saved)` → `View::restore`, so the blocks still fold; text that is not such JSON (a save of an older version, or empty) → `View::replace` as plain lines |
 | a window (`token_dialog`, `pick`) | drawn over the screen (no second alternate screen), then `Terminal::redraw`: clear, `Editor::redraw_dock`, `repaint` |
 
 - Everything printed in the screen layout must go through `emit` (`line`, `partial`, `text`) or `erase_partial`
@@ -73,7 +73,7 @@ escape sequences and carries colors over a break). The view is the last rows of 
 - Mouse reports (`ESC[?1000h` buttons, `ESC[?1002h` motion while a button is down, `ESC[?1006h` SGR form) are on
   when `ui.mouse_scroll` is true: the terminal gives the mouse to the app, which scrolls, folds and selects itself.
 - `KEEP_LINES` (20000) lines are kept; `forget` drops the oldest with the blocks that start in them.
-- `transcript` (exit, saved sessions) writes every block out in full; a restored session has plain lines, no folds.
+- `transcript` (the text printed at exit) writes every block out in full. Saved sessions use `snapshot`, not this.
 
 ## Rules
 

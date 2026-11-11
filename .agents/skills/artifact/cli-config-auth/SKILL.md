@@ -50,8 +50,9 @@ Sessions (`src/sessions.rs`): after every task `chat()` writes the conversation 
 (`Store::upsert`: newest first, 50 kept): `id` = DeepSeek's chat session id, `parent_message_id` = the last
 answer (`Conversation::state`), `title` = the first task, `cwd`, `tasks`, `updated`. The messages stay at
 DeepSeek; switching only points the next prompt at that session, so the model has the whole history and the
-rules of the first prompt. Only conversations started here are listed. After every task the screen output (`Terminal::output`) is saved
-to `<home>/sessions/<id>.log` (`Paths::transcript`); a switch shows it again (`Terminal::show_output`). `/new` and
+rules of the first prompt. Only conversations started here are listed. After every task the screen output (`Terminal::output`: JSON with the lines and the
+foldable blocks) is saved to `<home>/sessions/<id>.log` (`Paths::transcript`); a switch shows it again with
+working folds (`Terminal::show_output`). `/new` and
 `/model` clear `current` and the screen.
 
 `--session=<code>` (the session id): the chat starts in that conversation like a switch (`resume`, saved screen,

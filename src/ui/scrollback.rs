@@ -10,6 +10,7 @@
 
 use super::screen_write;
 use super::style::Style;
+use serde::{Deserialize, Serialize};
 use std::time::Instant;
 use unicode_width::UnicodeWidthChar;
 
@@ -110,6 +111,24 @@ pub fn columns_of(row: &str) -> usize {
         }
     }
     used
+}
+
+/// The output as it is saved with a conversation and brought back on a switch:
+/// the lines and the blocks, so they can still be folded.
+#[derive(Serialize, Deserialize)]
+pub struct Snapshot {
+    lines: Vec<String>,
+    open: String,
+    blocks: Vec<SavedBlock>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedBlock {
+    header: usize,
+    end: usize,
+    folded: bool,
+    folded_text: String,
+    open_text: String,
 }
 
 /// A block of lines that can be folded to its header: the output of an action.
@@ -717,6 +736,61 @@ impl View {
         self.repaint();
     }
 
+    /// The output with its blocks, to save it (see `Snapshot`). A block that is
+    /// still being written is saved as plain lines.
+    pub fn snapshot(&self) -> Snapshot {
+        let blocks = self
+            .folds
+            .iter()
+            .filter_map(|fold| {
+                let (folded_text, open_text) = fold.texts.clone()?;
+                Some(SavedBlock {
+                    header: fold.header,
+                    end: fold.end,
+                    folded: fold.folded,
+                    folded_text,
+                    open_text,
+                })
+            })
+            .collect();
+        Snapshot {
+            lines: self.closed.clone(),
+            open: self.open.clone(),
+            blocks,
+        }
+    }
+
+    /// Shows a saved output instead of the current one, blocks included.
+    pub fn restore(&mut self, snapshot: Snapshot) {
+        let lines = snapshot.lines.len();
+        self.closed = snapshot.lines;
+        self.open = snapshot.open;
+        // Only blocks that fit the lines: a damaged file must not break the view.
+        self.folds = snapshot
+            .blocks
+            .into_iter()
+            .filter(|block| block.header < block.end && block.end <= lines)
+            .map(|block| Fold {
+                header: block.header,
+                end: block.end,
+                folded: block.folded,
+                texts: Some((block.folded_text, block.open_text)),
+            })
+            .collect();
+        self.folds.sort_by_key(|fold| fold.header);
+        self.fold_pending = false;
+        self.fold_active = false;
+        self.selection = None;
+        self.offset = 0;
+        // What comes next starts on a line of its own.
+        if !self.open.is_empty() {
+            let line = std::mem::take(&mut self.open);
+            self.closed.push(line);
+        }
+        self.rewrap();
+        self.repaint();
+    }
+
     /// The whole output as text, for the terminal after the chat closes. Blocks
     /// are written out in full, with the header of their unfolded form.
     pub fn transcript(&self) -> String {
@@ -911,6 +985,27 @@ mod tests {
             plain_of("\x1b[1mab\x1b[0m\x1b]8;;u\x1b\\c\x1b]8;;\x1b\\"),
             "abc"
         );
+    }
+
+    #[test]
+    fn a_saved_output_comes_back_with_blocks_that_still_fold() {
+        let saved = serde_json::to_string(&with_block(true).snapshot()).unwrap();
+        let mut v = view(20, 10);
+        v.push("something else\n");
+        v.restore(serde_json::from_str(&saved).unwrap());
+        assert_eq!(v.visible(), ["before", "3 lines [show]", "after", ""]);
+        assert!(v.click(1));
+        assert_eq!(
+            v.visible(),
+            ["before", "3 lines [hide]", "b1", "b2", "b3", "after", ""]
+        );
+        assert!(v.click(1));
+        assert_eq!(v.visible().len(), 4);
+        // A block that points outside the lines is dropped, the lines stay.
+        let broken = r#"{"lines":["a","b"],"open":"","blocks":[{"header":1,"end":9,"folded":true,"folded_text":"x","open_text":"y"}]}"#;
+        v.restore(serde_json::from_str(broken).unwrap());
+        assert_eq!(v.visible(), ["a", "b", ""]);
+        assert!(!v.click(1));
     }
 
     #[test]
