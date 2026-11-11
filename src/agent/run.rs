@@ -274,7 +274,7 @@ mod tests {
         settings: &Settings,
         yes: bool,
     ) -> Result<()> {
-        let prompt = protocol::first_prompt(task, "/work");
+        let prompt = protocol::first_prompt(task, "/work", true);
         run(
             backend,
             ui,
@@ -413,7 +413,7 @@ mod tests {
             sender.send(Interrupt::Stop).unwrap();
             sender
         });
-        let prompt = protocol::first_prompt("t", "/work");
+        let prompt = protocol::first_prompt("t", "/work", true);
         let err = run(
             &mut backend,
             &mut FakeUi::default(),
@@ -486,7 +486,7 @@ mod tests {
         run(
             &mut backend,
             &mut ui,
-            protocol::first_prompt("a", "/work"),
+            protocol::first_prompt("a", "/work", true),
             &cfg,
             &AtomicBool::new(false),
             &mut always,

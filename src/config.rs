@@ -86,6 +86,9 @@ fn migrate(old: &std::path::Path, new: &std::path::Path) -> Option<String> {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default, deny_unknown_fields)]
 pub struct Settings {
+    /// Which changes of defaults this file has seen (see `upgrade`); a file without it is from before them
+    #[serde(default)]
+    pub version: u32,
     pub deepseek: Deepseek,
     pub throttle: Throttle,
     pub agent: Agent,
@@ -102,6 +105,8 @@ pub struct Deepseek {
     /// `default` (fast) or `expert`
     pub model_type: String,
     pub thinking: bool,
+    /// DeepSeek's own web search and browser (the "Search" button of the site):
+    /// on, the model reads web pages on its side instead of through this machine
     pub search: bool,
     pub locale: String,
     pub timeout_secs: u64,
@@ -246,7 +251,7 @@ impl Default for Deepseek {
             api: Api::Deepseek,
             model_type: "default".into(),
             thinking: false,
-            search: false,
+            search: true,
             locale: "en".into(),
             timeout_secs: 180,
         }
@@ -313,7 +318,7 @@ impl Settings {
         let mut settings: Self =
             toml::from_str(&text).with_context(|| format!("parse {}", file.display()))?;
         // Both run: the first `|` is not short-circuit on purpose.
-        if settings.guard_auth_file() | settings.slow_down() {
+        if settings.guard_auth_file() | settings.slow_down() | settings.upgrade() {
             settings.save(paths)?;
         }
         Ok(settings)
@@ -324,6 +329,19 @@ impl Settings {
         let file = paths.config();
         fs::write(&file, toml::to_string_pretty(self)?)
             .with_context(|| format!("write {}", file.display()))
+    }
+
+    /// One-time changes of defaults for a file written by an earlier version.
+    /// Version 1: DeepSeek's own web search on (it was off by default before).
+    /// Returns true when the file must be written again.
+    fn upgrade(&mut self) -> bool {
+        const CURRENT: u32 = 1;
+        if self.version >= CURRENT {
+            return false;
+        }
+        self.deepseek.search = true;
+        self.version = CURRENT;
+        true
     }
 
     /// A config still holding the throttle defaults of an earlier version gets the
@@ -470,6 +488,28 @@ mod tests {
         fs::write(paths.config(), old.replace("3000", "1000")).unwrap();
         let own = Settings::load_or_create(&paths).unwrap().throttle;
         assert_eq!((own.min_interval_ms, own.max_per_hour), (1000, 120));
+        fs::remove_dir_all(paths.home).unwrap();
+    }
+
+    #[test]
+    fn web_search_is_turned_on_once_for_an_older_file() {
+        let paths = Paths {
+            home: temp_dir("search"),
+        };
+        fs::write(paths.config(), "[deepseek]\nsearch = false\n").unwrap();
+        let upgraded = Settings::load_or_create(&paths).unwrap();
+        assert!(upgraded.deepseek.search);
+        assert_eq!(upgraded.version, 1);
+        // Switched off by the user after that: it stays off.
+        let text = fs::read_to_string(paths.config())
+            .unwrap()
+            .replace("search = true", "search = false");
+        fs::write(paths.config(), text).unwrap();
+        assert!(!Settings::load_or_create(&paths).unwrap().deepseek.search);
+        // A new file starts with it on.
+        fs::remove_file(paths.config()).unwrap();
+        Settings::load_or_create(&paths).unwrap();
+        assert!(Settings::load_or_create(&paths).unwrap().deepseek.search);
         fs::remove_dir_all(paths.home).unwrap();
     }
 }

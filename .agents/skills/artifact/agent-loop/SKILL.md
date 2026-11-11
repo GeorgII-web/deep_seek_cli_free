@@ -35,6 +35,10 @@ directory, the task. The model answers either plain text (final answer, the loop
 | `write_file` | `path`, `content` (whole file), `why` | `Written: <path> (N bytes)` |
 | `done` | none | nothing is run: the task ends without a text answer (`Parsed::Done`) |
 
+- Web: `first_prompt(task, cwd, web)`. With `web` (DeepSeek's search on, the default) the rules say the model has
+  search and a browser on its side and must use them for anything on the web; `curl` or `wget` on the user's
+  machine only when the user asks for a local fetch or the address is only reachable from there. Without it the
+  rules say there is no web access and pages are fetched as an action.
 - No repeated output: the user sees every result, so the prompt tells the model to send `{"tool":"done"}` as its
   whole answer when the output already is what was asked, and to write text only when it adds something (a
   conclusion, a computed number, an explanation, the reason for a failure). `parse` checks for `done` before the

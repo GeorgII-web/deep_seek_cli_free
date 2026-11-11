@@ -198,7 +198,8 @@ shown at the bottom, next to the mode: `◆ DeepSeek` or `◆ Mock`. Use the moc
 keys and approvals without touching your account. It answers slowly on purpose, so you can watch the interface
 work: two seconds of "waiting", then word by word (`[mock]` in the config sets the speed). When the chat starts
 on the mock, it lists the tasks it understands: `!<command>` asks to run the
-command, `browse <url>` asks to fetch a page with curl and then answers, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
+command, `browse <url>` answers as if it had read the page on its side, `curl <url>` asks to fetch it with curl on your
+machine, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
 scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back.
 
 ### Sessions
@@ -226,7 +227,7 @@ agent rules.
 |---|---|
 | `-y`, `--yes` | start in the mode `allow all`: actions run without asking (the deny list still applies) |
 | `--think` | reasoning mode; the reasoning is shown dimmed |
-| `--search` | web search (not tested yet) |
+| `--no-search` | switch DeepSeek's own web search off for this run (pages are then fetched from this machine) |
 | `--expert` | the "expert" model instead of the fast one (not tested yet) |
 | `--session=<code>` | continue an earlier conversation; `dsc` prints the code when it exits |
 
@@ -292,7 +293,7 @@ comments in it are not kept.
 api = "deepseek"            # or "mock": the fake model inside dsc; `/model` switches and saves it
 model_type = "default"      # or "expert"
 thinking = false
-search = false
+search = true               # DeepSeek's own web search and browser; off: pages are fetched from this machine
 locale = "en"
 timeout_secs = 180
 
@@ -347,6 +348,10 @@ cli → agent loop → Backend trait → DeepSeek web client (HTTP, proof of wor
   ```
   ````
   `dsc` runs it and sends the result as the next message. An answer without a block is the final answer.
+- **Web pages**: DeepSeek's own web search (the Search button of the site) is on by default. For "open this
+  site" or "look this up" the model reads the page on its side and answers; nothing is fetched from your
+  machine. It uses `curl` here only when you ask for that ("fetch it locally", "with curl") or when the address
+  is only reachable from your machine (localhost). `--no-search` or `search = false` turns the search off.
 - **No repeated output**: you see the output of every command. When that output already is the answer (a file
   listing, a file's content), the model is told to send a silent "done" block instead of printing it again; a
   long output is then shown in full instead of the first 8 lines.

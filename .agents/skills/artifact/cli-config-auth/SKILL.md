@@ -11,11 +11,15 @@ Entry `main()` in `src/main.rs`: `Cli::parse` → `Paths::new` → `Settings::lo
 
 | Input | Handler |
 |---|---|
-| `dsc <task words>` + `--yes`, `--think`, `--search`, `--expert`, `--session=<code>` (`RunArgs`) | `conversation()` + `agent::run::run` with `protocol::first_prompt` and `ui::Terminal` |
+| `dsc <task words>` + `--yes`, `--think`, `--search` / `--no-search`, `--expert`, `--session=<code>` (`RunArgs`) | `conversation()` + `agent::run::run` with `protocol::first_prompt` and `ui::Terminal` |
 | `dsc` without a task (flags allowed), `dsc chat` (no flags) | `chat()` |
 | `dsc login` | `login()`: without a flag the token window (`Terminal::token_dialog`), `--token` a hidden prompt, `--import <file>` a file |
 | `dsc logout` | `Auth::remove` |
 | `dsc doctor` | `doctor()`: paths, model, throttle, then token (`create_challenge`), wasm, proof of work; sends no prompt, not throttled |
+
+`web_search(settings, run)` = `deepseek.search` (default true) or `--search`, unless `--no-search`: it sets
+`search_enabled` of every request and the web rule of the first prompt. `Settings::upgrade` (`version` key) turns
+`search` on once in a config written before that default.
 
 `conversation()` builds `TurnOpts` from the flags over `[deepseek]`: `--expert` → `model_type = "expert"`,
 `--think` and `--search` switch the flags on.

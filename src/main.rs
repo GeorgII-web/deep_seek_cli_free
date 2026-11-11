@@ -63,7 +63,7 @@ async fn main() -> Result<()> {
                     conversation.resume(chosen.id.clone(), chosen.parent_message_id);
                     protocol::next_prompt(&task)
                 }
-                None => protocol::first_prompt(&task, &cwd()),
+                None => protocol::first_prompt(&task, &cwd(), web_search(&settings, &cli.run)),
             };
             let mut terminal =
                 ui::Terminal::new(None, cli.run.yes || settings.policy.mode == Mode::AllowAll);
@@ -344,7 +344,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 terminal.error(&format!("unknown command `{command}`; see `/help`"));
                 continue;
             }
-            task if first => protocol::first_prompt(task, &cwd()),
+            task if first => protocol::first_prompt(task, &cwd(), web_search(settings, run)),
             task => protocol::next_prompt(task),
         };
         first = false;
@@ -479,6 +479,11 @@ fn mock_help() -> String {
     )
 }
 
+/// Whether DeepSeek's own web search is on for this run: the config, unless a flag says otherwise.
+fn web_search(settings: &Settings, run: &cli::RunArgs) -> bool {
+    (settings.deepseek.search || run.search) && !run.no_search
+}
+
 /// The model for a new conversation.
 fn model(paths: &Paths, settings: &Settings, run: &cli::RunArgs, api: Api) -> Result<Model> {
     Ok(match api {
@@ -592,7 +597,7 @@ fn conversation(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Resul
             false => settings.deepseek.model_type.clone(),
         },
         thinking: run.think || settings.deepseek.thinking,
-        search: run.search || settings.deepseek.search,
+        search: web_search(settings, run),
     };
     Ok(Conversation::new(
         client,

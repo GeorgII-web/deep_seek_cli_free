@@ -24,7 +24,8 @@ const RESULT_STARTS: [&str; 7] = [
 pub const TASKS: &str = "\
 `!<command>`      asks to run the command, then ends with the silent done block
 `run <command>`   asks to run it, then answers with a sentence
-`browse <url>`    asks to fetch the page with curl (first 40 lines), then answers
+`browse <url>`    reads the page on the model's side and answers (nothing runs here)
+`curl <url>`      the local way: asks to fetch the page with curl here, then answers
 `read <path>`     asks to read the file; `write <path>` asks to write `mock` to it
 `think <text>`    reasoning first, then an answer
 `slow`            a long answer at a quarter of the speed (try Esc, scrolling)
@@ -107,16 +108,29 @@ impl Mock {
             self.after = Some("Mock: the command finished.".into());
             return Ok(say(format!("I will run it.\n\n{}", shell(cmd))));
         }
-        // Like a real "open this site" task: fetch the page with curl, then say something about it.
+        // "Open this site": by default the model reads it on its own side (DeepSeek's
+        // web search) and just answers; nothing runs on the user's machine.
         if task == "browse" || task.starts_with("browse ") {
             let url = match task["browse".len()..].trim() {
                 "" => "https://example.org",
                 url => url,
             };
-            self.after = Some(format!("Mock: that is the start of the page at {url}."));
+            return Ok(say(format!(
+                "Mock: I opened {url} with the browser on my side (nothing ran on your machine).\n\n# Example page\nThis is what the page says, as the model read it. See also https://example.org/more."
+            )));
+        }
+        // The local way, when the user asks for it: fetch the page with curl here.
+        if task == "curl" || task.starts_with("curl ") {
+            let url = match task["curl".len()..].trim() {
+                "" => "https://example.org",
+                url => url,
+            };
+            self.after = Some(format!(
+                "Mock: that is the start of the page at {url}, fetched from your machine."
+            ));
             let command = format!("curl -sSL --max-time 20 {} | head -n 40", shell_quote(url));
             return Ok(say(format!(
-                "I will fetch the page.\n\n{}",
+                "I will fetch the page from your machine.\n\n{}",
                 shell(&command)
             )));
         }
@@ -207,8 +221,11 @@ mod tests {
     #[tokio::test]
     async fn bang_runs_the_command_and_ends_with_done() {
         let mut mock = Mock::default();
-        let (answer, streamed) =
-            ask(&mut mock, &protocol::first_prompt("!echo \"a b\"", "/w")).await;
+        let (answer, streamed) = ask(
+            &mut mock,
+            &protocol::first_prompt("!echo \"a b\"", "/w", true),
+        )
+        .await;
         assert_eq!(answer, streamed);
         let Parsed::Action { action, .. } = protocol::parse(&answer) else {
             panic!("{answer}")
@@ -219,9 +236,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn browse_fetches_the_page_with_curl() {
+    async fn browse_answers_from_the_models_side_and_curl_fetches_here() {
         let mut mock = Mock::default();
-        let (answer, _) = ask(&mut mock, "Task: browse https://ya.ru/?a=b'c").await;
+        // Browsing is the model's own business: a text answer, no action.
+        let (answer, _) = ask(&mut mock, "Task: browse https://ya.ru").await;
+        assert_eq!(protocol::parse(&answer), Parsed::Final);
+        assert!(answer.contains("https://ya.ru") && answer.contains("on my side"));
+        // The local way is asked for by name.
+        let (answer, _) = ask(&mut mock, "Task: curl https://ya.ru/?a=b'c").await;
         let Parsed::Action { action, .. } = protocol::parse(&answer) else {
             panic!("{answer}")
         };
@@ -229,19 +251,19 @@ mod tests {
         assert!(
             matches!(action, Action::Shell { cmd, .. } if cmd == "curl -sSL --max-time 20 'https://ya.ru/?a=b'\\''c' | head -n 40")
         );
-        assert_eq!(
-            ask(&mut mock, "Result: exit code 0\n").await.0,
-            "Mock: that is the start of the page at https://ya.ru/?a=b'c."
+        assert!(
+            ask(&mut mock, "Result: exit code 0\n")
+                .await
+                .0
+                .contains("fetched from your machine")
         );
-        let (default, _) = ask(&mut mock, "Task: browse").await;
-        assert!(default.contains("https://example.org"));
     }
 
     #[tokio::test]
     async fn plain_task_long_and_follow_up_prompt() {
         let mut mock = Mock::default();
         assert_eq!(
-            ask(&mut mock, &protocol::first_prompt("hello", "/w"))
+            ask(&mut mock, &protocol::first_prompt("hello", "/w", true))
                 .await
                 .0,
             "Mock answer to: hello"

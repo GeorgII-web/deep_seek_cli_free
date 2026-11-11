@@ -25,9 +25,13 @@ pub struct RunArgs {
     #[arg(long)]
     pub think: bool,
 
-    /// Web search
-    #[arg(long)]
+    /// Web search on DeepSeek's side on (the default; see `deepseek.search` in the config)
+    #[arg(long, conflicts_with = "no_search")]
     pub search: bool,
+
+    /// Web search on DeepSeek's side off: web pages are then fetched from this machine
+    #[arg(long)]
+    pub no_search: bool,
 
     /// The "expert" model instead of the fast one
     #[arg(long)]

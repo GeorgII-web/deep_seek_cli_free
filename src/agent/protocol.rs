@@ -63,7 +63,16 @@ pub enum Parsed {
 }
 
 /// The first message of a conversation: the rules, then the task.
-pub fn first_prompt(task: &str, cwd: &str) -> String {
+pub fn first_prompt(task: &str, cwd: &str, web: bool) -> String {
+    // Where web content comes from: the model's own search, or the user's machine.
+    let web_rule = match web {
+        true => {
+            "- You have web search and a browser on your side, and they are on. For anything on the web (open a site, read a page, look something up) use them and answer in text: do not run curl, wget or a browser on the user's machine. Fetch from the user's machine only when the user asks for exactly that (\"locally\", \"with curl\"), or when the address is only reachable from there (localhost, a private network)."
+        }
+        false => {
+            "- You have no web access on your side in this conversation. To read a web page, fetch it from the user's machine (for example with curl) as an action."
+        }
+    };
     format!(
         r#"You are a command line agent on the user's Linux machine. You reach the machine only through me: you write one action, I run it and send you the result.
 
@@ -84,6 +93,7 @@ Rules:
 - Commands are not interactive: no editors, no pagers, no prompts, no sudo password.
 - The user may deny an action; then try another way or ask the user.
 - Prefer commands that only read. Change or delete something only when the task needs it.
+{web_rule}
 - The user sees the output of every action on the screen, exactly as you get it. When that output already is what the user asked for (a file listing, the content of a file, a status, a version), do not repeat, reformat or summarize it: send {{"tool":"done"}} as your whole answer.
 - The done block is never the first answer to a task: first run the action the task needs. Each task starts from nothing, even when a similar one was done before; the user sees only what you run or write now.
 - Write a text answer only when it adds something the output does not show: a conclusion, a number you worked out, an explanation the user asked for, or the reason the task cannot be done. Then answer in plain text without a block and keep it short.
@@ -254,7 +264,10 @@ mod tests {
             parse("\n\n```dsc\n{ \"tool\" : \"done\", \"why\": \"shown\" }\n```\n"),
             Parsed::Done
         );
-        let prompt = first_prompt("t", "/w");
+        let prompt = first_prompt("t", "/w", true);
+        assert!(prompt.contains("web search and a browser on your side"));
+        assert!(prompt.contains("do not run curl"));
+        assert!(first_prompt("t", "/w", false).contains("no web access on your side"));
         assert!(prompt.contains(r#"{"tool":"done"}"#));
         assert!(prompt.contains("do not repeat"));
         assert!(prompt.contains("never the first answer to a task"));

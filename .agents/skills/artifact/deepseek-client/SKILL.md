@@ -46,7 +46,9 @@ SSE (`stream::Parser`, recorded samples in `src/deepseek/fixtures/`): `event: <n
 Fragment `type`: `THINK` → `Event::Thinking`, `RESPONSE` → `Event::Text`, others (search) are dropped.
 
 Verified live on 2026-11-10: the token alone is enough (no cookie); plain and thinking answers parse. A second turn in
-one conversation works (agent run). Not yet verified live: search mode, the `expert` model.
+one conversation works (agent run). Not yet verified live: the `expert` model, and search mode, which is now on by default (`search_enabled: true`):
+its stream may carry fragment types the parser does not know (they are dropped) and citation marks in the text.
+Check it with the user's first real task and record a fixture.
 
 `model_type`: `default` (fast), `expert`; `thinking_enabled` and `search_enabled` are flags on top.
 Answers of the JSON calls are an envelope `{code, msg, data: {biz_code, biz_msg, biz_data}}` (`client::biz_data`):
