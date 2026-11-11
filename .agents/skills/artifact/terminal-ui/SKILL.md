@@ -96,7 +96,7 @@ escape sequences and carries colors over a break). The view is the last rows of 
     Filesystem  Size ...
 
 There is 810G free.                         the answer, markdown styled
-── ✓ 8.1s · 2 answers · 1 action ───────    Terminal::finish (rule to the row end); ✗ <error> on a failure
+ ✓ 8.1s · 2 answers · 1 action               Terminal::finish (on a background bar); ✗ <error> on a failure
 ```
 
 | Piece | Code | Detail |
@@ -107,7 +107,7 @@ There is 810G free.                         the answer, markdown styled
 | question | `approve` | `read_choice`; Esc, Ctrl-C, Ctrl-D = no; `e` opens the box with the command (`remember = false`); the question line is erased after the key |
 | result | `result` | `Result: ` prefix and `--- stdout ---` dropped, `--- stderr ---` → `stderr:`; a text starting with `Denied` is not repeated; the lines beyond `RESULT_LINES` are kept in `hidden_result` and printed by `result_is_answer` (the model's `done`), replacing the `… +N lines` line |
 | prompt | `echo` | the submitted input on a bar with its own background (`Style::prompt_bg`, filled to the row end with `ESC[K`); plain `> text` without colors |
-| finish | `finish` | a rule over the whole width with the outcome in it: `── ✓ 6.4s · 2 answers · 1 action ────`; seconds since `begin`, answers of the model, actions that ran; `✗ stopped` or `✗ quit` after an interrupt; without colors just `✓ 6.4s · …` |
+| finish | `finish` | a bar with a background filled to the row end (`ESC[K`), like the prompt: dark green `✓ 6.4s · 2 answers · 1 action` (`Style::done_bg`), dark red `✗ <error> · …` (`failed_bg`) after a failure or an interrupt; the text is cut to one row; without colors just the text |
 | spacing | `blank()` | one empty line between the echo, each action block, the answer, the finish line and the next input |
 | chrome text | `info`, `error`, `note`, the `why` line, the banner | `code` spans colored through `Style::inline`; `help` prints commands and keys in columns |
 

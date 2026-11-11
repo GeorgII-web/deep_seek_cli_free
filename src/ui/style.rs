@@ -84,6 +84,14 @@ impl Style {
     pub fn inverse(&self) -> &'static str {
         self.code("\x1b[7m")
     }
+    /// Background of the line that ends a task: dark green when it worked
+    pub fn done_bg(&self) -> &'static str {
+        self.code("\x1b[48;5;22m")
+    }
+    /// ... and dark red when it failed or was stopped
+    pub fn failed_bg(&self) -> &'static str {
+        self.code("\x1b[48;5;52m")
+    }
     /// Background of the user's prompt in the output
     pub fn prompt_bg(&self) -> &'static str {
         self.code("\x1b[48;5;237m")

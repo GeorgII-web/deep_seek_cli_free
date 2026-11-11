@@ -657,10 +657,12 @@ impl Terminal {
             Err(err) => ("✗", s.err(), format!("{err:#} · {stats}")),
         };
         if s.on() {
-            // A rule over the whole width with the outcome in it: the end of a task is easy to find.
+            // A bar with its own background, like the prompt: the end of a task is
+            // easy to find. The terminal fills the row (`ESC[K`), so nothing has to
+            // be as long as the screen and nothing wraps on a narrow one.
             let columns = crossterm::terminal::size().map_or(80, |(columns, _)| columns as usize);
             // A long error is cut so the line stays one row.
-            let room = columns.saturating_sub(10);
+            let room = columns.saturating_sub(6);
             let text = match text.chars().count() > room {
                 true => format!(
                     "{}…",
@@ -670,11 +672,13 @@ impl Terminal {
                 ),
                 false => text,
             };
-            let used = 3 + 2 + text.chars().count() + 1;
-            let rule = "─".repeat(columns.saturating_sub(used + 1));
+            let bg = if result.is_ok() {
+                s.done_bg()
+            } else {
+                s.failed_bg()
+            };
             self.line(&format!(
-                "{faint}── {reset}{color}{bold}{mark}{reset} {key}{text}{reset} {faint}{rule}{reset}",
-                faint = s.faint(),
+                "{bg} {color}{bold}{mark}{reset}{bg} {key}{text} \x1b[K{reset}",
                 reset = s.reset(),
                 bold = s.bold(),
                 key = s.key(),
