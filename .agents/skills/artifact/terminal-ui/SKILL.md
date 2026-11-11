@@ -11,7 +11,7 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 
 | File | Content |
 |---|---|
-| `src/ui/mod.rs` | `Terminal` (`line`, `partial`, `text` = the only print paths); `screen_lock`, `screen_write`; constants `RESULT_LINES` (8), `INPUT_HINTS`, `EDIT_HINTS`, `COMMANDS` |
+| `src/ui/mod.rs` | `Terminal` (`line`, `partial`, `text` = the only print paths); `screen_lock`, `screen_write`; constants `FOLD_OPEN_LINES` (5), `INPUT_HINTS`, `EDIT_HINTS`, `COMMANDS` |
 | `src/ui/banner.rs` | `art(style, columns)`: the start picture; `glyph` holds the 5-row letters (`#` = filled cell) |
 | `src/ui/dialog.rs` | `ask_token(style, reason)`: the token window; `rows` builds it (tested for width and masking) |
 | `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history, command menu), `command_matches`, `Dock`, `Input`, `read_choice`, `RawMode` |
@@ -55,20 +55,22 @@ escape sequences and carries colors over a break). The view is the last rows of 
 |---|---|
 | at the bottom | `Terminal::emit` records the text (`View::push`) and writes it to the terminal, which wraps and scrolls inside the scroll region exactly like the model |
 | scrolled up | `push` only records; the view stays on the same rows (`offset` grows), nothing is written |
+| a block (`begin_fold`, `end_fold`) | the lines pushed between them are the body under the header line; `end_fold(folded_text, open_text, folded)` sets the two header texts and hides the body when folded; `rewrap` skips hidden bodies, `wrapped` keeps the line each row comes from |
+| click, Ctrl-O | `mouse_event` → `View::click(row)`: a left click on the header row of a finished block with a body toggles it (`toggle` keeps the rows above in place); Ctrl-O → `toggle_last`; `unfold_last` keeps the view at the bottom |
 | scroll (PgUp, PgDn, wheel 3 rows, Ctrl+Home, Ctrl+End) | `View::scroll` / `top` / `bottom` → `repaint`: every row of the area cleared and drawn from the model, cursor at `out()` |
 | dock grows or shrinks, terminal resized | `Editor::sync_view` → `View::resize` (rewrap on a new width) → `repaint`; `Dock::out` comes from `View::out`, no cursor query |
 | input sent | `Editor::erase` → `View::bottom` first |
 | another conversation (`/sessions`, `/new`, `/model`) | `Terminal::show_output(text)` → `View::replace`: the saved output of that conversation, or a clean area; `Terminal::output` gives the text to save |
 | a window (`token_dialog`, `pick`) | drawn over the screen (no second alternate screen), then `Terminal::redraw`: clear, `Editor::redraw_dock`, `repaint` |
 
-- Everything printed in the screen layout must go through `emit` (`line`, `partial`, `text`), `erase_partial`
-  (removes the open line: the approval question) or `drop_lines(n)` (removes complete lines: the `… +N lines`
-  mark). A direct write would put the model and the screen out of step.
+- Everything printed in the screen layout must go through `emit` (`line`, `partial`, `text`) or `erase_partial`
+  (removes the open line: the approval question). A direct write would put the model and the screen out of step.
 - The scroll mark (`View::indicator`) sits on the dock's top border, right side; the box redraws it after itself.
 - Keys reach the view from two places: `Editor::read` (while typing) and the key watcher (while a task runs).
 - Mouse reports (`ESC[?1000h`, `ESC[?1006h`) are on when `ui.mouse_scroll` is true: the terminal then gives
   clicks to the app, so selecting text needs Shift.
-- `KEEP_LINES` (20000) lines are kept.
+- `KEEP_LINES` (20000) lines are kept; `forget` drops the oldest with the blocks that start in them.
+- `transcript` (exit, saved sessions) writes every block out in full; a restored session has plain lines, no folds.
 
 ## Rules
 
@@ -92,7 +94,7 @@ escape sequences and carries colors over a break). The view is the last rows of 
 ● Run df -h /                               Ui::action
   check free disk space                     its `why`
   Allow? y yes · a always in this session · n no · e edit      only when policy says ask; one key
-  ⎿ exit code 0                             Ui::result, at most RESULT_LINES lines
+  ⎿ exit code 0 · 2 lines  ▾ hide           the action's block: header, then its output (folded when long)
     Filesystem  Size ...
 
 There is 810G free.                         the answer, markdown styled
@@ -105,7 +107,7 @@ There is 810G free.                         the answer, markdown styled
 | reasoning | `Event::Thinking` | printed dim, a blank line before the answer |
 | answer | `Markdown` | the `dsc` block is never shown; blank lines at the edges dropped, at most one inside; with colors: inline code colored (backticks removed), code blocks colored with a gray bar `  │ ` in front of each line and the fence lines dropped, `**bold**`, heading lines, links (`http://`, `https://` at a word start, up to whitespace or a closing mark, punctuation at the end left out; not inside code): the URL is collected, then printed blue inside an OSC 8 hyperlink (`Style::hyperlink`); the terminal underlines it under the mouse and opens it on click, which is why `Style::link` has no underline of its own (it would hide the hover effect; an app cannot see the mouse or change its pointer without taking over mouse selection); a line start is held back until it cannot be a fence |
 | question | `approve` | `read_choice`; Esc, Ctrl-C, Ctrl-D = no; `e` opens the box with the command (`remember = false`); the question line is erased after the key |
-| result | `result` | `Result: ` prefix and `--- stdout ---` dropped, `--- stderr ---` → `stderr:`; a text starting with `Denied` is not repeated; the lines beyond `RESULT_LINES` are kept in `hidden_result` and printed by `result_is_answer` (the model's `done`), replacing the `… +N lines` line |
+| output of an action | `running`, `output`, `result` | a block: header `⎿ running…`, the body lines as they arrive (`output` → `clean_output` → `body_line`; a result without live output, like a file read, gives its lines in `result`), then the header becomes `⎿ <outcome> · N lines ▸ show` and the body folds when it has more than `FOLD_OPEN_LINES` (5) lines, else `▾ hide` and open; `result_is_answer` (the model's `done`) unfolds it; a text starting with `Denied` is not repeated. Inline there is no folding: the lines, then `⎿ <outcome> · N lines` |
 | prompt | `echo` | the submitted input on a bar with its own background (`Style::prompt_bg`, filled to the row end with `ESC[K`); plain `> text` without colors |
 | finish | `finish` | a bar with a background filled to the row end (`ESC[K`), like the prompt: dark green `✓ 6.4s · 2 answers · 1 action` (`Style::done_bg`), dark red `✗ <error> · …` (`failed_bg`) after a failure or an interrupt; the text is cut to one row; without colors just the text |
 | spacing | `blank()` | one empty line between the echo, each action block, the answer, the finish line and the next input |
@@ -174,7 +176,8 @@ at the box width (wide characters count two columns); a box taller than the scre
 |---|---|
 | Enter | send (empty input is ignored); after a `\` at the cursor: new line |
 | Shift+Enter (where the terminal reports it: `RawMode` asks for the keyboard flags), Alt+Enter, Ctrl-J | new line |
-| PgUp, PgDn, Ctrl+Home, Ctrl+End, mouse wheel | scroll the output (`scroll_by_key`, `scroll_by_wheel`) |
+| PgUp, PgDn, Ctrl+Home, Ctrl+End, mouse wheel | scroll the output (`scroll_by_key`, `mouse_event`) |
+| Ctrl-O, click on a block header | fold or unfold the output of an action |
 | Up, Down | move a row; at the first or last row go through the history (the draft is kept) |
 | Left, Right, Home, End, Ctrl-A, Ctrl-E | move |
 | Backspace, Delete, Ctrl-W or Alt+Backspace (word), Ctrl-U, Ctrl-K | delete |

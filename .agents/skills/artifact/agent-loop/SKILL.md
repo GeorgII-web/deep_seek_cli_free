@@ -43,7 +43,9 @@ directory, the task. The model answers either plain text (final answer, the loop
   runs; further blocks are ignored and the model is told so. Broken JSON, an unknown tool or field → `Invalid`,
   its text goes back to the model.
 - Output is capped per stream to `agent.max_output_bytes` (`tools::cap`: head + tail, cut on character borders).
-- `tools::shell`: `bash -c`, stdin closed, own process group; a timeout or an interrupt kills the group; output of a
+- `tools::shell(cmd, timeout, interrupts, on_output)`: `bash -c`, stdin closed, own process group; a timeout or an
+  interrupt kills the group; each piece read from stdout or stderr goes to `on_output` at once (`Ui::output`) and
+  into the buffers of the result; output of a
   finished command is collected for 0.5 s more at most (a background child may hold the pipe).
 - The loop ends on a final answer, after `agent.max_steps` answers, or with an `Interrupt` as the error
   (`interrupt::Interrupts::next` is raced against the model's answer and against a running command, which is
@@ -67,7 +69,7 @@ directory, the task. The model answers either plain text (final answer, the loop
 ## `Ui` trait
 
 `event` (pieces of the answer and `Event::Status` progress), `answer_end`, `action`, `approve`, `running`,
-`result`, `result_is_answer`, `note`. The terminal implementation is `../terminal-ui/SKILL.md`; tests use `FakeUi`.
+`output` (what a running command prints, as it arrives), `result`, `result_is_answer`, `note`. The terminal implementation is `../terminal-ui/SKILL.md`; tests use `FakeUi`.
 
 ## Adding a tool
 

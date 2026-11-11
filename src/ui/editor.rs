@@ -680,7 +680,7 @@ impl Editor {
                 // The wheel scrolls the output; the box is drawn again by the loop.
                 Event::Mouse(mouse) => {
                     if let Some(view) = &self.view {
-                        super::scroll_by_wheel(view, mouse.kind);
+                        super::mouse_event(view, mouse);
                     }
                     continue;
                 }

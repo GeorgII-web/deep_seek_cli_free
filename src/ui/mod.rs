@@ -34,8 +34,47 @@ use std::time::{Duration, Instant};
 use style::Style;
 use tokio::sync::mpsc::UnboundedSender;
 
-/// Lines of a result shown to the user (the model gets the capped full text).
-const RESULT_LINES: usize = 8;
+/// An action's output of up to this many lines stays open when the action ends; a longer one folds.
+const FOLD_OPEN_LINES: usize = 5;
+
+/// What a command printed, made safe for the screen: escape sequences and
+/// control characters are dropped, a carriage return ends the line.
+fn clean_output(piece: &str) -> String {
+    let mut out = String::new();
+    let mut chars = piece.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\x1b' => match chars.next() {
+                // CSI: up to its final byte. OSC: up to BEL or ESC \.
+                Some('[') => {
+                    for next in chars.by_ref() {
+                        if ('\x40'..='\x7e').contains(&next) {
+                            break;
+                        }
+                    }
+                }
+                Some(']') => {
+                    while let Some(next) = chars.next() {
+                        if next == '\x07' || (next == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                            break;
+                        }
+                    }
+                }
+                _ => {}
+            },
+            '\r' => {
+                if chars.peek() != Some(&'\n') {
+                    out.push('\n');
+                }
+            }
+            '\n' => out.push('\n'),
+            '\t' => out.push_str("    "),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
 /// Hints under the input box: key, what it does. As many as fit are shown.
 const INPUT_HINTS: &[(&str, &str)] = &[
     ("Shift+Tab", "mode"),
@@ -76,6 +115,10 @@ pub(crate) fn screen_lock() -> MutexGuard<'static, ()> {
 
 /// Writes control sequences and text to the terminal in one piece.
 pub(crate) fn screen_write(text: &str) {
+    // The unit tests draw into nothing.
+    if cfg!(test) {
+        return;
+    }
     let _screen = screen_lock();
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(text.as_bytes());
@@ -94,16 +137,22 @@ struct Watch {
 const WHEEL_ROWS: isize = 3;
 
 /// Scrolls the output for a wheel event. Shared by the key watcher and the input box.
-pub(crate) fn scroll_by_wheel(view: &Mutex<View>, kind: MouseEventKind) {
+/// The mouse on the output: the wheel scrolls it, a click on the header of a
+/// block folds or unfolds it. Shared by the key watcher and the input box.
+pub(crate) fn mouse_event(view: &Mutex<View>, mouse: crossterm::event::MouseEvent) {
     let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-    match kind {
+    match mouse.kind {
         MouseEventKind::ScrollUp => view.scroll(WHEEL_ROWS),
         MouseEventKind::ScrollDown => view.scroll(-WHEEL_ROWS),
+        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
+            view.click(mouse.row as usize);
+        }
         _ => {}
     }
 }
 
-/// Scrolls the output for PgUp, PgDn, Ctrl+Home and Ctrl+End. Returns true when the key was one of them.
+/// Scrolls the output for PgUp, PgDn, Ctrl+Home and Ctrl+End, and folds or
+/// unfolds the last block for Ctrl-O. Returns true when the key was one of them.
 pub(crate) fn scroll_by_key(view: &Mutex<View>, code: KeyCode, modifiers: KeyModifiers) -> bool {
     let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let ctrl = modifiers.contains(KeyModifiers::CONTROL);
@@ -118,6 +167,7 @@ pub(crate) fn scroll_by_key(view: &Mutex<View>, code: KeyCode, modifiers: KeyMod
         }
         KeyCode::Home if ctrl => view.top(),
         KeyCode::End if ctrl => view.bottom(),
+        KeyCode::Char('o') if ctrl => view.toggle_last(),
         _ => return false,
     }
     true
@@ -147,9 +197,10 @@ pub struct Terminal {
     view: Option<Arc<Mutex<View>>>,
     /// Screen layout: the mouse wheel scrolls the output (the terminal reports the mouse to the app)
     mouse: bool,
-    /// Lines of the last result that the preview left out; printed when the model
-    /// says the result is the answer
-    hidden_result: Vec<String>,
+    /// Output of the running command not yet ended by a line end
+    live: String,
+    /// Body lines of the action's block so far (live output, or lines of its result)
+    live_lines: usize,
     /// Who answers: true = the built-in mock, false = DeepSeek. Shown under the box and on the progress line.
     mock: Arc<AtomicBool>,
     /// The approval mode: true = allow all (run without asking), false = ask.
@@ -192,7 +243,8 @@ impl Terminal {
             watch: None,
             view: None,
             mouse: true,
-            hidden_result: Vec::new(),
+            live: String::new(),
+            live_lines: 0,
             mock,
             allow_all,
         }
@@ -272,7 +324,7 @@ impl Terminal {
                     Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => key,
                     Ok(TermEvent::Mouse(mouse)) => {
                         if let Some(view) = &view {
-                            scroll_by_wheel(view, mouse.kind);
+                            mouse_event(view, mouse);
                         }
                         continue;
                     }
@@ -398,28 +450,6 @@ impl Terminal {
         }
     }
 
-    /// Removes the last `count` printed lines (the cursor is at the start of a line).
-    /// Inline this needs a terminal that can move the cursor up.
-    fn drop_lines(&self, count: usize) {
-        match &self.view {
-            Some(view) => {
-                if view
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .drop_lines(count)
-                {
-                    screen_write(&format!("\x1b[{count}A\r\x1b[2K"));
-                }
-            }
-            None if self.style.on() => {
-                let _screen = screen_lock();
-                eprint!("\x1b[{count}A\r\x1b[2K");
-                let _ = std::io::stderr().flush();
-            }
-            None => {}
-        }
-    }
-
     /// Answer text: always stdout.
     fn text(&self, text: &str) {
         if self.emit(text) {
@@ -536,11 +566,24 @@ impl Terminal {
         }
     }
 
-    /// One line of an action's output, indented under the action.
-    fn result_line(&self, mark: &str, line: &str) {
+    /// One line of an action's output, indented under the action. Inline the
+    /// progress line shares the row, so it steps aside for the moment.
+    fn body_line(&mut self, line: &str) {
         let s = self.style;
-        let line = s.links(line, s.gray());
-        self.line(&format!("{}  {mark} {line}{}", s.gray(), s.reset()));
+        let inline_spinner = self.view.is_none();
+        if inline_spinner {
+            self.spinner.stop();
+        }
+        self.line(&format!(
+            "{}    {}{}",
+            s.gray(),
+            s.links(line, s.gray()),
+            s.reset()
+        ));
+        self.live_lines += 1;
+        if inline_spinner {
+            self.spinner.start("Running");
+        }
     }
 
     /// The submitted input as part of the scrollback: with colors, a bar with its
@@ -602,7 +645,7 @@ impl Terminal {
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .replace(text);
             self.gap = text.is_empty();
-            self.hidden_result.clear();
+            self.live.clear();
         }
     }
 
@@ -743,6 +786,10 @@ impl Terminal {
             row(
                 "PgUp, PgDn, mouse wheel",
                 "scroll the output; Ctrl+Home top, Ctrl+End bottom",
+            ),
+            row(
+                "Click on ▸ or ▾, Ctrl-O",
+                "unfold or fold the output of an action (Ctrl-O: the last one)",
             ),
             row("Ctrl-A, Ctrl-E", "start, end of the line"),
             row(
@@ -952,9 +999,29 @@ impl Ui for Terminal {
     }
 
     fn running(&mut self, _: &Action) {
-        self.hidden_result.clear();
         self.actions += 1;
+        self.live.clear();
+        self.live_lines = 0;
+        // Screen layout: what the action prints becomes a block that can be folded.
+        if let Some(view) = &self.view {
+            view.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .begin_fold();
+            self.line(&format!(
+                "{}  ⎿ running…{}",
+                self.style.gray(),
+                self.style.reset()
+            ));
+        }
         self.spinner.start("Running");
+    }
+
+    fn output(&mut self, piece: &str) {
+        self.live.push_str(&clean_output(piece));
+        while let Some(end) = self.live.find('\n') {
+            let line: String = self.live.drain(..=end).collect();
+            self.body_line(line.trim_end_matches('\n'));
+        }
     }
 
     fn result(&mut self, text: &str) {
@@ -965,27 +1032,62 @@ impl Ui for Terminal {
             return;
         }
         let s = self.style;
-        // The text is the message for the model; its markers are shortened here.
-        let lines: Vec<String> = text
-            .lines()
-            .filter(|line| *line != "--- stdout ---")
-            .map(|line| match line {
-                "--- stderr ---" => "stderr:".to_string(),
-                line => line.strip_prefix("Result: ").unwrap_or(line).to_string(),
-            })
-            .collect();
-        for (i, line) in lines.iter().take(RESULT_LINES).enumerate() {
-            let mark = if i == 0 { "⎿" } else { " " };
-            self.result_line(mark, line);
+        if !self.live.is_empty() {
+            let rest = std::mem::take(&mut self.live);
+            self.body_line(&rest);
         }
-        self.hidden_result = lines.iter().skip(RESULT_LINES).cloned().collect();
-        if !self.hidden_result.is_empty() {
-            self.line(&format!(
-                "{}    … +{} lines{}",
-                s.gray(),
-                self.hidden_result.len(),
-                s.reset()
-            ));
+        // The text is the message for the model: its first line is the outcome, the rest the output.
+        let mut lines =
+            text.lines()
+                .filter(|line| *line != "--- stdout ---")
+                .map(|line| match line {
+                    "--- stderr ---" => "stderr:",
+                    line => line.strip_prefix("Result: ").unwrap_or(line),
+                });
+        let outcome = lines
+            .next()
+            .unwrap_or("")
+            .trim_matches('-')
+            .trim()
+            .to_string();
+        // Nothing was shown live (a file read, a command without output): the body comes from the result.
+        if self.live_lines == 0 {
+            for line in lines.filter(|line| *line != "(no output)") {
+                self.body_line(line);
+            }
+        }
+        let summary = match self.live_lines {
+            0 => outcome,
+            1 => format!("{outcome} · 1 line"),
+            n => format!("{outcome} · {n} lines"),
+        };
+        let base = format!("{}  ⎿ {summary}{}", s.gray(), s.reset());
+        match &self.view {
+            Some(view) => {
+                // The block ends: a long output folds to its header; a click or Ctrl-O opens it.
+                let switch = |mark: &str, what: &str| {
+                    format!(
+                        "{base}  {}{mark}{} {}{what}{}",
+                        s.accent(),
+                        s.reset(),
+                        s.faint(),
+                        s.reset()
+                    )
+                };
+                let open_text = if self.live_lines > 0 {
+                    switch("▾", "hide")
+                } else {
+                    base.clone()
+                };
+                let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+                view.end_fold(
+                    switch("▸", "show"),
+                    open_text,
+                    self.live_lines > FOLD_OPEN_LINES,
+                );
+                view.repaint();
+            }
+            None => self.line(&base),
         }
         self.gap = false;
         self.blank();
@@ -993,22 +1095,30 @@ impl Ui for Terminal {
 
     fn result_is_answer(&mut self) {
         self.close_output();
-        let hidden = std::mem::take(&mut self.hidden_result);
-        if hidden.is_empty() {
-            return;
+        // The output is what the user asked for: it must be visible.
+        if let Some(view) = &self.view {
+            view.lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .unfold_last();
         }
-        // The "… +N lines" line and the blank line after it are replaced by the lines themselves.
-        self.drop_lines(2);
-        for line in &hidden {
-            self.result_line(" ", line);
-        }
-        self.gap = false;
-        self.blank();
     }
 
     fn note(&mut self, text: &str) {
         self.close_output();
         self.line(&self.style.inline(&format!("  {text}"), self.style.gray()));
         self.gap = false;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::clean_output;
+
+    #[test]
+    fn command_output_is_cleaned() {
+        assert_eq!(
+            clean_output("a\x1b[31mred\x1b[0m\tb\r\nc\rd\x07\x1b]0;title\x07e\n"),
+            "ared    b\nc\nde\n"
+        );
     }
 }

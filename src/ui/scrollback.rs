@@ -109,14 +109,31 @@ pub fn columns_of(row: &str) -> usize {
     used
 }
 
+/// A block of lines that can be folded to its header: the output of an action.
+struct Fold {
+    /// Index of the header line in `closed`
+    header: usize,
+    /// One past the last body line; the body is `header + 1..end`
+    end: usize,
+    folded: bool,
+    /// The header as it reads folded and unfolded (set when the block ends)
+    texts: Option<(String, String)>,
+}
+
 pub struct View {
     style: Style,
     /// Complete lines, without their line end
     closed: Vec<String>,
     /// The line being written
     open: String,
-    /// `closed` wrapped to `columns`
-    wrapped: Vec<String>,
+    /// The visible `closed` lines wrapped to `columns`: the line each row comes from, and the row
+    wrapped: Vec<(usize, String)>,
+    /// Foldable blocks, in the order of their headers
+    folds: Vec<Fold>,
+    /// The next complete line starts a block
+    fold_pending: bool,
+    /// A block is being written: new lines join it
+    fold_active: bool,
     columns: usize,
     /// Rows of the output area (the screen above the dock)
     rows: usize,
@@ -131,6 +148,9 @@ impl View {
             closed: Vec::new(),
             open: String::new(),
             wrapped: Vec::new(),
+            folds: Vec::new(),
+            fold_pending: false,
+            fold_active: false,
             columns: columns.max(1),
             rows: rows.max(1),
             offset: 0,
@@ -153,12 +173,29 @@ impl View {
         self.open.push_str(parts.next().unwrap_or(""));
         for part in parts {
             let line = std::mem::replace(&mut self.open, part.to_string());
-            self.wrapped.extend(wrap(&line, self.columns));
+            let index = self.closed.len();
+            self.wrapped.extend(
+                wrap(&line, self.columns)
+                    .into_iter()
+                    .map(|row| (index, row)),
+            );
             self.closed.push(line);
+            if std::mem::take(&mut self.fold_pending) {
+                self.folds.push(Fold {
+                    header: index,
+                    end: index + 1,
+                    folded: false,
+                    texts: None,
+                });
+                self.fold_active = true;
+            } else if self.fold_active
+                && let Some(fold) = self.folds.last_mut()
+            {
+                fold.end = index + 1;
+            }
         }
         if self.closed.len() > KEEP_LINES {
-            self.closed.drain(..self.closed.len() - KEEP_LINES);
-            self.rewrap();
+            self.forget(self.closed.len() - KEEP_LINES);
         }
         if self.offset > 0 {
             // Scrolled up: the view keeps showing the same rows.
@@ -168,6 +205,113 @@ impl View {
         self.offset == 0
     }
 
+    /// Drops the oldest `count` lines and the blocks that started in them.
+    fn forget(&mut self, count: usize) {
+        self.closed.drain(..count);
+        self.folds.retain(|fold| fold.header >= count);
+        for fold in &mut self.folds {
+            fold.header -= count;
+            fold.end -= count;
+        }
+        self.rewrap();
+    }
+
+    /// The next complete line is the header of a block; the lines after it are
+    /// its body until `end_fold`.
+    pub fn begin_fold(&mut self) {
+        self.fold_pending = true;
+    }
+
+    /// Lines in the body of the block being written.
+    #[cfg(test)]
+    pub fn fold_lines(&self) -> usize {
+        match (self.fold_active, self.folds.last()) {
+            (true, Some(fold)) => fold.end - fold.header - 1,
+            _ => 0,
+        }
+    }
+
+    /// Ends the block: its header becomes `folded_text` or `open_text`, and
+    /// with `folded` the body is hidden. The caller repaints.
+    pub fn end_fold(&mut self, folded_text: String, open_text: String, folded: bool) {
+        self.fold_pending = false;
+        if !std::mem::take(&mut self.fold_active) {
+            return;
+        }
+        if let Some(fold) = self.folds.last_mut() {
+            fold.folded = folded && fold.end > fold.header + 1;
+            self.closed[fold.header] = if fold.folded {
+                folded_text.clone()
+            } else {
+                open_text.clone()
+            };
+            fold.texts = Some((folded_text, open_text));
+        }
+        self.rewrap();
+    }
+
+    /// Folds or unfolds block `index`, keeping the rows above it where they are, and draws.
+    fn toggle(&mut self, index: usize) {
+        let first_row = self.total().saturating_sub(self.rows + self.offset);
+        let Some(fold) = self.folds.get_mut(index) else {
+            return;
+        };
+        let Some((folded_text, open_text)) = fold.texts.clone() else {
+            return;
+        };
+        if fold.end <= fold.header + 1 {
+            return;
+        }
+        fold.folded = !fold.folded;
+        self.closed[fold.header] = if fold.folded { folded_text } else { open_text };
+        self.rewrap();
+        // The same row stays at the top of the view.
+        self.offset = self
+            .total()
+            .saturating_sub(self.rows + first_row)
+            .min(self.max_offset());
+        self.repaint();
+    }
+
+    /// A click on screen row `row` (0-based) of the output area: on the header
+    /// of a block it folds or unfolds it. Returns true when it did.
+    pub fn click(&mut self, row: usize) -> bool {
+        let first_row = self.total().saturating_sub(self.rows + self.offset);
+        let Some(&(line, _)) = self.wrapped.get(first_row + row) else {
+            return false;
+        };
+        match self.folds.iter().position(|fold| {
+            fold.header == line && fold.texts.is_some() && fold.end > fold.header + 1
+        }) {
+            Some(index) => {
+                self.toggle(index);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Folds or unfolds the last finished block (the key for it, and "the output is the answer").
+    pub fn toggle_last(&mut self) {
+        if let Some(index) = self.folds.iter().rposition(|fold| fold.texts.is_some()) {
+            self.toggle(index);
+        }
+    }
+
+    /// Shows the body of the last finished block, when it is hidden.
+    pub fn unfold_last(&mut self) {
+        if let Some(index) = self.folds.iter().rposition(|fold| fold.texts.is_some())
+            && self.folds[index].folded
+        {
+            // It is shown because it is the answer: the view stays at the end of the output.
+            let at_bottom = self.offset == 0;
+            self.toggle(index);
+            if at_bottom {
+                self.bottom();
+            }
+        }
+    }
+
     /// Drops what was written on the open line (a question that got its answer).
     /// Returns true when the terminal line must be erased too.
     pub fn erase_open(&mut self) -> bool {
@@ -175,25 +319,24 @@ impl View {
         self.offset == 0
     }
 
-    /// Removes the last `count` complete lines; the open line must be empty.
-    /// Returns true when the terminal must drop them too.
-    pub fn drop_lines(&mut self, count: usize) -> bool {
-        for _ in 0..count {
-            if let Some(line) = self.closed.pop() {
-                let rows = wrap(&line, self.columns).len();
-                self.wrapped
-                    .truncate(self.wrapped.len().saturating_sub(rows));
+    /// Wraps again: after a new width, a fold change, or dropped lines.
+    fn rewrap(&mut self) {
+        self.wrapped.clear();
+        let mut folds = self.folds.iter().peekable();
+        let mut hidden_until = 0;
+        for (index, line) in self.closed.iter().enumerate() {
+            let fold = folds.next_if(|fold| fold.header == index);
+            if index < hidden_until {
+                continue;
+            }
+            self.wrapped
+                .extend(wrap(line, self.columns).into_iter().map(|row| (index, row)));
+            if let Some(fold) = fold
+                && fold.folded
+            {
+                hidden_until = fold.end;
             }
         }
-        self.offset == 0
-    }
-
-    fn rewrap(&mut self) {
-        self.wrapped = self
-            .closed
-            .iter()
-            .flat_map(|line| wrap(line, self.columns))
-            .collect();
     }
 
     fn max_offset(&self) -> usize {
@@ -202,7 +345,7 @@ impl View {
 
     /// The rows the view shows now, top to bottom.
     fn visible(&self) -> Vec<String> {
-        let mut all = self.wrapped.clone();
+        let mut all: Vec<String> = self.wrapped.iter().map(|(_, row)| row.clone()).collect();
         all.extend(self.open_rows());
         let end = all.len().saturating_sub(self.offset);
         let start = end.saturating_sub(self.rows);
@@ -315,6 +458,9 @@ impl View {
     pub fn replace(&mut self, text: &str) {
         self.closed.clear();
         self.wrapped.clear();
+        self.folds.clear();
+        self.fold_pending = false;
+        self.fold_active = false;
         self.open.clear();
         self.offset = 0;
         if !text.is_empty() {
@@ -327,9 +473,16 @@ impl View {
         self.repaint();
     }
 
-    /// The whole output as text, for the terminal after the chat closes.
+    /// The whole output as text, for the terminal after the chat closes. Blocks
+    /// are written out in full, with the header of their unfolded form.
     pub fn transcript(&self) -> String {
-        let mut text = self.closed.join("\n");
+        let mut lines: Vec<&str> = self.closed.iter().map(String::as_str).collect();
+        for fold in &self.folds {
+            if let Some((_, open_text)) = &fold.texts {
+                lines[fold.header] = open_text;
+            }
+        }
+        let mut text = lines.join("\n");
         if !self.open.is_empty() {
             text.push('\n');
             text.push_str(&self.open);
@@ -408,14 +561,76 @@ mod tests {
     }
 
     #[test]
-    fn erase_open_and_drop_lines() {
+    fn erase_open_drops_the_unfinished_line() {
         let mut v = view(10, 5);
-        v.push("a\nb\n\nquestion? ");
+        v.push("a\nquestion? ");
         assert!(v.erase_open());
         assert_eq!(v.open, "");
-        assert!(v.drop_lines(2));
-        assert_eq!(v.closed, ["a"]);
         assert_eq!(v.visible(), ["a", ""]);
+    }
+
+    /// A view with a finished block: header, three body lines, a line after it.
+    fn with_block(folded: bool) -> View {
+        let mut v = view(20, 10);
+        v.push("before\n");
+        v.begin_fold();
+        v.push("running\n");
+        assert_eq!(v.fold_lines(), 0);
+        v.push("b1\nb2\nb3\n");
+        assert_eq!(v.fold_lines(), 3);
+        v.end_fold("3 lines [show]".into(), "3 lines [hide]".into(), folded);
+        v.push("after\n");
+        v
+    }
+
+    #[test]
+    fn a_block_shows_its_body_live_and_folds_at_the_end() {
+        let v = with_block(true);
+        assert_eq!(v.visible(), ["before", "3 lines [show]", "after", ""]);
+        let open = with_block(false);
+        assert_eq!(
+            open.visible(),
+            ["before", "3 lines [hide]", "b1", "b2", "b3", "after", ""]
+        );
+        // The saved text always has the whole block.
+        assert_eq!(v.transcript(), "before\n3 lines [hide]\nb1\nb2\nb3\nafter");
+    }
+
+    #[test]
+    fn click_on_the_header_toggles_and_other_rows_do_nothing() {
+        let mut v = with_block(true);
+        assert!(!v.click(0));
+        assert!(v.click(1));
+        assert_eq!(
+            v.visible(),
+            ["before", "3 lines [hide]", "b1", "b2", "b3", "after", ""]
+        );
+        // A body row is not a switch; the header is, again.
+        assert!(!v.click(2));
+        assert!(v.click(1));
+        assert_eq!(v.visible(), ["before", "3 lines [show]", "after", ""]);
+        v.unfold_last();
+        assert_eq!(v.visible().len(), 7);
+        v.toggle_last();
+        assert_eq!(v.visible().len(), 4);
+    }
+
+    #[test]
+    fn a_block_without_body_is_not_folded_and_old_lines_take_their_blocks_along() {
+        let mut v = view(20, 10);
+        v.begin_fold();
+        v.push("running\n");
+        v.end_fold("x [show]".into(), "done".into(), true);
+        assert_eq!(v.visible(), ["done", ""]);
+        assert!(!v.click(0));
+
+        let mut v = with_block(true);
+        v.forget(1);
+        assert_eq!(v.visible(), ["3 lines [show]", "after", ""]);
+        assert!(v.click(0));
+        v.forget(2);
+        assert!(v.folds.is_empty());
+        assert_eq!(v.visible(), ["b2", "b3", "after", ""]);
     }
 
     #[test]

@@ -26,13 +26,13 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/agent/protocol.rs` | `Action` (`shell`, `read_file`, `write_file`), `first_prompt` (rules + task), `next_prompt` (a further task), `parse` → `Final` / `Done` / `Action` / `Invalid`, `shell_result` text |
 | `src/agent/policy.rs` | `check` → `Allow` / `Ask` / `Deny`, `always_key` (what "always" covers) |
 | `src/agent/interrupt.rs` | `Interrupt` (`Stop`, `Quit`), `Interrupts` (keys from the UI, or the Ctrl-C signal without a terminal) |
-| `src/agent/tools.rs` | `shell` (bash, own process group, timeout, interrupt, output collected), `cap`, `read_file`, `write_file` |
+| `src/agent/tools.rs` | `shell` (bash, own process group, timeout, interrupt, output collected and passed on live), `cap`, `read_file`, `write_file` |
 | `src/agent/run.rs` | `run` (the loop for one task; takes the prompt, the mode flag `yes` read before every action, the session's "always" set and the interrupts), `act` (show, check, ask, edit), `execute`; `Ui` trait and `Decision`; loop tests with a scripted backend |
 | `src/ui/mod.rs` | `Terminal` = `Ui` on the terminal plus `open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `token_dialog`, `interrupts` (key watcher: Esc stops a task, Ctrl-C twice quits, Shift+Tab switches the mode), `mode`, `toggle_mode`; two layouts: inline (single task) and screen (chat: alternate screen, box docked at the bottom, output scrolled by the app); `screen_lock`, `screen_write` |
 | `src/ui/banner.rs` | `art`: the start picture "DEEP SEEK CLI FREE" in colored block letters, one or two bands by terminal width |
 | `src/ui/dialog.rs` | `ask_token`: the token window (masked field, OK / Cancel); `pick`: a list window (arrows, Enter) |
 | `src/ui/editor.rs` | `Buffer`, `Editor` (multiline input box inline or docked with a scroll region above, history, slash-command menu), `command_matches`, `read_choice` (one key) |
-| `src/ui/scrollback.rs` | `View`: the chat's output kept by the app, wrapped and scrolled (the input box stays at the bottom) |
+| `src/ui/scrollback.rs` | `View`: the chat's output kept by the app, wrapped and scrolled (the input box stays at the bottom), with foldable blocks for the output of actions (click or Ctrl-O) |
 | `src/ui/render.rs` | `Markdown`: hides the `dsc` block, trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings, links |
 | `src/ui/spinner.rs`, `style.rs` | progress line with a clock, key hint and mode; every color code, two grays for hints (`key`, `faint`) |
 | `.github/workflows/ci.yml`, `release.yml` | the checks on every push; on a tag `v<version>` the Linux binary as a GitHub release |

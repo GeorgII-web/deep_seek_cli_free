@@ -33,6 +33,8 @@ pub trait Ui {
     fn action(&mut self, action: &Action);
     /// The action starts now (allowed or approved)
     fn running(&mut self, action: &Action);
+    /// What a running command prints, as it arrives (any chunking)
+    fn output(&mut self, piece: &str);
     /// What the action returned (the text that goes to the model)
     fn result(&mut self, text: &str);
     /// The model ended the task without a text answer: the last result is the
@@ -151,20 +153,21 @@ async fn act<U: Ui>(
         }
     }
     ui.running(&action);
-    execute(&action, settings, interrupts).await
+    execute(&action, settings, interrupts, ui).await
 }
 
-async fn execute(
+async fn execute<U: Ui>(
     action: &Action,
     settings: &Settings,
     interrupts: &mut Interrupts,
+    ui: &mut U,
 ) -> Result<String, Interrupt> {
     let max = settings.agent.max_output_bytes;
     Ok(match action {
         Action::Shell { cmd, timeout_s, .. } => {
             let limit = settings.agent.command_timeout_secs;
             let timeout = Duration::from_secs(timeout_s.unwrap_or(limit).clamp(1, limit.max(1)));
-            match tools::shell(cmd, timeout, interrupts).await {
+            match tools::shell(cmd, timeout, interrupts, &mut |piece| ui.output(piece)).await {
                 Ok(ShellOutput {
                     interrupted: Some(why),
                     ..
@@ -227,6 +230,7 @@ mod tests {
         asked: Vec<String>,
         notes: Vec<String>,
         answers_by_result: u32,
+        live: String,
     }
 
     impl Ui for FakeUi {
@@ -238,6 +242,9 @@ mod tests {
         }
         fn action(&mut self, _: &Action) {}
         fn running(&mut self, _: &Action) {}
+        fn output(&mut self, piece: &str) {
+            self.live.push_str(piece);
+        }
         fn result(&mut self, _: &str) {}
         fn result_is_answer(&mut self) {
             self.answers_by_result += 1;
@@ -412,6 +419,16 @@ mod tests {
         assert_eq!(err.downcast_ref::<Interrupt>(), Some(&Interrupt::Stop));
         assert_eq!(backend.prompts.len(), 1);
         drop(stopper.await);
+    }
+
+    #[tokio::test]
+    async fn command_output_reaches_the_user_while_it_runs() {
+        let mut backend = Script::new(&[&block(r#"{"tool":"shell","cmd":"echo live"}"#), "ok"]);
+        let mut ui = FakeUi::default();
+        run_task(&mut backend, &mut ui, "t", &settings(), false)
+            .await
+            .unwrap();
+        assert_eq!(ui.live, "live\n");
     }
 
     #[tokio::test]

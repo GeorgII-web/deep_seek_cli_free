@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::process::Command;
+use tokio::sync::mpsc::{UnboundedSender, unbounded_channel};
 
 /// Output kept in memory per stream; the rest is read and dropped.
 const KEEP_BYTES: usize = 4 * 1024 * 1024;
@@ -48,8 +49,11 @@ pub fn cap(text: &str, max: usize) -> String {
     )
 }
 
+/// Reads a stream to its end: keeps the bytes for the result and passes each
+/// piece on at once, so the output can be shown while the command runs.
 fn collect(
     stream: impl AsyncRead + Unpin + Send + 'static,
+    live: UnboundedSender<String>,
 ) -> (Arc<Mutex<Vec<u8>>>, tokio::task::JoinHandle<()>) {
     let buffer = Arc::new(Mutex::new(Vec::new()));
     let target = buffer.clone();
@@ -60,6 +64,7 @@ fn collect(
             if n == 0 {
                 break;
             }
+            let _ = live.send(String::from_utf8_lossy(&chunk[..n]).into_owned());
             let mut kept = target.lock().unwrap();
             let room = KEEP_BYTES.saturating_sub(kept.len());
             kept.extend_from_slice(&chunk[..n.min(room)]);
@@ -69,11 +74,13 @@ fn collect(
 }
 
 /// Runs `cmd` in bash, in its own process group, without a terminal on stdin.
-/// A timeout or an interrupt of the user kills the whole group.
+/// A timeout or an interrupt of the user kills the whole group. `on_output`
+/// gets what the command prints (stdout and stderr, as it arrives).
 pub async fn shell(
     cmd: &str,
     timeout: Duration,
     interrupts: &mut Interrupts,
+    on_output: &mut dyn FnMut(&str),
 ) -> Result<ShellOutput> {
     let mut child = Command::new("bash")
         .arg("-c")
@@ -86,14 +93,20 @@ pub async fn shell(
         .spawn()
         .context("start bash")?;
     let group = child.id().map(|id| id as i32);
-    let (out, out_task) = collect(child.stdout.take().context("stdout")?);
-    let (err, err_task) = collect(child.stderr.take().context("stderr")?);
+    let (live, mut pieces) = unbounded_channel();
+    let (out, out_task) = collect(child.stdout.take().context("stdout")?, live.clone());
+    let (err, err_task) = collect(child.stderr.take().context("stderr")?, live);
 
     let (mut timed_out, mut interrupted) = (false, None);
-    let status = tokio::select! {
-        status = child.wait() => Some(status?),
-        _ = tokio::time::sleep(timeout) => { timed_out = true; None }
-        why = interrupts.next() => { interrupted = Some(why); None }
+    let deadline = tokio::time::sleep(timeout);
+    tokio::pin!(deadline);
+    let status = loop {
+        tokio::select! {
+            status = child.wait() => break Some(status?),
+            _ = &mut deadline => { timed_out = true; break None }
+            why = interrupts.next() => { interrupted = Some(why); break None }
+            Some(piece) = pieces.recv() => on_output(&piece),
+        }
     };
     let status = match status {
         Some(status) => status,
@@ -105,7 +118,11 @@ pub async fn shell(
             child.wait().await?
         }
     };
+    // What is still in the pipes; a background child may hold them open, so not forever.
     let _ = tokio::time::timeout(DRAIN, async {
+        while let Some(piece) = pieces.recv().await {
+            on_output(&piece);
+        }
         let _ = out_task.await;
         let _ = err_task.await;
     })
@@ -162,6 +179,7 @@ mod tests {
             "echo out; echo err >&2; exit 3",
             Duration::from_secs(10),
             &mut Interrupts::signal(),
+            &mut |_| {},
         )
         .await
         .unwrap();
@@ -180,6 +198,7 @@ mod tests {
             "echo begin; sleep 30 | sleep 30",
             Duration::from_millis(300),
             &mut Interrupts::signal(),
+            &mut |_| {},
         )
         .await
         .unwrap();
@@ -196,6 +215,7 @@ mod tests {
             "sleep 20 & echo done",
             Duration::from_secs(10),
             &mut Interrupts::signal(),
+            &mut |_| {},
         )
         .await
         .unwrap();
@@ -208,11 +228,34 @@ mod tests {
         let (sender, mut interrupts) = Interrupts::channel();
         sender.send(Interrupt::Stop).unwrap();
         let started = Instant::now();
-        let output = shell("sleep 30", Duration::from_secs(60), &mut interrupts)
-            .await
-            .unwrap();
+        let output = shell(
+            "sleep 30",
+            Duration::from_secs(60),
+            &mut interrupts,
+            &mut |_| {},
+        )
+        .await
+        .unwrap();
         assert_eq!(output.interrupted, Some(Interrupt::Stop));
         assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn output_is_passed_on_while_the_command_runs() {
+        let mut seen = String::new();
+        let output = shell(
+            "echo one; sleep 0.2; echo two >&2",
+            Duration::from_secs(10),
+            &mut Interrupts::signal(),
+            &mut |piece| seen.push_str(piece),
+        )
+        .await
+        .unwrap();
+        assert_eq!(seen, "one\ntwo\n");
+        assert_eq!(
+            (output.stdout.as_str(), output.stderr.as_str()),
+            ("one\n", "two\n")
+        );
     }
 
     #[test]

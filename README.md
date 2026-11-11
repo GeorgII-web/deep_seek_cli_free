@@ -141,6 +141,10 @@ There is 809G free on / (out of 1007G, 16% used).
   ⏵ ask · ◆ DeepSeek · Shift+Tab mode     Enter send · Shift+Enter new line · Ctrl-C twice quit · ↑↓ history
 ```
 
+A command's output appears line by line while it runs. When it has finished, a long output folds to one line
+(`⎿ exit code 0 · 23 lines ▸ show`); click that line, or press Ctrl-O for the last one, to open and close it. Up
+to five lines stay open, and so does an output that is itself the answer to your task.
+
 While `dsc` works, the line under the box shows what it waits for and for how long
 (`⠹ Waiting for DeepSeek… 3s · Esc to stop · ⏵ ask · ◆ DeepSeek`). The last line of a task shows the seconds it took on a colored bar (green when it worked, red when it failed or was stopped);
 your prompts stand out on a bar of their own. The box grows
@@ -153,6 +157,7 @@ shell prompt.
 | `/` | list the commands: Up / Down choose, Enter runs the chosen one at once, Tab only completes it in the box, Esc closes the list |
 | Shift+Enter, Ctrl-J, or `\` then Enter | new line (Shift+Enter needs a terminal that reports it; Ctrl-J always works) |
 | PgUp / PgDn, mouse wheel | scroll the output; Ctrl+Home = top, Ctrl+End = bottom |
+| Click on `▸ show` / `▾ hide`, Ctrl-O | unfold or fold the output of a command (Ctrl-O: the last one) |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
 | Shift+Tab | switch the mode: `ask` ⇄ `allow all`, also while a task runs |
