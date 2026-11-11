@@ -36,7 +36,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/ui/scrollback.rs` | `View`: the chat's output kept by the app, wrapped and scrolled (the input box stays at the bottom), with foldable blocks for the output of actions (click or Ctrl-O), mouse selection with copy, and the progress mark on the step that runs |
 | `src/ui/render.rs` | `Markdown`: hides the `dsc` block, trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings, links |
 | `src/ui/spinner.rs`, `style.rs` | progress line with a clock, key hint and mode; every color code, two grays for hints (`key`, `faint`) |
-| `.github/workflows/ci.yml`, `release.yml` | the checks on every push; on a tag `v<version>` the Linux binary as a GitHub release |
+| `.github/workflows/ci.yml`, `release.yml` | `ci`: the checks, by hand only; `release`: on a tag `v<version>` the checks, the Linux binary and the GitHub release. A push starts nothing |
 | `scripts/mock-deepseek.py` | local HTTP stand-in for the DeepSeek web API (challenge, session, SSE completion; tasks like `src/mock.rs`) |
 | `scripts/pty-drive.py` | drives the chat in a pseudo-terminal with scripted keys against that mock (starts it itself) and prints scrollback, screen and cursor; the real API only with `DSC_LIVE=1` |
 

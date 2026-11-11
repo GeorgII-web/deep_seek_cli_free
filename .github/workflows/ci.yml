@@ -1,13 +1,16 @@
-# The gates of AGENTS.md on every push to main and on pull requests.
+# The gates of AGENTS.md, started by hand only (Actions tab → ci → Run workflow).
+# A push starts nothing: the same gates run in release.yml before a release is published.
 name: ci
 
 on:
-  push:
-    branches: [main]
-  pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ci
+  cancel-in-progress: true
 
 jobs:
   gates:

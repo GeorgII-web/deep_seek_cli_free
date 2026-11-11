@@ -74,11 +74,13 @@ Only on the user's word for that one run (`DSC_LIVE=1 scripts/pty-drive.py …`,
 
 | File | Trigger | Does |
 |---|---|---|
-| `.github/workflows/ci.yml` | push to `main`, pull request | `cargo fmt --check`, clippy `-D warnings`, `cargo test` on `ubuntu-24.04` |
+| `.github/workflows/ci.yml` | by hand only (`workflow_dispatch`) | `cargo fmt --check`, clippy `-D warnings`, `cargo test` on `ubuntu-24.04` |
 | `.github/workflows/release.yml` | pushed tag `v*` | checks the tag equals `version` in `Cargo.toml`, the gates, `cargo build --release --locked` on `ubuntu-22.04` (the binary then needs glibc 2.35+), packs `dsc-x86_64-linux.tar.gz` (`dsc`, `README.md`, `LICENSE`) with a `.sha256`, publishes a release with generated notes |
 
-Release steps: bump `version` in `Cargo.toml` (and `Cargo.lock` by a build), commit, push, wait for `ci` to be
-green, then `git tag v<version> && git push origin v<version>`. The asset name is fixed, because the README
+A push starts no workflow: every push used to run `ci`, and the runs piled up in GitHub's queue (2026-11-11).
+Run the gates locally before a push. Release steps: bump `version` in `Cargo.toml` (and `Cargo.lock` by a
+build), run the gates locally, commit, push, then `git tag v<version> && git push origin v<version>`; the
+release workflow runs the gates itself before it publishes. The asset name is fixed, because the README
 download command uses `releases/latest/download/dsc-x86_64-linux.tar.gz`. A tag is published work: only on the
 user's word. Run state without a login: `https://api.github.com/repos/GeorgII-web/deep_seek_cli_free/actions/runs`.
 

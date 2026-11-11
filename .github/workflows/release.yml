@@ -1,4 +1,4 @@
-# Builds the Linux binary and publishes it as a GitHub release.
+# The full pipeline: the gates, the Linux binary, the GitHub release. Nothing else runs on GitHub by itself.
 # Trigger: a pushed tag v<version>, e.g. `git tag v0.1.0 && git push origin v0.1.0`.
 # The tag must match `version` in Cargo.toml.
 name: release
@@ -9,6 +9,11 @@ on:
 
 permissions:
   contents: write
+
+# One release at a time.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:

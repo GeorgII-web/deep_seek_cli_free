@@ -1,36 +1,44 @@
-# deep_seek_cli_free
+# Deep Seek CLI free
 
-`dsc` is a command line agent for Linux. You give it a task in plain words; it asks DeepSeek what to run, runs the
-commands on your machine after your approval, and answers.
-
-It uses your **free DeepSeek web account** (chat.deepseek.com), not the paid API. One Rust binary, no node, no
-browser at runtime: the browser is needed once, to log in.
+`dsc` is a command line agent for Linux. You give it a task in plain words; it asks DeepSeek what to do, runs the
+commands on your machine after your approval, and answers. It uses your **free DeepSeek web account**
+(chat.deepseek.com), not the paid API. One Rust binary, no node, no browser at runtime.
 
 ```console
-$ dsc "how much disk space is free on the root filesystem?"
+$ dsc
+
+  ███  ████ ████ ███    ███ ████ ████ █  █   ███ █    ███  ████ ███  ████ ████
+  █  █ █    █    █  █  █    █    █    █ █   █    █     █   █    █  █ █    █
+  █  █ ███  ███  ███    ██  ███  ███  ██    █    █     █   ███  ███  ███  ███
+  █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
+  ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
+
+  ✻ dsc 0.2.0 · DeepSeek web · default
+
+ > how much disk space is free on / ?
 
 ● Run df -h /
-  check free disk space on root filesystem
-  ⎿ exit code 0
+  check free disk space on /
+  ⎿ ✓ exit code 0 · 2 lines  ▾ hide
     Filesystem      Size  Used Avail Use% Mounted on
-    /dev/sdd       1007G  146G  810G  16% /
+    /dev/sdd       1007G  147G  809G  16% /
 
-Root filesystem: 810G available (1007G total, 16% used).
-✓ 8.1s · 2 answers · 1 action
+There is 809G free on / (out of 1007G, 16% used).
+
+ ✓ 8.1s · 2 answers · 1 action
+
+╭──────────────────────────────────────────────────────────────────────────────╮
+│ > which command did you run for that?                                        │
+╰──────────────────────────────────────────────────────────────────────────────╯
+  ◆ DeepSeek · ✦ Think · ⏵ ask · Shift + Tab        Ctrl + C twice quit · ↑↓ history
 ```
 
+The chat runs on its own screen: the input box stays at the bottom, the results scroll above it, a command's
+output folds to one line, and `/` lists the commands. Every input is a task in the same conversation.
+
 > **Unofficial.** This talks to the private web API of chat.deepseek.com. It can break when the site changes, and
-> DeepSeek may rate limit or block an account for automated use. Use your own account, at your own risk.
-
-## Status
-
-Version 0.2. It works end to end: the agent loop with approvals, a chat on its own screen (input box at the
-bottom, scrollable and foldable output, mouse selection), sessions you can return to, a token window, a built-in
-mock model to try everything without the account, deep thinking, DeepSeek's own web search, and very careful
-request throttling. Not built yet: login through the browser, a static and an ARM binary. See
-[TASKS.md](TASKS.md).
-
-DeepSeek blocks the free account quickly when requests come too fast; that is why the defaults are slow.
+> DeepSeek blocks an account quickly when requests come too fast; the defaults are slow for that reason. Use your
+> own account, at your own risk.
 
 ## Install
 
@@ -120,35 +128,7 @@ with nothing selected, a right click pastes the copied text into the input box, 
 the terminal's own selection instead). A mark on the box shows when you are scrolled up; new output does not move the
 view until you go back down. When you quit, the conversation is printed into your normal terminal, so it is
 still there afterwards. Every input is a task in the same conversation, so the model remembers what it did
-before:
-
-```console
-$ dsc
-
-  ███  ████ ████ ███    ███ ████ ████ █  █   ███ █    ███  ████ ███  ████ ████
-  █  █ █    █    █  █  █    █    █    █ █   █    █     █   █    █  █ █    █
-  █  █ ███  ███  ███    ██  ███  ███  ██    █    █     █   ███  ███  ███  ███
-  █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
-  ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
-
-  ✻ dsc 0.2.0 · DeepSeek web · default
-
-> how much disk space is free on / ?
-
-● Run df -h /
-  check free disk space on /
-  ⎿ exit code 0
-    Filesystem      Size  Used Avail Use% Mounted on
-    /dev/sdd       1007G  147G  809G  16% /
-
-There is 809G free on / (out of 1007G, 16% used).
-✓ 8.1s · 2 answers · 1 action
-
-╭──────────────────────────────────────────────────────────────╮
-│ > which command did you run for that?                        │
-╰──────────────────────────────────────────────────────────────╯
-  ◆ DeepSeek · ✦ Think · ⏵ ask · Shift + Tab                          Ctrl + C twice quit · ↑↓ history
-```
+before (the screen is shown at the top of this page).
 
 The step in progress is marked right where it happens: a spinner and the seconds under a running command
 (`⎿ ⠧ running… 2s`), and a line of its own at the start of the answer (`⠧ Waiting for DeepSeek… 3s`, then `⠧ Answering… 5s`)
@@ -382,8 +362,10 @@ Details: [architecture](.agents/skills/general/architecture/SKILL.md).
 
 ## Development
 
-Every push runs the checks on GitHub (`.github/workflows/ci.yml`). A release: set `version` in `Cargo.toml`, push
-it, then push the tag `v<version>`; `.github/workflows/release.yml` builds the binary and publishes the release.
+Pushing does not start anything on GitHub. The checks, the build and the publishing all run in the release
+workflow: set `version` in `Cargo.toml`, push it, then push the tag `v<version>`
+(`.github/workflows/release.yml`). `.github/workflows/ci.yml` runs the checks alone when started by hand from the
+Actions tab.
 
 ```bash
 cargo test && cargo fmt --check && cargo clippy --all-targets -- -D warnings
@@ -397,6 +379,16 @@ answers without any network; `scripts/mock-deepseek.py` is a local HTTP server i
 web API (`DSC_API_BASE=http://127.0.0.1:8765 dsc`), for the client code. `scripts/pty-drive.py` drives the chat
 in a pseudo-terminal against that server and prints the screen.
 `AGENTS.md` is the map for coding agents.
+
+## Status
+
+Version 0.2. It works end to end: the agent loop with approvals, a chat on its own screen (input box at the
+bottom, scrollable and foldable output, mouse selection), sessions you can return to, a token window, a built-in
+mock model to try everything without the account, deep thinking, DeepSeek's own web search, and very careful
+request throttling. Not built yet: login through the browser, a static and an ARM binary. See
+[TASKS.md](TASKS.md).
+
+DeepSeek blocks the free account quickly when requests come too fast; that is why the defaults are slow.
 
 ## Credits
 
