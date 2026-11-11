@@ -496,6 +496,7 @@ impl Terminal {
                 crossterm::terminal::size().map_or((80, 24), |(c, r)| (c as usize, r as usize));
             let view = Arc::new(Mutex::new(View::new(s, columns, rows.saturating_sub(4))));
             self.editor.set_view(view.clone());
+            self.spinner.set_view(view.clone());
             self.view = Some(view);
             self.screen = true;
         }

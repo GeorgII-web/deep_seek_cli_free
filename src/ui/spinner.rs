@@ -1,5 +1,6 @@
 //! One status line that shows what is being waited for and for how long.
 
+use super::scrollback::View;
 use super::style::Style;
 use super::{screen_lock, screen_write};
 use std::io::Write;
@@ -47,6 +48,8 @@ pub struct Spinner {
     mode: Option<Arc<AtomicBool>>,
     /// Who answers, shown after the mode (true = the mock)
     model: Option<Arc<AtomicBool>>,
+    /// Screen layout: the output, whose running block gets the same spinner frame
+    view: Option<Arc<Mutex<View>>>,
     style: Style,
     started: bool,
 }
@@ -71,6 +74,7 @@ impl Spinner {
             hint: None,
             mode: None,
             model: None,
+            view: None,
             style,
             started: false,
         }
@@ -105,6 +109,11 @@ impl Spinner {
         self.model = Some(model);
     }
 
+    /// Call before the first `start`.
+    pub fn set_view(&mut self, view: Arc<Mutex<View>>) {
+        self.view = Some(view);
+    }
+
     /// Shows `label` with a running clock. A new label keeps the clock when one runs.
     pub fn start(&mut self, label: &str) {
         if !self.enabled {
@@ -123,6 +132,7 @@ impl Spinner {
         let (state, style, docked, hint) = (self.state.clone(), self.style, self.docked, self.hint);
         let mode = self.mode.clone();
         let model = self.model.clone();
+        let view = self.view.clone();
         // A plain thread: it must tick also while the async runtime is busy.
         std::thread::spawn(move || {
             loop {
@@ -170,6 +180,15 @@ impl Spinner {
                     let mut err = std::io::stderr().lock();
                     let _ = write!(err, "\r\x1b[2K{line}");
                     let _ = err.flush();
+                }
+                // The step in progress shows the same frame in the output. The state
+                // lock is released first: the view has its own lock.
+                let frame = FRAMES[state.frame];
+                drop(state);
+                if let Some(view) = &view {
+                    view.lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .animate(frame);
                 }
             }
         });

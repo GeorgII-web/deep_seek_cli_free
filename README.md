@@ -141,7 +141,8 @@ There is 809G free on / (out of 1007G, 16% used).
   ⏵ ask · ◆ DeepSeek · Shift+Tab mode     Enter send · Shift+Enter new line · Ctrl-C twice quit · ↑↓ history
 ```
 
-A command's output appears line by line while it runs. When it has finished, a long output folds to one line
+The step that is running shows it right there: a spinner and the seconds under the command
+(`⎿ ⠧ running… 2s`). A command's output appears line by line while it runs. When it has finished, a long output folds to one line
 (`⎿ exit code 0 · 23 lines ▸ show`); click that line, or press Ctrl-O for the last one, to open and close it. Up
 to five lines stay open, and so does an output that is itself the answer to your task.
 

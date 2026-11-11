@@ -10,6 +10,7 @@
 
 use super::screen_write;
 use super::style::Style;
+use std::time::Instant;
 use unicode_width::UnicodeWidthChar;
 
 /// Lines kept; older ones are dropped.
@@ -134,6 +135,8 @@ pub struct View {
     fold_pending: bool,
     /// A block is being written: new lines join it
     fold_active: bool,
+    /// When that block started: its header shows the seconds
+    fold_started: Instant,
     columns: usize,
     /// Rows of the output area (the screen above the dock)
     rows: usize,
@@ -151,6 +154,7 @@ impl View {
             folds: Vec::new(),
             fold_pending: false,
             fold_active: false,
+            fold_started: Instant::now(),
             columns: columns.max(1),
             rows: rows.max(1),
             offset: 0,
@@ -188,6 +192,7 @@ impl View {
                     texts: None,
                 });
                 self.fold_active = true;
+                self.fold_started = Instant::now();
             } else if self.fold_active
                 && let Some(fold) = self.folds.last_mut()
             {
@@ -220,6 +225,40 @@ impl View {
     /// its body until `end_fold`.
     pub fn begin_fold(&mut self) {
         self.fold_pending = true;
+    }
+
+    /// The step in progress: while a block is being written its header shows
+    /// the spinner `frame` and the seconds since it started. Only that row is drawn.
+    pub fn animate(&mut self, frame: &str) {
+        if !self.fold_active {
+            return;
+        }
+        let Some(header) = self.folds.last().map(|fold| fold.header) else {
+            return;
+        };
+        let s = self.style;
+        let secs = self.fold_started.elapsed().as_secs();
+        let text = format!(
+            "{}  ⎿ {}{frame}{}{} running… {secs}s{}",
+            s.gray(),
+            s.accent(),
+            s.reset(),
+            s.gray(),
+            s.reset()
+        );
+        self.closed[header] = text.clone();
+        let Some(position) = self.wrapped.iter().position(|(line, _)| *line == header) else {
+            return;
+        };
+        self.wrapped[position].1 = text.clone();
+        let first_row = self.total().saturating_sub(self.rows + self.offset);
+        if (first_row..first_row + self.rows).contains(&position) {
+            // Save cursor, write the row, restore: output that arrives meanwhile is not disturbed.
+            screen_write(&format!(
+                "\x1b7\x1b[{};1H\x1b[2K{text}\x1b[0m\x1b8",
+                position - first_row + 1
+            ));
+        }
     }
 
     /// Lines in the body of the block being written.
@@ -594,6 +633,23 @@ mod tests {
         );
         // The saved text always has the whole block.
         assert_eq!(v.transcript(), "before\n3 lines [hide]\nb1\nb2\nb3\nafter");
+    }
+
+    #[test]
+    fn the_header_of_a_running_block_is_animated() {
+        let mut v = view(40, 10);
+        v.push("before\n");
+        // No block yet: nothing to animate.
+        v.animate("x");
+        v.begin_fold();
+        v.push("running\nb1\n");
+        v.animate("⠹");
+        assert_eq!(v.visible()[1], "  ⎿ ⠹ running… 0s");
+        assert_eq!(v.visible()[2], "b1");
+        // A finished block keeps its summary.
+        v.end_fold("1 line [show]".into(), "1 line [hide]".into(), false);
+        v.animate("⠸");
+        assert_eq!(v.visible()[1], "1 line [hide]");
     }
 
     #[test]
