@@ -13,6 +13,8 @@ use super::style::Style;
 use std::time::Instant;
 use unicode_width::UnicodeWidthChar;
 
+/// How long a message on the dock border stays.
+const FLASH: std::time::Duration = std::time::Duration::from_secs(3);
 /// Lines kept; older ones are dropped.
 const KEEP_LINES: usize = 20_000;
 
@@ -121,6 +123,57 @@ struct Fold {
     texts: Option<(String, String)>,
 }
 
+/// The text of a row without its escape sequences.
+pub fn plain_of(row: &str) -> String {
+    let mut plain = String::new();
+    let mut chars = row.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != '\x1b' {
+            plain.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('[') => {
+                for next in chars.by_ref() {
+                    if ('\x40'..='\x7e').contains(&next) {
+                        break;
+                    }
+                }
+            }
+            Some(']') => {
+                while let Some(next) = chars.next() {
+                    if next == '\x07' || (next == '\x1b' && chars.next_if_eq(&'\\').is_some()) {
+                        break;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    plain
+}
+
+/// Splits plain text at display columns `from` and `to`: before, inside, after.
+fn cut(plain: &str, from: usize, to: usize) -> (String, String, String) {
+    let (mut before, mut inside, mut after) = (String::new(), String::new(), String::new());
+    let mut column = 0;
+    for c in plain.chars() {
+        let part = if column < from {
+            &mut before
+        } else if column < to {
+            &mut inside
+        } else {
+            &mut after
+        };
+        part.push(c);
+        column += c.width().unwrap_or(0);
+    }
+    (before, inside, after)
+}
+
+/// A place in the output: the row (counted from the first row of everything) and the column.
+type Place = (usize, usize);
+
 pub struct View {
     style: Style,
     /// Complete lines, without their line end
@@ -137,6 +190,12 @@ pub struct View {
     fold_active: bool,
     /// When that block started: its header shows the seconds
     fold_started: Instant,
+    /// A progress mark is drawn after the end of the output (it is not part of the output)
+    marked: bool,
+    /// Text selected with the mouse: where the button went down and where it is now
+    selection: Option<(Place, Place)>,
+    /// A short message on the dock border ("copied"), with the time it was set
+    flash: Option<(String, Instant)>,
     columns: usize,
     /// Rows of the output area (the screen above the dock)
     rows: usize,
@@ -155,6 +214,9 @@ impl View {
             fold_pending: false,
             fold_active: false,
             fold_started: Instant::now(),
+            marked: false,
+            selection: None,
+            flash: None,
             columns: columns.max(1),
             rows: rows.max(1),
             offset: 0,
@@ -258,6 +320,42 @@ impl View {
                 "\x1b7\x1b[{};1H\x1b[2K{text}\x1b[0m\x1b8",
                 position - first_row + 1
             ));
+        }
+    }
+
+    /// The step in progress when no block is being written (waiting for the
+    /// model, the answer streaming in): `text` is drawn right after the end of
+    /// the output. It is not recorded; the next output overwrites it (`take_mark`).
+    pub fn mark(&mut self, text: &str) {
+        if self.offset > 0 || self.fold_active || self.fold_pending {
+            return;
+        }
+        let (row, column) = self.out();
+        let lead = if self.open.is_empty() { "" } else { " " };
+        // It must fit on the row, or it would wrap into the next one.
+        if column as usize + lead.len() + columns_of(text) >= self.columns {
+            return;
+        }
+        let s = self.style;
+        screen_write(&format!(
+            "\x1b7\x1b[{row};{column}H\x1b[K{lead}{}{text}{}\x1b8",
+            s.accent(),
+            s.reset()
+        ));
+        self.marked = true;
+    }
+
+    /// Whether a mark is on the screen; the caller erases it (`ESC[K` at the
+    /// cursor, which stands where the mark starts) before it writes output.
+    pub fn take_mark(&mut self) -> bool {
+        std::mem::take(&mut self.marked)
+    }
+
+    /// Removes the mark when the work is over.
+    pub fn unmark(&mut self) {
+        if std::mem::take(&mut self.marked) && self.offset == 0 {
+            let (row, column) = self.out();
+            screen_write(&format!("\x1b7\x1b[{row};{column}H\x1b[K\x1b8"));
         }
     }
 
@@ -382,30 +480,136 @@ impl View {
         self.total().saturating_sub(self.rows)
     }
 
-    /// The rows the view shows now, top to bottom.
-    fn visible(&self) -> Vec<String> {
-        let mut all: Vec<String> = self.wrapped.iter().map(|(_, row)| row.clone()).collect();
-        all.extend(self.open_rows());
-        let end = all.len().saturating_sub(self.offset);
-        let start = end.saturating_sub(self.rows);
-        all[start..end].to_vec()
+    /// Every row of the output with the line it comes from; the open line counts as one more line.
+    fn all_rows(&self) -> Vec<(usize, String)> {
+        let mut all = self.wrapped.clone();
+        all.extend(
+            self.open_rows()
+                .into_iter()
+                .map(|row| (self.closed.len(), row)),
+        );
+        all
     }
 
-    /// Everything needed to draw the output area: each row cleared and written,
-    /// then, at the bottom, the cursor where output continues.
+    /// Index of the first row the view shows.
+    fn first_row(&self) -> usize {
+        self.total().saturating_sub(self.rows + self.offset)
+    }
+
+    /// The rows the view shows now, top to bottom.
+    fn visible(&self) -> Vec<String> {
+        let all = self.all_rows();
+        let end = all.len().saturating_sub(self.offset);
+        let start = end.saturating_sub(self.rows);
+        all[start..end].iter().map(|(_, row)| row.clone()).collect()
+    }
+
+    /// The selection in reading order, when there is one with any extent.
+    fn selected(&self) -> Option<(Place, Place)> {
+        let (anchor, head) = self.selection?;
+        match anchor.cmp(&head) {
+            std::cmp::Ordering::Equal => None,
+            std::cmp::Ordering::Less => Some((anchor, head)),
+            std::cmp::Ordering::Greater => Some((head, anchor)),
+        }
+    }
+
+    /// The columns of row `index` that are selected, when any.
+    fn selected_columns(&self, index: usize) -> Option<(usize, usize)> {
+        let ((first, from), (last, to)) = self.selected()?;
+        if index < first || index > last {
+            return None;
+        }
+        let start = if index == first { from } else { 0 };
+        let end = if index == last { to } else { usize::MAX };
+        Some((start, end))
+    }
+
+    /// Everything needed to draw the output area: each row cleared and written
+    /// (the selected part inverted), then, at the bottom, the cursor where output continues.
     fn frame(&self) -> String {
         let visible = self.visible();
+        let first = self.first_row();
         let mut frame = String::new();
         for row in 0..self.rows {
             frame.push_str(&format!("\x1b[{};1H\x1b[2K", row + 1));
-            if let Some(text) = visible.get(row) {
-                frame.push_str(text);
-                frame.push_str("\x1b[0m");
+            let Some(text) = visible.get(row) else {
+                continue;
+            };
+            match self.selected_columns(first + row) {
+                // A selected row is shown without its colors, the selected part inverted.
+                Some((from, to)) => {
+                    let (before, inside, after) = cut(&plain_of(text), from, to);
+                    frame.push_str(&format!("{before}\x1b[7m{inside}\x1b[0m{after}"));
+                }
+                None => frame.push_str(text),
             }
+            frame.push_str("\x1b[0m");
         }
         let (row, column) = self.out();
         frame.push_str(&format!("\x1b[{row};{column}H"));
         frame
+    }
+
+    /// The mouse button went down on screen row `row`, column `column` (0-based).
+    pub fn select_start(&mut self, row: usize, column: usize) {
+        let had = self.selected().is_some();
+        let place = (self.first_row() + row.min(self.rows - 1), column);
+        self.selection = Some((place, place));
+        if had {
+            self.repaint();
+        }
+    }
+
+    /// The mouse moved with the button down: the selection reaches to there.
+    pub fn select_to(&mut self, row: usize, column: usize) {
+        let place = (self.first_row() + row.min(self.rows - 1), column);
+        if let Some((_, head)) = &mut self.selection
+            && *head != place
+        {
+            *head = place;
+            self.repaint();
+        }
+    }
+
+    /// The button went up: the selected text, when the mouse moved in between.
+    /// Rows of one wrapped line are joined; the selection stays shown until the next click.
+    pub fn select_end(&mut self) -> Option<String> {
+        let ((first, from), (last, to)) = self.selected()?;
+        let all = self.all_rows();
+        let mut text = String::new();
+        let mut previous_line = None;
+        for (index, (line, row)) in all
+            .iter()
+            .enumerate()
+            .skip(first)
+            .take(last.saturating_sub(first) + 1)
+        {
+            let start = if index == first { from } else { 0 };
+            let end = if index == last { to } else { usize::MAX };
+            if previous_line.is_some_and(|previous| previous != *line) {
+                // The line before ended here: its trailing blanks are not text.
+                let trimmed = text.trim_end_matches(' ').len();
+                text.truncate(trimmed);
+                text.push('\n');
+            }
+            text.push_str(&cut(&plain_of(row), start, end).1);
+            previous_line = Some(*line);
+        }
+        let trimmed = text.trim_end_matches(' ').len();
+        text.truncate(trimmed);
+        (!text.is_empty()).then_some(text)
+    }
+
+    /// Whether the last press and release were on the same cell: a click, not a selection.
+    pub fn selection_is_click(&self) -> bool {
+        self.selection.is_some_and(|(anchor, head)| anchor == head)
+    }
+
+    /// Shows `text` on the dock border for a moment (drawn now; the next draw of the border removes it when it is old).
+    pub fn flash(&mut self, text: &str) {
+        self.flash = Some((text.to_string(), Instant::now()));
+        self.indicator();
     }
 
     /// Where output continues on the screen when the view is at the bottom: row and column, 1-based.
@@ -477,9 +681,10 @@ impl View {
             return;
         }
         let s = self.style;
-        let text = match self.offset {
-            0 => String::new(),
-            n => format!(" ↑ scrolled up · {n} rows below · PgDn "),
+        let text = match (&self.flash, self.offset) {
+            (Some((text, at)), _) if at.elapsed() < FLASH => format!(" {text} "),
+            (_, 0) => String::new(),
+            (_, n) => format!(" ↑ scrolled up · {n} rows below · PgDn "),
         };
         let fill = "─".repeat(SPAN.saturating_sub(text.chars().count()));
         let column = self.columns - SPAN - 2;
@@ -650,6 +855,62 @@ mod tests {
         v.end_fold("1 line [show]".into(), "1 line [hide]".into(), false);
         v.animate("⠸");
         assert_eq!(v.visible()[1], "1 line [hide]");
+    }
+
+    #[test]
+    fn the_mark_is_only_drawn_at_the_end_of_plain_output() {
+        let mut v = view(20, 5);
+        v.push("some text");
+        v.mark("⠹");
+        assert!(v.take_mark());
+        assert!(!v.take_mark());
+        // Not while a block runs (its header is animated), not scrolled up, not without room.
+        v.push("\n");
+        v.begin_fold();
+        v.mark("⠹");
+        v.push("running\n");
+        v.mark("⠹");
+        assert!(!v.take_mark());
+        v.end_fold("a".into(), "b".into(), false);
+        v.push("1\n2\n3\n4\n5\n6\n");
+        v.offset = 2;
+        v.mark("⠹");
+        assert!(!v.take_mark());
+        v.offset = 0;
+        v.push("exactly eighteen ch");
+        v.mark("⠹");
+        assert!(!v.take_mark());
+        // The mark never becomes part of the output.
+        assert!(!v.transcript().contains('⠹'));
+    }
+
+    #[test]
+    fn mouse_selection_gives_the_text_and_joins_wrapped_rows() {
+        let mut v = view(10, 6);
+        v.push("\x1b[31mhello\x1b[0m world, this wraps\nsecond line\n");
+        // Rows: "hello worl", "d, this wr", "aps", "second lin", "e", "".
+        assert_eq!(v.visible().len(), 6);
+        v.select_start(0, 6);
+        assert!(v.selection_is_click());
+        assert_eq!(v.select_end(), None);
+        v.select_to(1, 7);
+        assert!(!v.selection_is_click());
+        assert_eq!(v.select_end().as_deref(), Some("world, this"));
+        // Over a line end, and dragged backwards.
+        v.select_start(3, 6);
+        v.select_to(2, 1);
+        assert_eq!(v.select_end().as_deref(), Some("ps\nsecond"));
+        // The selected part is drawn inverted, without the row's own colors.
+        v.select_start(0, 0);
+        v.select_to(0, 5);
+        assert!(
+            v.frame()
+                .starts_with("\x1b[1;1H\x1b[2K\x1b[7mhello\x1b[0m worl\x1b[0m")
+        );
+        assert_eq!(
+            plain_of("\x1b[1mab\x1b[0m\x1b]8;;u\x1b\\c\x1b]8;;\x1b\\"),
+            "abc"
+        );
     }
 
     #[test]

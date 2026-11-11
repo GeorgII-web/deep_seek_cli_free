@@ -108,7 +108,8 @@ dsc --yes "create a .gitignore for a Rust project"
 
 `dsc` without a task (or `dsc chat`) opens a chat on its own screen: nothing of your terminal's earlier history
 is visible, the input box stays fixed at the bottom, and only the output above it scrolls: mouse wheel, PgUp /
-PgDn, Ctrl+Home, Ctrl+End. A mark on the box shows when you are scrolled up; new output does not move the
+PgDn, Ctrl+Home, Ctrl+End. Drag over the output to select text: it is highlighted and copied to the clipboard when you release the
+button (Shift+drag uses the terminal's own selection instead). A mark on the box shows when you are scrolled up; new output does not move the
 view until you go back down. When you quit, the conversation is printed into your normal terminal, so it is
 still there afterwards. Every input is a task in the same conversation, so the model remembers what it did
 before:
@@ -141,8 +142,9 @@ There is 809G free on / (out of 1007G, 16% used).
   ⏵ ask · ◆ DeepSeek · Shift+Tab mode     Enter send · Shift+Enter new line · Ctrl-C twice quit · ↑↓ history
 ```
 
-The step that is running shows it right there: a spinner and the seconds under the command
-(`⎿ ⠧ running… 2s`). A command's output appears line by line while it runs. When it has finished, a long output folds to one line
+The step in progress is marked right where it happens: a spinner and the seconds under a running command
+(`⎿ ⠧ running… 2s`), `⠧ Waiting for DeepSeek… 3s` where the answer will appear, and a spinner after the last
+word while the answer is written. A command's output appears line by line while it runs. When it has finished, a long output folds to one line
 (`⎿ exit code 0 · 23 lines ▸ show`); click that line, or press Ctrl-O for the last one, to open and close it. Up
 to five lines stay open, and so does an output that is itself the answer to your task.
 
@@ -159,6 +161,7 @@ shell prompt.
 | Shift+Enter, Ctrl-J, or `\` then Enter | new line (Shift+Enter needs a terminal that reports it; Ctrl-J always works) |
 | PgUp / PgDn, mouse wheel | scroll the output; Ctrl+Home = top, Ctrl+End = bottom |
 | Click on `▸ show` / `▾ hide`, Ctrl-O | unfold or fold the output of a command (Ctrl-O: the last one) |
+| Drag with the mouse | select text in the output; it is copied to the clipboard when you let go |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
 | Shift+Tab | switch the mode: `ask` ⇄ `allow all`, also while a task runs |
@@ -302,7 +305,7 @@ max_output_bytes = 8000     # cap of stdout and of stderr sent back (head + tail
 command_timeout_secs = 120
 
 [ui]
-mouse_scroll = true         # the wheel scrolls the output; hold Shift to select text with the mouse
+mouse_scroll = true         # the mouse works inside dsc: wheel scrolls, click folds, drag selects and copies
 
 [policy]
 mode = "ask"                # or "allow_all"; the last mode you chose is saved here and used on the next start

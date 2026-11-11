@@ -19,6 +19,7 @@ use crate::agent::interrupt::{Interrupt, Interrupts};
 use crate::agent::protocol::Action;
 use crate::agent::run::{Decision, Ui};
 use crate::backend::Event;
+use base64::Engine as _;
 use crossterm::event::{
     self, Event as TermEvent, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
 };
@@ -138,14 +139,26 @@ const WHEEL_ROWS: isize = 3;
 
 /// Scrolls the output for a wheel event. Shared by the key watcher and the input box.
 /// The mouse on the output: the wheel scrolls it, a click on the header of a
-/// block folds or unfolds it. Shared by the key watcher and the input box.
+/// block folds or unfolds it, a drag selects text and copies it on release.
+/// Shared by the key watcher and the input box.
 pub(crate) fn mouse_event(view: &Mutex<View>, mouse: crossterm::event::MouseEvent) {
+    use crossterm::event::MouseButton::Left;
     let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let (row, column) = (mouse.row as usize, mouse.column as usize);
     match mouse.kind {
         MouseEventKind::ScrollUp => view.scroll(WHEEL_ROWS),
         MouseEventKind::ScrollDown => view.scroll(-WHEEL_ROWS),
-        MouseEventKind::Down(crossterm::event::MouseButton::Left) => {
-            view.click(mouse.row as usize);
+        MouseEventKind::Down(Left) => view.select_start(row, column),
+        MouseEventKind::Drag(Left) => view.select_to(row, column),
+        MouseEventKind::Up(Left) => {
+            if view.selection_is_click() {
+                view.click(row);
+            } else if let Some(text) = view.select_end() {
+                // The terminal puts it on the clipboard (OSC 52).
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&text);
+                screen_write(&format!("\x1b]52;c;{encoded}\x07"));
+                view.flash(&format!("✓ copied {} characters", text.chars().count()));
+            }
         }
         _ => {}
     }
@@ -403,8 +416,10 @@ impl Terminal {
             return false;
         };
         let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        // A progress mark after the output is wiped by the text that takes its place.
+        let wipe = if view.take_mark() { "\x1b[K" } else { "" };
         if view.push(text) {
-            screen_write(&self.eol(text));
+            screen_write(&format!("{wipe}{}", self.eol(text)));
         }
         true
     }
@@ -490,7 +505,8 @@ impl Terminal {
             screen_write("\x1b[22;0t\x1b[?1049h\x1b[2J\x1b[H");
             if self.mouse {
                 // Button and wheel reports, in the SGR form.
-                screen_write("\x1b[?1000h\x1b[?1006h");
+                // Also motion while a button is down: selecting text by dragging.
+                screen_write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
             }
             let (columns, rows) =
                 crossterm::terminal::size().map_or((80, 24), |(c, r)| (c as usize, r as usize));
@@ -792,6 +808,7 @@ impl Terminal {
                 "Click on ▸ or ▾, Ctrl-O",
                 "unfold or fold the output of an action (Ctrl-O: the last one)",
             ),
+            row("Drag with the mouse", "select text; it is copied when you let go (Shift+drag: the terminal's own selection)"),
             row("Ctrl-A, Ctrl-E", "start, end of the line"),
             row(
                 "Ctrl-W, Ctrl-U, Ctrl-K",
@@ -911,7 +928,7 @@ impl Drop for Terminal {
         if self.screen {
             self.editor.close_dock();
             if self.mouse {
-                screen_write("\x1b[?1006l\x1b[?1000l");
+                screen_write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
             }
             // Back on the normal screen the conversation is printed once, so it
             // stays in the terminal after the chat closed.

@@ -15,7 +15,7 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 | `src/ui/banner.rs` | `art(style, columns)`: the start picture; `glyph` holds the 5-row letters (`#` = filled cell) |
 | `src/ui/dialog.rs` | `ask_token(style, reason)`: the token window; `rows` builds it (tested for width and masking) |
 | `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history, command menu), `command_matches`, `Dock`, `Input`, `read_choice`, `RawMode` |
-| `src/ui/scrollback.rs` | `View`: the output kept by the app (lines, wrapped rows, scroll offset), `wrap`, `columns_of` |
+| `src/ui/scrollback.rs` | `View`: the output kept by the app (lines, wrapped rows, scroll offset, blocks, selection, progress mark), `wrap`, `columns_of`, `plain_of` |
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
 | `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`, `set_mode`; `Notifier` (a 2 s notice in place of the key hint) |
 | `src/ui/style.rs` | `Style`: every escape code; `detect()`; `inline(text, base)` colors `code` spans and links in chrome lines; `links(text, base)` colors only the links (result preview); `link()`, `hyperlink(url)` (OSC 8 open and close); `hint(key, what)` and `mode_label` for hint lines |
@@ -57,6 +57,8 @@ escape sequences and carries colors over a break). The view is the last rows of 
 | scrolled up | `push` only records; the view stays on the same rows (`offset` grows), nothing is written |
 | a block (`begin_fold`, `end_fold`) | the lines pushed between them are the body under the header line; `end_fold(folded_text, open_text, folded)` sets the two header texts and hides the body when folded; `rewrap` skips hidden bodies, `wrapped` keeps the line each row comes from |
 | the running step | `Spinner` thread → `View::animate(frame)`: rewrites the header of the block being written and draws only that row (between save and restore cursor); nothing happens without a block being written. The thread releases its own state lock before it takes the view's |
+| select and copy | `mouse_event`: left button down → `select_start`, drag → `select_to` (repaint, the selected part inverted and shown without colors), up → `select_end` gives the text (rows of one wrapped line joined, line ends between lines, trailing blanks dropped), which is sent to the clipboard with OSC 52 and confirmed by `View::flash` on the dock border; press and release on one cell is a click. Shift+drag is the terminal's own selection |
+| the step in progress, outside a block | `Spinner` thread → `View::mark(text)`: drawn after the end of the output, not recorded; while the answer streams just the frame, before that `<frame> <label>… Ns`; `Terminal::emit` wipes it (`take_mark` → `ESC[K`) before the next output, `Spinner::stop` → `unmark` |
 | click, Ctrl-O | `mouse_event` → `View::click(row)`: a left click on the header row of a finished block with a body toggles it (`toggle` keeps the rows above in place); Ctrl-O → `toggle_last`; `unfold_last` keeps the view at the bottom |
 | scroll (PgUp, PgDn, wheel 3 rows, Ctrl+Home, Ctrl+End) | `View::scroll` / `top` / `bottom` → `repaint`: every row of the area cleared and drawn from the model, cursor at `out()` |
 | dock grows or shrinks, terminal resized | `Editor::sync_view` → `View::resize` (rewrap on a new width) → `repaint`; `Dock::out` comes from `View::out`, no cursor query |
@@ -68,8 +70,8 @@ escape sequences and carries colors over a break). The view is the last rows of 
   (removes the open line: the approval question). A direct write would put the model and the screen out of step.
 - The scroll mark (`View::indicator`) sits on the dock's top border, right side; the box redraws it after itself.
 - Keys reach the view from two places: `Editor::read` (while typing) and the key watcher (while a task runs).
-- Mouse reports (`ESC[?1000h`, `ESC[?1006h`) are on when `ui.mouse_scroll` is true: the terminal then gives
-  clicks to the app, so selecting text needs Shift.
+- Mouse reports (`ESC[?1000h` buttons, `ESC[?1002h` motion while a button is down, `ESC[?1006h` SGR form) are on
+  when `ui.mouse_scroll` is true: the terminal gives the mouse to the app, which scrolls, folds and selects itself.
 - `KEEP_LINES` (20000) lines are kept; `forget` drops the oldest with the blocks that start in them.
 - `transcript` (exit, saved sessions) writes every block out in full; a restored session has plain lines, no folds.
 
