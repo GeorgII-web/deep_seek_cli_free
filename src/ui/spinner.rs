@@ -10,6 +10,37 @@ use std::time::{Duration, Instant};
 
 const FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 const TICK: Duration = Duration::from_millis(90);
+/// Short words for the bottom line while work goes on.
+const WORDS: [&str; 20] = [
+    "Thinking",
+    "Pondering",
+    "Brewing",
+    "Crunching",
+    "Digging",
+    "Weaving",
+    "Tinkering",
+    "Musing",
+    "Cooking",
+    "Scribbling",
+    "Hunting",
+    "Polishing",
+    "Untangling",
+    "Noodling",
+    "Conjuring",
+    "Mulling",
+    "Sifting",
+    "Plotting",
+    "Wrangling",
+    "Simmering",
+];
+/// Seconds one word stays before the next one.
+const WORD_SECS: u64 = 6;
+
+/// The word for the bottom line: it starts at `seed` and moves on every `WORD_SECS`.
+fn busy_word(seed: usize, secs: u64) -> &'static str {
+    WORDS[(seed + (secs / WORD_SECS) as usize) % WORDS.len()]
+}
+
 /// How long a notice stays.
 const NOTICE: Duration = Duration::from_secs(2);
 
@@ -21,6 +52,8 @@ struct State {
     drawn: bool,
     /// A short message shown instead of the key hint, with the time it was set
     notice: Option<(String, Instant)>,
+    /// Where in `WORDS` the bottom line starts for this task
+    seed: usize,
 }
 
 /// Lets another thread put a notice on the progress line.
@@ -66,6 +99,7 @@ impl Spinner {
             frame: 0,
             drawn: false,
             notice: None,
+            seed: 0,
         };
         Self {
             state: Arc::new(Mutex::new(state)),
@@ -123,6 +157,10 @@ impl Spinner {
             let mut state = self.state.lock().unwrap();
             if state.label.is_none() {
                 state.since = Instant::now();
+                // A new word for a new piece of work; the clock is random enough.
+                state.seed = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |d| d.subsec_nanos() as usize);
             }
             state.label = Some(label.to_string());
         }
@@ -165,9 +203,16 @@ impl Spinner {
                         style.mode_label(mode.load(Ordering::Relaxed))
                     ));
                 }
-                // Icon, label and seconds in one color; the hints after them stay gray.
+                // Docked, the step and its seconds are shown in the output itself (the
+                // status line, the header of a running action), so the bottom line only
+                // says that work goes on: the icon and a word that changes now and then.
+                // Inline it is the only progress line and keeps the real label and clock.
+                let text = match docked {
+                    true => format!("{}…", busy_word(state.seed, secs)),
+                    false => format!("{label}… {secs}s"),
+                };
                 let line = format!(
-                    "{}{} {label}… {secs}s{}{suffix}",
+                    "{}{} {text}{}{suffix}",
                     style.accent(),
                     FRAMES[state.frame],
                     style.reset()
@@ -210,5 +255,21 @@ impl Spinner {
             let _ = write!(err, "\r\x1b[2K");
             let _ = err.flush();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_busy_word_changes_with_time_and_with_the_seed() {
+        assert_eq!(busy_word(0, 0), "Thinking");
+        assert_eq!(busy_word(0, WORD_SECS - 1), "Thinking");
+        assert_eq!(busy_word(0, WORD_SECS), "Pondering");
+        assert_eq!(busy_word(3, 0), "Crunching");
+        // It wraps around.
+        assert_eq!(busy_word(WORDS.len() - 1, WORD_SECS), "Thinking");
+        assert!(WORDS.iter().all(|word| word.len() <= 12));
     }
 }

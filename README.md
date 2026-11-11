@@ -153,7 +153,8 @@ that disappears when the answer is complete. A command's output appears line by 
 to five lines stay open, and so does an output that is itself the answer to your task.
 
 While `dsc` works, the line under the box shows what it waits for and for how long
-(`⠹ Waiting for DeepSeek… 3s · Esc interrupt · ◆ DeepSeek · ⏵ ask`). The last line of a task shows the seconds it took on a colored bar (green when it worked, red when it failed or was stopped);
+(`⠹ Pondering… · Esc interrupt · ◆ DeepSeek · ⏵ ask`: the icon and a short word that changes now and then; the step itself
+and its seconds are shown in the output). The last line of a task shows the seconds it took on a colored bar (green when it worked, red when it failed or was stopped);
 your prompts stand out on a bar of their own. The box grows
 with your text, up to ten rows. A single task (`dsc "<task>"`) does not clear the screen: it prints below your
 shell prompt.
