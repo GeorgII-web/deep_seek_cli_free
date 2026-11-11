@@ -145,6 +145,29 @@ fn rows(
     (lines, token_index)
 }
 
+/// The key hints under a window, wrapped so that no line is wider than `max`
+/// columns: `(key, meaning)` pairs, the key in the lighter gray.
+fn hint_lines(style: Style, hints: &[(&str, &str)], max: usize) -> Vec<String> {
+    let s = style;
+    let dot = format!("{} · {}", s.faint(), s.reset());
+    let mut lines: Vec<(String, usize)> = vec![(String::new(), 0)];
+    for (key, what) in hints {
+        let columns = key.chars().count() + what.chars().count() + usize::from(!what.is_empty());
+        let (line, used) = lines.last_mut().expect("there is always a line");
+        if *used > 0 && *used + 3 + columns > max {
+            lines.push((s.hint(key, what), columns));
+        } else {
+            if *used > 0 {
+                line.push_str(&dot);
+                *used += 3;
+            }
+            line.push_str(&s.hint(key, what));
+            *used += columns;
+        }
+    }
+    lines.into_iter().map(|(line, _)| line).collect()
+}
+
 /// Opens the window and waits. `Some(token)` = OK with a token, `None` = Cancel.
 pub fn ask_token(style: Style, reason: &str, alternate: bool) -> io::Result<Option<String>> {
     let _raw = RawMode::enter()?;
@@ -170,22 +193,31 @@ fn run(style: Style, reason: &str) -> io::Result<Option<String>> {
         let width = WIDTH.min(columns.saturating_sub(2)).max(SNIPPET.len() + 4);
         let reason: String = reason.chars().take(width - 4).collect();
         let (window, token_index) = rows(s, width, &reason, token.chars().count(), focus);
-        let top = lines.saturating_sub(window.len() + 2) / 2 + 1;
+        let hints = hint_lines(
+            s,
+            &[
+                ("Right click", "paste"),
+                ("Drag", "select to copy"),
+                ("Tab", "switch button"),
+                ("Enter", "confirm"),
+                ("Esc", "cancel"),
+            ],
+            width - 4,
+        );
+        let top = lines.saturating_sub(window.len() + 1 + hints.len()) / 2 + 1;
         let left = columns.saturating_sub(width) / 2 + 1;
         let mut frame = String::from("\x1b[2J");
         for (i, row) in window.iter().enumerate() {
             frame.push_str(&format!("\x1b[{};{left}H{row}", top + i));
         }
-        let hint = [
-            ("Right click", "paste"),
-            ("Drag", "select to copy"),
-            ("Tab", "switch button"),
-            ("Enter", "confirm"),
-            ("Esc", "cancel"),
-        ]
-        .map(|(key, what)| s.hint(key, what))
-        .join(&format!("{} · {}", s.faint(), s.reset()));
-        frame.push_str(&format!("\x1b[{};{left}H  {hint}", top + window.len() + 1));
+        // The hints under the window, as many lines as its width needs.
+        for (i, hint) in hints.iter().enumerate() {
+            frame.push_str(&format!(
+                "\x1b[{};{}H{hint}",
+                top + window.len() + 1 + i,
+                left + 2
+            ));
+        }
         // The cursor waits in the token field.
         let field = width - 4 - "Token: ".len();
         let column = left + 2 + "Token: ".len() + token.chars().count().min(field);
@@ -321,10 +353,18 @@ fn run_pick(style: Style, title: &str, items: &[String]) -> io::Result<Option<us
         for (i, row) in window.iter().enumerate() {
             frame.push_str(&format!("\x1b[{};{left}H{row}", top + i));
         }
-        let hint = [("↑↓", "choose"), ("Enter", "switch"), ("Esc", "close")]
-            .map(|(key, what)| s.hint(key, what))
-            .join(&format!("{} · {}", s.faint(), s.reset()));
-        frame.push_str(&format!("\x1b[{};{left}H  {hint}", top + window.len() + 1));
+        let hints = hint_lines(
+            s,
+            &[("↑↓", "choose"), ("Enter", "switch"), ("Esc", "close")],
+            width - 4,
+        );
+        for (i, hint) in hints.iter().enumerate() {
+            frame.push_str(&format!(
+                "\x1b[{};{}H{hint}",
+                top + window.len() + 1 + i,
+                left + 2
+            ));
+        }
         screen_write(&frame);
 
         let Event::Key(key) = event::read()? else {
@@ -396,6 +436,32 @@ mod tests {
         assert!(colored.contains("allow pasting"));
         // The site is a real terminal link.
         assert!(colored.contains("\x1b]8;;https://chat.deepseek.com\x1b\\"));
+    }
+
+    #[test]
+    fn hints_wrap_to_the_window_width() {
+        let hints = [
+            ("Right click", "paste"),
+            ("Drag", "select to copy"),
+            ("Tab", "switch button"),
+            ("Enter", "confirm"),
+        ];
+        let style = Style::new(false);
+        assert_eq!(
+            hint_lines(style, &hints, 200),
+            ["Right click paste · Drag select to copy · Tab switch button · Enter confirm"]
+        );
+        let wrapped = hint_lines(style, &hints, 40);
+        assert_eq!(
+            wrapped,
+            [
+                "Right click paste · Drag select to copy",
+                "Tab switch button · Enter confirm"
+            ]
+        );
+        assert!(wrapped.iter().all(|line| line.chars().count() <= 40));
+        // One item wider than the room still gets a line of its own.
+        assert_eq!(hint_lines(style, &hints[..2], 5).len(), 2);
     }
 
     #[test]

@@ -158,7 +158,8 @@ and comes back as it was; `Terminal::token_dialog` then calls `Editor::refresh_d
 again. Content (`dialog::rows`, which also returns the row of the token field): title, the reason, five numbered steps
 to get the token (open the site, open the console with F12 or Ctrl+Shift+J, type `allow pasting`, run the
 `SNIPPET`, paste the token; keys and things to type colored through `Style::inline`), the field, the buttons
-`[ OK ]` and `[ Cancel ]` (the focused one inverted), a hint line below. The README section "Log in" has the same steps.
+`[ OK ]` and `[ Cancel ]` (the focused one inverted), and below the window the key hints, wrapped to the
+window's width over as many lines as needed and aligned with its text (`hint_lines`, also used by the list window). The README section "Log in" has the same steps.
 
 | Key | Effect |
 |---|---|
