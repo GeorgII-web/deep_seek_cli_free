@@ -71,8 +71,11 @@ shows these steps.
    ```js
    copy(JSON.parse(localStorage.getItem('userToken')).value)
    ```
-5. Back in the `dsc` window, paste the token (**Ctrl+Shift+V** or right click) and press **Enter**. It is shown
+5. Back in the `dsc` window, paste the token (right click, or **Ctrl+Shift+V**) and press **Enter**. It is shown
    as dots only.
+
+In that window the mouse belongs to the terminal: the address in step 1 is a link you can click, and you can
+select the line of step 4 with the mouse to copy it.
 
 Check it with `dsc doctor`:
 
@@ -164,7 +167,7 @@ shell prompt.
 | Click on `▸ show` / `▾ hide`, Ctrl-O | unfold or fold the output of a command (Ctrl-O: the last one) |
 | Drag with the mouse | select text in the output (nothing is copied yet) |
 | Right click, or Ctrl-C | copy the selected text to the clipboard |
-| Right click (nothing selected), or Ctrl-V | paste into the input box |
+| Right click (nothing selected), or Ctrl-V | paste the clipboard into the input box, also text copied in other windows |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
 | Shift+Tab | switch the mode: `ask` ⇄ `allow all`, also while a task runs |

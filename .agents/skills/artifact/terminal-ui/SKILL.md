@@ -14,6 +14,7 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 | `src/ui/mod.rs` | `Terminal` (`line`, `partial`, `text` = the only print paths); `screen_lock`, `screen_write`; constants `FOLD_OPEN_LINES` (5), `INPUT_HINTS`, `EDIT_HINTS`, `COMMANDS` |
 | `src/ui/banner.rs` | `art(style, columns)`: the start picture; `glyph` holds the 5-row letters (`#` = filled cell) |
 | `src/ui/dialog.rs` | `ask_token(style, reason)`: the token window; `rows` builds it (tested for width and masking) |
+| `src/ui/clipboard.rs` | `read()`: the system clipboard through the desktop's tool (`wl-paste`, `xclip`, `xsel`, `powershell.exe Get-Clipboard` under WSL, `pbpaste`); used by `paste_text` |
 | `src/ui/editor.rs` | `Buffer` (pure text + cursor, tested), `Editor` (the box inline or docked, history, command menu), `command_matches`, `Dock`, `Input`, `read_choice`, `RawMode` |
 | `src/ui/scrollback.rs` | `View`: the output kept by the app (lines, wrapped rows, scroll offset, blocks, selection, progress mark), `wrap`, `columns_of`, `plain_of` |
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
@@ -57,7 +58,7 @@ escape sequences and carries colors over a break). The view is the last rows of 
 | scrolled up | `push` only records; the view stays on the same rows (`offset` grows), nothing is written |
 | a block (`begin_fold`, `end_fold`) | the lines pushed between them are the body under the header line; `end_fold(folded_text, open_text, folded)` sets the two header texts and hides the body when folded; `rewrap` skips hidden bodies, `wrapped` keeps the line each row comes from |
 | the running step | `Spinner` thread → `View::animate(frame)`: rewrites the header of the block being written and draws only that row (between save and restore cursor); nothing happens without a block being written. The thread releases its own state lock before it takes the view's |
-| select, copy, paste | `mouse_event`: left button down → `select_start`, drag → `select_to` (repaint, the selected part inverted and shown without colors); the text stays selected, nothing is copied. Copy = right button down with a selection, or Ctrl-C (`copy_selection`: `View::copy_selection` takes the text, rows of one wrapped line joined, and ends the selection; OSC 52 puts it on the terminal's clipboard; `View::flash` confirms on the dock border). Paste = right button down without a selection (`mouse_event` returns `View::copied`, the box inserts it) or Ctrl-V in the box (terminals that paste themselves send a paste event with the system clipboard; where the key reaches the app, `View::copied` is inserted). Press and release on one cell is a click. With a selection, Ctrl-C does not count towards quitting. Shift+drag is the terminal's own selection |
+| select, copy, paste | `mouse_event`: left button down → `select_start`, drag → `select_to` (repaint, the selected part inverted and shown without colors); the text stays selected, nothing is copied. Copy = right button down with a selection, or Ctrl-C (`copy_selection`: `View::copy_selection` takes the text, rows of one wrapped line joined, and ends the selection; OSC 52 puts it on the terminal's clipboard; `View::flash` confirms on the dock border). Paste = right button down without a selection, or Ctrl-V in the box where the key reaches the app: `paste_text` = the system clipboard (`clipboard::read`, so text copied in other windows too), else `View::copied`; the box inserts it. Terminals that paste themselves on Ctrl-V send a paste event instead. Press and release on one cell is a click. With a selection, Ctrl-C does not count towards quitting. Shift+drag is the terminal's own selection |
 | the step in progress, outside a block | the status line: `Terminal::begin_status` (first event of an answer) puts a line of its own at the start of the answer (`View::begin_status`), the `Spinner` thread fills it every tick (`View::animate_status`: `<frame> <label>… Ns`, the label of the bottom line: "Waiting for DeepSeek", "Thinking", "Answering"), and `Terminal::end_status` (`answer_end`, `finish`) takes the line out again (`View::end_status`: the rest moves up, blocks after it keep their place in the list, one repaint). It never reaches a saved session |
 | click, Ctrl-O | `mouse_event` → `View::click(row)`: a left click on the header row of a finished block with a body toggles it (`toggle` keeps the rows above in place); Ctrl-O → `toggle_last`; `unfold_last` keeps the view at the bottom |
 | scroll (PgUp, PgDn, wheel 3 rows, Ctrl+Home, Ctrl+End) | `View::scroll` / `top` / `bottom` → `repaint`: every row of the area cleared and drawn from the model, cursor at `out()` |
@@ -166,6 +167,10 @@ to get the token (open the site, open the console with F12 or Ctrl+Shift+J, type
 | Tab, Shift+Tab, Left, Right | switch the focused button |
 | Enter | the focused button; OK without a token does nothing |
 | Esc, Ctrl-C, Ctrl-D | Cancel |
+
+While the window is open, `Terminal::token_dialog` switches the mouse reports off, so the terminal handles the
+mouse itself: its own selection and copy work on the steps, the site in step 1 is a real link (`Style::inline`
+→ `links`), and a right click pastes (it arrives as a paste event). They are switched on again after.
 
 The token leaves the function only as the return value: it is never printed, logged or put into `Editor` history.
 

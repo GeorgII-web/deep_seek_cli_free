@@ -8,6 +8,7 @@
 //! Without a terminal there are no colors, no spinner and no box.
 
 pub mod banner;
+pub mod clipboard;
 pub mod dialog;
 pub mod editor;
 pub mod render;
@@ -162,6 +163,18 @@ pub(crate) fn copy_selection(view: &Mutex<View>) -> bool {
     true
 }
 
+/// What a paste inserts: the system clipboard (also text copied in other
+/// windows), read through the desktop's tool; when that gives nothing, the text
+/// copied last inside the app.
+pub(crate) fn paste_text(view: &Mutex<View>) -> String {
+    clipboard::read().unwrap_or_else(|| {
+        view.lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .copied()
+            .to_string()
+    })
+}
+
 /// The mouse on the output: the wheel scrolls it, a click on the header of a
 /// block folds or unfolds it, a drag selects text (nothing is copied yet). The
 /// right button copies the selection; without a selection it asks for a paste:
@@ -176,12 +189,7 @@ pub(crate) fn mouse_event(
         if copy_selection(view) {
             return None;
         }
-        let copied = view
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .copied()
-            .to_string();
-        return (!copied.is_empty()).then_some(copied);
+        return Some(paste_text(view)).filter(|text| !text.is_empty());
     }
     let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     match mouse.kind {
@@ -681,9 +689,18 @@ impl Terminal {
         self.watch_stop();
         // In the screen layout the app is on the alternate screen already: the
         // window is drawn over it and everything is drawn again after.
+        // In the window the terminal has the mouse back: text can be selected and
+        // copied the terminal's way, links can be clicked, a right click pastes.
+        let app_mouse = self.screen && self.mouse;
+        if app_mouse {
+            screen_write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
+        }
         let token = dialog::ask_token(self.style, reason, !self.screen)
             .ok()
             .flatten();
+        if app_mouse {
+            screen_write("\x1b[?1000h\x1b[?1002h\x1b[?1006h");
+        }
         self.redraw();
         token
     }

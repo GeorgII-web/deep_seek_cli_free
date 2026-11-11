@@ -31,6 +31,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/ui/mod.rs` | `Terminal` = `Ui` on the terminal plus `open_chat`, `input`, `begin`, `finish`, `info`, `error`, `help`, `token_dialog`, `interrupts` (key watcher: Esc stops a task, Ctrl-C twice quits, Shift+Tab switches the mode), `mode`, `toggle_mode`; two layouts: inline (single task) and screen (chat: alternate screen, box docked at the bottom, output scrolled by the app); `screen_lock`, `screen_write` |
 | `src/ui/banner.rs` | `art`: the start picture "DEEP SEEK CLI FREE" in colored block letters, one or two bands by terminal width |
 | `src/ui/dialog.rs` | `ask_token`: the token window (masked field, OK / Cancel); `pick`: a list window (arrows, Enter) |
+| `src/ui/clipboard.rs` | `read`: the system clipboard through the desktop's own tool, for a paste by right click |
 | `src/ui/editor.rs` | `Buffer`, `Editor` (multiline input box inline or docked with a scroll region above, history, slash-command menu), `command_matches`, `read_choice` (one key) |
 | `src/ui/scrollback.rs` | `View`: the chat's output kept by the app, wrapped and scrolled (the input box stays at the bottom), with foldable blocks for the output of actions (click or Ctrl-O), mouse selection with copy, and the progress mark on the step that runs |
 | `src/ui/render.rs` | `Markdown`: hides the `dsc` block, trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings, links |

@@ -115,7 +115,7 @@ fn rows(
             "How to get the token",
             format!("{}How to get the token{reset}", s.bold()),
         ),
-        step("`1.` Open `chat.deepseek.com` in your browser and log in."),
+        step("`1.` Open https://chat.deepseek.com and log in."),
         step("`2.` Open the console: `F12` or `Ctrl+Shift+J`."),
         step("`3.` Click into the console input, type `allow pasting`,"),
         step("   press `Enter`."),
@@ -177,7 +177,8 @@ fn run(style: Style, reason: &str) -> io::Result<Option<String>> {
             frame.push_str(&format!("\x1b[{};{left}H{row}", top + i));
         }
         let hint = [
-            ("Paste", "the token"),
+            ("Right click", "paste"),
+            ("Drag", "select to copy"),
             ("Tab", "switch button"),
             ("Enter", "confirm"),
             ("Esc", "cancel"),
@@ -393,6 +394,8 @@ mod tests {
             .join("\n");
         assert!(!colored.contains('`'));
         assert!(colored.contains("allow pasting"));
+        // The site is a real terminal link.
+        assert!(colored.contains("\x1b]8;;https://chat.deepseek.com\x1b\\"));
     }
 
     #[test]

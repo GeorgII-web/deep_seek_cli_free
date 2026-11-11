@@ -749,15 +749,10 @@ impl Editor {
                     continue;
                 }
                 // Ctrl-V: most terminals paste themselves (that arrives as a paste);
-                // where the key reaches the app, the text copied here is inserted.
+                // where the key reaches the app, the clipboard is read here.
                 KeyCode::Char('v') if ctrl => {
                     if let Some(view) = &self.view {
-                        let copied = view
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .copied()
-                            .to_string();
-                        buffer.insert_str(&copied);
+                        buffer.insert_str(&super::paste_text(view));
                     }
                 }
                 KeyCode::Char('c') if ctrl && !armed_now => {
