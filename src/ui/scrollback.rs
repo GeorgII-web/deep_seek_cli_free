@@ -334,11 +334,10 @@ impl View {
         let s = self.style;
         let secs = self.fold_started.elapsed().as_secs();
         let text = format!(
-            "{}  ⎿ {}{frame}{}{} running… {secs}s{}",
+            "{}  ⎿ {}{}{frame} running… {secs}s{}",
             s.gray(),
-            s.accent(),
             s.reset(),
-            s.gray(),
+            s.accent(),
             s.reset()
         );
         self.rewrite_line(header, text);
@@ -375,13 +374,8 @@ impl View {
         };
         let s = self.style;
         let secs = self.status_started.elapsed().as_secs();
-        let text = format!(
-            "{}{frame}{} {}{label}… {secs}s{}",
-            s.accent(),
-            s.reset(),
-            s.gray(),
-            s.reset()
-        );
+        // Icon and text in one color, so the line reads as one thing.
+        let text = format!("{}{frame} {label}… {secs}s{}", s.accent(), s.reset());
         self.rewrite_line(index, text);
     }
 

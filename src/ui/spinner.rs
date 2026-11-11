@@ -164,12 +164,11 @@ impl Spinner {
                         style.model_label(model.load(Ordering::Relaxed))
                     ));
                 }
+                // Icon, label and seconds in one color; the hints after them stay gray.
                 let line = format!(
-                    "{}{}{} {label}… {}{secs}s{}{suffix}",
+                    "{}{} {label}… {secs}s{}{suffix}",
                     style.accent(),
                     FRAMES[state.frame],
-                    style.reset(),
-                    style.gray(),
                     style.reset()
                 );
                 if docked {
