@@ -152,16 +152,17 @@ impl Spinner {
                     (_, Some((key, what))) => format!("{dot}{}", style.hint(key, what)),
                     _ => String::new(),
                 };
-                if let Some(mode) = &mode {
-                    suffix.push_str(&format!(
-                        "{dot}{}",
-                        style.mode_label(mode.load(Ordering::Relaxed))
-                    ));
-                }
+                // The same order as under the box: model, then mode.
                 if let Some(model) = &model {
                     suffix.push_str(&format!(
                         "{dot}{}",
                         style.model_label(model.load(Ordering::Relaxed))
+                    ));
+                }
+                if let Some(mode) = &mode {
+                    suffix.push_str(&format!(
+                        "{dot}{}",
+                        style.mode_label(mode.load(Ordering::Relaxed))
                     ));
                 }
                 // Icon, label and seconds in one color; the hints after them stay gray.

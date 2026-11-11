@@ -390,20 +390,21 @@ impl Editor {
     fn hint_line(&self, hints: &[(&str, &str)], max: usize) -> String {
         let s = self.style;
         let dot = format!("{} · {}", s.faint(), s.reset());
+        // The model first, then the mode with its key right after it: the key belongs to the mode.
         let (mut left, mut left_columns) = (String::new(), 0);
-        if let Some(mode) = &self.mode {
-            let allow_all = mode.load(Ordering::Relaxed);
-            left.push_str(&s.mode_label(allow_all));
-            left_columns += if allow_all { 12 } else { 5 };
-        }
         if let Some(model) = &self.model {
             let mock = model.load(Ordering::Relaxed);
+            left.push_str(&s.model_label(mock));
+            left_columns += if mock { 6 } else { 10 };
+        }
+        if let Some(mode) = &self.mode {
+            let allow_all = mode.load(Ordering::Relaxed);
             if !left.is_empty() {
                 left.push_str(&dot);
                 left_columns += 3;
             }
-            left.push_str(&s.model_label(mock));
-            left_columns += if mock { 6 } else { 10 };
+            left.push_str(&s.mode_label(allow_all));
+            left_columns += if allow_all { 12 } else { 5 };
         }
         let (mut right, mut right_columns) = (String::new(), 0);
         for (key, what) in hints {

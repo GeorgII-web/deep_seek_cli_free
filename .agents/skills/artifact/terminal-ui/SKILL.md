@@ -117,8 +117,8 @@ watcher and the agent loop (`Terminal::mode`). With a terminal it is shown as `S
 
 | Line | Content |
 |---|---|
-| under the box (`Editor::hint_line`) | left: mode label, model label (`Style::model_label`: `◆ DeepSeek` blue, `◆ Mock` cyan) and the key that switches the mode (`MODE_KEY`, `Shift + Tab`); right, ending at the box edge: `INPUT_HINTS` = `Ctrl + C twice quit` and `↑↓ history` only (every other key is in `/help`), or `EDIT_HINTS`, `MENU_HINTS` |
-| progress line (`Spinner`) | spinner, label, clock, then the hint `Esc interrupt` or a 2 s notice, then the mode label and the model label |
+| under the box (`Editor::hint_line`) | left: model label (`Style::model_label`: `◆ DeepSeek` blue, `◆ Mock` cyan), then the mode label with the key that switches it right after (`MODE_KEY`, `Shift + Tab`); right, ending at the box edge: `INPUT_HINTS` = `Ctrl + C twice quit` and `↑↓ history` only (every other key is in `/help`), or `EDIT_HINTS`, `MENU_HINTS` |
+| progress line (`Spinner`) | spinner, label, clock, then the hint `Esc interrupt` or a 2 s notice, then the model label and the mode label |
 
 The model flag `Terminal::mock` (`Arc<AtomicBool>`, set by `Terminal::set_model` from `chat()` at the start and on
 `/model`) is shared with the box and the progress thread the same way as the mode.
