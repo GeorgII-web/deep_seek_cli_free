@@ -941,17 +941,17 @@ mod tests {
 
     #[test]
     fn command_menu_matches() {
-        const COMMANDS: &[Command] = &[("/new", "a"), ("/mode", "b"), ("/help", "c")];
+        const COMMANDS: &[Command] = &[("/new", "a"), ("/permissions", "b"), ("/help", "c")];
         let names = |text: &str| -> Vec<&str> {
             command_matches(COMMANDS, text)
                 .iter()
                 .map(|c| c.0)
                 .collect()
         };
-        assert_eq!(names("/"), ["/new", "/mode", "/help"]);
-        assert_eq!(names("/m"), ["/mode"]);
+        assert_eq!(names("/"), ["/new", "/permissions", "/help"]);
+        assert_eq!(names("/p"), ["/permissions"]);
         // Typed out in full: no menu, Enter sends it.
-        assert!(names("/mode").is_empty());
+        assert!(names("/permissions").is_empty());
         assert!(names("/x").is_empty());
         // A path or a sentence is not a command; neither is text without the slash.
         assert!(names("/new now").is_empty());

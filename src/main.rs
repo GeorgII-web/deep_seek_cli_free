@@ -218,7 +218,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 terminal.help();
                 continue;
             }
-            "/mode" => {
+            "/permissions" => {
                 terminal.toggle_mode();
                 saver.sync();
                 continue;

@@ -105,7 +105,10 @@ const COMMANDS: &[editor::Command] = &[
         "/new",
         "start a fresh conversation (the model forgets the earlier tasks)",
     ),
-    ("/mode", "switch between ask and allow all (also Shift+Tab)"),
+    (
+        "/permissions",
+        "switch between ask and allow all (also Shift+Tab)",
+    ),
     (
         "/model",
         "choose the real DeepSeek account or the built-in mock",
@@ -328,7 +331,7 @@ impl Terminal {
         self.allow_all.clone()
     }
 
-    /// Switches between ask and allow all (`/mode`; Shift+Tab does the same in the
+    /// Switches between ask and allow all (`/permissions`; Shift+Tab does the same in the
     /// box and while a task runs) and says what is on now.
     pub fn toggle_mode(&mut self) {
         let allow_all = !self.allow_all.fetch_xor(true, Ordering::Relaxed);

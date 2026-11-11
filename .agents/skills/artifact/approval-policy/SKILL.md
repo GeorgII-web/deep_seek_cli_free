@@ -11,7 +11,7 @@ action and again after an edit. Lists come from `[policy]` in `config.toml` (`co
 ## Modes
 
 `yes` is the mode flag `Terminal::mode()` (an `Arc<AtomicBool>`): false = ask, true = allow all. The start value is `policy.mode` from
-`config.toml` (the last mode the user chose, saved by `ModeSaver`, see `../cli-config-auth/SKILL.md`) or `--yes`; Shift+Tab (input box and while a task runs) and `/mode` switch it. `agent::run::act` reads it before
+`config.toml` (the last mode the user chose, saved by `ModeSaver`, see `../cli-config-auth/SKILL.md`) or `--yes`; Shift+Tab (input box and while a task runs) and `/permissions` switch it. `agent::run::act` reads it before
 every action, so a switch in the middle of a task counts for the next action. The deny list holds in both modes.
 
 ## Rules

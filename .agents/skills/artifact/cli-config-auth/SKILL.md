@@ -34,7 +34,7 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 |---|---|
 | empty | ignored |
 | `/new` | new `Conversation`, the next task gets the rules again |
-| `/mode` | `Terminal::toggle_mode` (ask ⇄ allow all) |
+| `/permissions` | `Terminal::toggle_mode` (ask ⇄ allow all) |
 | `/model` | `Terminal::pick` ("DeepSeek", "Mock"); a change: `ensure_login` for the real account, a new `Model`, clean screen, `ModeSaver::save_api` → `deepseek.api` |
 | `/login` | `relogin`: token window, save, `Model::set_client` |
 | `/sessions` | `Terminal::pick` over `Store::rows`; the chosen one: new `Conversation` + `resume(id, parent)`, `first = false` |
@@ -82,7 +82,7 @@ that protects only the old token path gets the new one (`guard_auth_file`). `Set
 file (comments are lost).
 
 Saved mode: `policy.mode` (`config::Mode`: `ask`, `allow_all`) is the mode at the start. `ModeSaver` in
-`src/main.rs` compares the mode flag with its last value after every input, `/mode` and task (`sync`) and saves
+`src/main.rs` compares the mode flag with its last value after every input, `/permissions` and task (`sync`) and saves
 when the user switched it; a mode that only comes from `--yes` is never written.
 
 | Section | Struct | Keys |

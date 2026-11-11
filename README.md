@@ -176,7 +176,7 @@ shell prompt.
 | Ctrl-D | quit (empty box) |
 
 Pasting several lines works. `/new` starts a fresh conversation, `/sessions` lists the earlier ones and switches to the one you pick, `/model`
-chooses the real account or the mock, `/mode` switches the mode, `/login` asks for a new token, `/help` lists the
+chooses the real account or the mock, `/permissions` switches the mode, `/login` asks for a new token, `/help` lists the
 commands and keys, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
 `~/.config/deep_seek_cli_free/history.json`. After a restart the chat begins a new conversation; `/sessions` goes back to an
@@ -249,7 +249,7 @@ agent rules.
 | allow all | `⏵⏵ allow all` | every action runs without a question; only the deny list stops one |
 
 The mode is shown under the input box and on the progress line (`ask` green, `allow all` orange). Shift+Tab or
-`/mode` switches it at any time, also in the middle of a task. The mode you chose is saved in `config.toml`
+`/permissions` switches it at any time, also in the middle of a task. The mode you chose is saved in `config.toml`
 (`policy.mode`) and used on the next start; `--yes` starts in allow all for that run only.
 
 ### Approvals
@@ -279,7 +279,7 @@ stops the task.
   not print file content (`ls`, `df`, `stat`, `git status`, ...). Think before you approve `cat` on a private file.
 - The deny list is a plain substring check on the command or path. It stops obvious mistakes (`rm -rf /`, SSH
   keys, the token file); it is **not a sandbox**.
-- The mode `allow all` (`--yes`, Shift+Tab, `/mode`) lets a free chat model run anything not on the deny list. Use it only for tasks and folders where that
+- The mode `allow all` (`--yes`, Shift+Tab, `/permissions`) lets a free chat model run anything not on the deny list. Use it only for tasks and folders where that
   is acceptable, ideally in a container or VM.
 - The model sees only what you send: the task, the working directory and the results of approved actions.
 
