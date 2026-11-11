@@ -48,7 +48,9 @@ The repo is public: no personal paths, names or data in any tracked file.
 | [cli-config-auth](.agents/skills/artifact/cli-config-auth/SKILL.md) | commands and flags, `main.rs` dispatch, `doctor`, `config.toml` sections and defaults, `auth.json`, login |
 | [deepseek-client](.agents/skills/artifact/deepseek-client/SKILL.md) | DeepSeek calls and headers, error envelope, proof of work, SSE format and parser, conversation, throttle, what to do when the site changes |
 | [agent-loop](.agents/skills/artifact/agent-loop/SKILL.md) | action block protocol, first prompt, tools, loop steps, `Ui` trait, adding a tool |
-| [terminal-ui](.agents/skills/artifact/terminal-ui/SKILL.md) | look of a run, input box and its keys, progress line, markdown rendering, colors, checking the screen with `scripts/pty-drive.py` |
+| [terminal-ui](.agents/skills/artifact/terminal-ui/SKILL.md) | look of a run, the two layouts, print rules, progress lines, keys while a task runs, mode and hint lines, markdown rendering, colors |
+| [scrollback](.agents/skills/artifact/scrollback/SKILL.md) | the output kept by the app: scrolling, foldable action output, the status line, mouse selection, saved sessions, repaint |
+| [input-box](.agents/skills/artifact/input-box/SKILL.md) | the multiline box and its keys, history, command menu, copy and paste, the token window and the list window |
 | [approval-policy](.agents/skills/artifact/approval-policy/SKILL.md) | allow, deny, ask, "always", edit, default lists |
 | [build-run-check](.agents/skills/quality-gate/build-run-check/SKILL.md) | gates, solver test, live checks, recording a fixture, build profiles, GitHub workflows and release steps, public repo rules |
 

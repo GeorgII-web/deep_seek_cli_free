@@ -1,6 +1,6 @@
 ---
 name: terminal-ui
-description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer stream, action line, approval question, result preview, finish line with the seconds), the multiline input box and its keys in `editor.rs`, the stream renderer that hides the `dsc` block and styles markdown in `render.rs`, the progress line in `spinner.rs` and the colors in `style.rs`. Use when the look, a key, the progress line or the printed text of a run must change, or output is torn or doubled.
+description: The terminal UI in `src/ui/` — `Terminal` and its two layouts (inline, and the chat screen with the docked box), the print rules, what a task looks like (status line, action blocks, finish bar), the keys watched while a task runs, the mode and hint lines, `spinner.rs`, `render.rs`, `style.rs`, `banner.rs`. Use when the look of a run, the progress lines, colors or the printed text must change, or output is torn or doubled.
 ---
 
 # Terminal UI
@@ -20,6 +20,10 @@ description: The terminal UI in `src/ui/` — `Terminal` (banner, input, answer 
 | `src/ui/render.rs` | `Markdown`: `feed`, `finish` |
 | `src/ui/spinner.rs` | `Spinner`: `start`, `stop`, `dock`, `set_hint`, `set_mode`; `Notifier` (a 2 s notice in place of the key hint) |
 | `src/ui/style.rs` | `Style`: every escape code; `detect()`; `inline(text, base)` colors `code` spans and links in chrome lines; `links(text, base)` colors only the links (result preview); `link()`, `hyperlink(url)` (OSC 8 open and close); `hint(key, what)` and `mode_label` for hint lines |
+
+Two parts have their own skill: the output kept and scrolled by the app, with blocks, selection and the status
+line → `../scrollback/SKILL.md`; the input box, the command menu, copy and paste, and the windows (token, list) →
+`../input-box/SKILL.md`.
 
 ## Layouts
 
@@ -47,43 +51,13 @@ Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_i
 - `Terminal::drop` → `close_dock` (scroll region reset), mouse reports off, back to the normal screen, then
   `View::transcript` is printed once so the conversation stays in the terminal.
 
-## Scrollback (`scrollback::View`, screen layout only)
-
-The app keeps its own output: complete lines plus one open line, wrapped to the screen width (`wrap` knows
-escape sequences and carries colors over a break). The view is the last rows of that; `offset` = rows below it.
-
-| Case | What happens |
-|---|---|
-| at the bottom | `Terminal::emit` records the text (`View::push`) and writes it to the terminal, which wraps and scrolls inside the scroll region exactly like the model |
-| scrolled up | `push` only records; the view stays on the same rows (`offset` grows), nothing is written |
-| a block (`begin_fold`, `end_fold`) | the lines pushed between them are the body under the header line; `end_fold(folded_text, open_text, folded)` sets the two header texts and hides the body when folded; `rewrap` skips hidden bodies, `wrapped` keeps the line each row comes from |
-| the running step | `Spinner` thread → `View::animate(frame)`: rewrites the header of the block being written and draws only that row (between save and restore cursor); nothing happens without a block being written. The thread releases its own state lock before it takes the view's |
-| select, copy, paste | `mouse_event`: left button down → `select_start`, drag → `select_to` (repaint, the selected part inverted and shown without colors); the text stays selected, nothing is copied. Copy = right button down with a selection, or Ctrl-C (`copy_selection`: `View::copy_selection` takes the text, rows of one wrapped line joined, and ends the selection; OSC 52 puts it on the terminal's clipboard; `View::flash` confirms on the dock border). Paste = right button down without a selection, or Ctrl-V in the box where the key reaches the app: `paste_text` = the system clipboard (`clipboard::read`, so text copied in other windows too), else `View::copied`; the box inserts it. Terminals that paste themselves on Ctrl-V send a paste event instead. Press and release on one cell is a click. With a selection, Ctrl-C does not count towards quitting. Shift+drag is the terminal's own selection |
-| the step in progress, outside a block | the status line: `Terminal::begin_status` (first event of an answer) puts a line of its own at the start of the answer (`View::begin_status`), the `Spinner` thread fills it every tick (`View::animate_status`: `<frame> <label>… Ns`, the label of the bottom line: "Waiting for DeepSeek", "Thinking", "Answering"), and `Terminal::end_status` (`answer_end`, `finish`) takes the line out again (`View::end_status`: the rest moves up, blocks after it keep their place in the list, one repaint). It never reaches a saved session |
-| click, Ctrl-O | `mouse_event` → `View::click(row)`: a left click on the header row of a finished block with a body toggles it (`toggle` keeps the rows above in place); Ctrl-O → `toggle_last`; `unfold_last` keeps the view at the bottom |
-| scroll (PgUp, PgDn, wheel 3 rows, Ctrl+Home, Ctrl+End) | `View::scroll` / `top` / `bottom` → `repaint`: every row of the area cleared and drawn from the model, cursor at `out()` |
-| dock grows or shrinks, terminal resized | `Editor::sync_view` → `View::resize` (rewrap on a new width) → `repaint`; `Dock::out` comes from `View::out`, no cursor query |
-| input sent | `Editor::erase` → `View::bottom` first |
-| another conversation (`/sessions`, `--session`, `/new`, `/model`) | `Terminal::output` = `View::snapshot` as JSON (lines, open line, finished blocks with both header texts and their folded state); `Terminal::show_output(saved)` → `View::restore`, so the blocks still fold; text that is not such JSON (a save of an older version, or empty) → `View::replace` as plain lines |
-| a window (`token_dialog`, `pick`) | drawn over the screen (no second alternate screen), then `Terminal::redraw`: clear, `Editor::redraw_dock`, `repaint` |
-
-- Everything printed in the screen layout must go through `emit` (`line`, `partial`, `text`) or `erase_partial`
-  (removes the open line: the approval question). A direct write would put the model and the screen out of step.
-- The scroll mark (`View::indicator`) sits on the dock's top border, right side; the box redraws it after itself.
-- Keys reach the view from two places: `Editor::read` (while typing) and the key watcher (while a task runs).
-- Mouse reports (`ESC[?1000h` buttons, `ESC[?1002h` motion while a button is down, `ESC[?1006h` SGR form) are on
-  when `ui.mouse_scroll` is true: the terminal gives the mouse to the app, which scrolls, folds and selects itself.
-- `KEEP_LINES` (20000) lines are kept; `forget` drops the oldest with the blocks that start in them.
-- `transcript` (the text printed at exit) writes every block out in full. Saved sessions use `snapshot`, not this.
-
 ## Rules
 
 - Print only through `Terminal::line` (chrome), `partial` (a question waiting for a key) and `text` (answer);
   they pick the stream of the layout and hold `screen_lock`, which the spinner thread takes too.
 - Without a terminal (`Style::detect`, `Terminal::interactive`) there are no colors, no spinner, no box: `input`
   reads plain lines, a question counts as no. `NO_COLOR` or `TERM=dumb` switch colors off.
-- Raw mode while a key is awaited: `Editor::read`, `read_choice`, and for the whole task (`Watch`, see Keys while a
-  task runs). In raw mode a line must end with `\r\n`: `Terminal::eol` does that inside `line`, `partial`, `text`.
+- Raw mode while a key is awaited: `Editor::read`, `read_choice`, and for the whole task (`Watch`, section "Keys while a task runs"). In raw mode a line must end with `\r\n`: `Terminal::eol` does that inside `line`, `partial`, `text`.
 - Before chrome is printed call `close_output` (ends an open answer line; inline it also removes the spinner). `blank()` prints
   one empty line unless `gap` says the last line was one.
 - A color is never written as a literal escape outside `style.rs`.
@@ -150,74 +124,6 @@ The model flag `Terminal::mock` (`Arc<AtomicBool>`, set by `Terminal::set_model`
 `/model`) is shared with the box and the progress thread the same way as the mode.
 
 Two grays: `Style::key` (lighter) for the key, `Style::faint` (darker) for what it does and the ` · ` separators.
-
-## Token window (`dialog::ask_token`)
-
-A modal window centered on the terminal's alternate screen (`ESC[?1049h` … `l`), so the chat is not overwritten
-and comes back as it was; `Terminal::token_dialog` then calls `Editor::refresh_dock` to set the scroll region
-again. Content (`dialog::rows`, which also returns the row of the token field): title, the reason, five numbered steps
-to get the token (open the site, open the console with F12 or Ctrl+Shift+J, type `allow pasting`, run the
-`SNIPPET`, paste the token; keys and things to type colored through `Style::inline`), the field, the buttons
-`[ OK ]` and `[ Cancel ]` (the focused one inverted), and below the window the key hints, wrapped to the
-window's width over as many lines as needed and aligned with its text (`hint_lines`, also used by the list window). The README section "Log in" has the same steps.
-
-| Key | Effect |
-|---|---|
-| paste, characters | added to the token; shown as `•` only, with the count; whitespace and control characters dropped |
-| Backspace, Ctrl-U | delete one, delete all |
-| Tab, Shift+Tab, Left, Right | switch the focused button |
-| Enter | the focused button; OK without a token does nothing |
-| Esc, Ctrl-C, Ctrl-D | Cancel |
-
-While the window is open, `Terminal::token_dialog` switches the mouse reports off, so the terminal handles the
-mouse itself: its own selection and copy work on the steps, the site in step 1 is a real link (`Style::inline`
-→ `links`), and a right click pastes (it arrives as a paste event). They are switched on again after.
-
-The token leaves the function only as the return value: it is never printed, logged or put into `Editor` history.
-
-`dialog::pick(style, title, items)` is the list window of `/sessions`, drawn the same way: one row per item (cut
-to the window), the selected one inverted with `❯`, "N more below" in the border when the list is longer than
-the screen. Up, Down, PgUp, PgDn, Home, End move; Enter returns the index; Esc, `q`, Ctrl-C close.
-
-## Input box (`Editor::read`)
-
-Inline: drawn in place (top border, the rows, bottom border, hint line); every key redraws, `move_to_top` goes
-up `cursor_line` rows and clears down. Docked: see Layouts; both use `box_lines`. Wrapping: `Buffer::rows(width)` splits at line ends and
-at the box width (wide characters count two columns); a box taller than the screen shows the rows around the cursor.
-
-| Key | Effect |
-|---|---|
-| Enter | send (empty input is ignored); after a `\` at the cursor: new line |
-| Shift+Enter (where the terminal reports it: `RawMode` asks for the keyboard flags), Alt+Enter, Ctrl-J | new line |
-| PgUp, PgDn, Ctrl+Home, Ctrl+End, mouse wheel | scroll the output (`scroll_by_key`, `mouse_event`) |
-| Ctrl-O, click on a block header | fold or unfold the output of an action |
-| Up, Down | move a row; at the first or last row go through the history (the draft is kept) |
-| Left, Right, Home, End, Ctrl-A, Ctrl-E | move |
-| Backspace, Delete, Ctrl-W or Alt+Backspace (word), Ctrl-U, Ctrl-K | delete |
-| `/` as the first character | command menu, see below |
-| Shift+Tab | switch the mode (ask ⇄ allow all) |
-| Esc | clear the box |
-| Ctrl-C | with text selected in the output: copy it; else clear the box and show "Press Ctrl-C again to exit" for `AGAIN` (2 s); a second one in that time quits |
-| Ctrl-V, right click with nothing selected | paste the copied text into the box |
-| Ctrl-D | quit on an empty box, else delete |
-| paste | bracketed paste keeps line ends; tabs become spaces, control characters are dropped |
-
-Command menu (chat prompt only, `remember = true`): while the input is one word starting with `/`,
-`command_matches(COMMANDS, text)` gives the commands that start with it and `menu_lines` draws them between the box
-and the hint line (the dock grows by that many rows). A command typed out in full offers nothing, so Enter sends it.
-
-| Key with the menu open | Effect |
-|---|---|
-| Up, Down | move the selection (wraps) |
-| Enter | run the selected command at once (`Input::Submit`) |
-| Tab | complete: put the selected command into the box |
-| Esc | close the menu for this text; the text stays |
-| any edit | new matches, selection back to the first |
-
-`COMMANDS` lives in `src/ui/mod.rs` (`Editor::set_commands`); `chat()` in `src/main.rs` runs them. A submitted
-command is not echoed into the output (`Terminal::input`): only its effect is shown.
-
-History: `<home>/history.json`, the last 200 inputs, consecutive duplicates skipped; only the chat passes a file.
 
 ## Checking a change
 
