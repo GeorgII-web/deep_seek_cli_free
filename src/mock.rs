@@ -24,6 +24,7 @@ const RESULT_STARTS: [&str; 7] = [
 pub const TASKS: &str = "\
 `!<command>`      asks to run the command, then ends with the silent done block
 `run <command>`   asks to run it, then answers with a sentence
+`browse <url>`    asks to fetch the page with curl (first 40 lines), then answers
 `read <path>`     asks to read the file; `write <path>` asks to write `mock` to it
 `think <text>`    reasoning first, then an answer
 `slow`            a long answer at a quarter of the speed (try Esc, scrolling)
@@ -46,6 +47,11 @@ pub struct Mock {
 
 fn block(json: &str) -> String {
     format!("{FENCE}\n{json}\n```")
+}
+
+/// The text as one word for bash.
+fn shell_quote(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''"))
 }
 
 fn json_string(text: &str) -> String {
@@ -100,6 +106,19 @@ impl Mock {
         if let Some(cmd) = task.strip_prefix("run ") {
             self.after = Some("Mock: the command finished.".into());
             return Ok(say(format!("I will run it.\n\n{}", shell(cmd))));
+        }
+        // Like a real "open this site" task: fetch the page with curl, then say something about it.
+        if task == "browse" || task.starts_with("browse ") {
+            let url = match task["browse".len()..].trim() {
+                "" => "https://example.org",
+                url => url,
+            };
+            self.after = Some(format!("Mock: that is the start of the page at {url}."));
+            let command = format!("curl -sSL --max-time 20 {} | head -n 40", shell_quote(url));
+            return Ok(say(format!(
+                "I will fetch the page.\n\n{}",
+                shell(&command)
+            )));
         }
         if let Some(path) = task.strip_prefix("read ") {
             self.after = Some(done);
@@ -197,6 +216,25 @@ mod tests {
         assert!(matches!(action, Action::Shell { cmd, .. } if cmd == "echo \"a b\""));
         let (after, _) = ask(&mut mock, "Result: exit code 0\n").await;
         assert_eq!(protocol::parse(&after), Parsed::Done);
+    }
+
+    #[tokio::test]
+    async fn browse_fetches_the_page_with_curl() {
+        let mut mock = Mock::default();
+        let (answer, _) = ask(&mut mock, "Task: browse https://ya.ru/?a=b'c").await;
+        let Parsed::Action { action, .. } = protocol::parse(&answer) else {
+            panic!("{answer}")
+        };
+        // The address is one quoted word: nothing in it can act as shell syntax.
+        assert!(
+            matches!(action, Action::Shell { cmd, .. } if cmd == "curl -sSL --max-time 20 'https://ya.ru/?a=b'\\''c' | head -n 40")
+        );
+        assert_eq!(
+            ask(&mut mock, "Result: exit code 0\n").await.0,
+            "Mock: that is the start of the page at https://ya.ru/?a=b'c."
+        );
+        let (default, _) = ask(&mut mock, "Task: browse").await;
+        assert!(default.contains("https://example.org"));
     }
 
     #[tokio::test]

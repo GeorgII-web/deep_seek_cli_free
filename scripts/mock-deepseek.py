@@ -16,6 +16,7 @@ A token that starts with "dead" gets the "invalid token" answer on every call.
 What the model "answers" depends on the task (the text after "Task: " in the prompt):
   !<command>        asks to run the shell command; after its result sends the done block
   run <command>     asks to run it; after the result answers with a sentence
+  browse <url>      asks to fetch the page with curl (first 40 lines), then answers
   read <path>       asks to read the file          write <path>   asks to write "mock\\n" to it
   think <text>      reasoning first, then an answer
   slow              a long answer, one word every 0.3 s (to try Esc and scrolling)
@@ -68,6 +69,12 @@ def plan(prompt, session):
     if task.startswith('run '):
         session['after'] = 'Mock: the command finished.'
         return '', 'I will run it.\n\n' + block({'tool': 'shell', 'cmd': task[4:], 'why': 'mock: run then tell'}), DELAY
+    if task == 'browse' or task.startswith('browse '):
+        url = task[len('browse'):].strip() or 'https://example.org'
+        session['after'] = f'Mock: that is the start of the page at {url}.'
+        quoted = "'" + url.replace("'", "'\\''") + "'"
+        command = f'curl -sSL --max-time 20 {quoted} | head -n 40'
+        return '', 'I will fetch the page.\n\n' + block({'tool': 'shell', 'cmd': command, 'why': 'mock: the task asked for it'}), DELAY
     if task.startswith('read '):
         session['after'] = done
         return '', block({'tool': 'read_file', 'path': task[5:], 'why': 'mock: read'}), DELAY

@@ -198,7 +198,7 @@ shown at the bottom, next to the mode: `◆ DeepSeek` or `◆ Mock`. Use the moc
 keys and approvals without touching your account. It answers slowly on purpose, so you can watch the interface
 work: two seconds of "waiting", then word by word (`[mock]` in the config sets the speed). When the chat starts
 on the mock, it lists the tasks it understands: `!<command>` asks to run the
-command, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
+command, `browse <url>` asks to fetch a page with curl and then answers, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
 scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back.
 
 ### Sessions

@@ -51,7 +51,8 @@ unshare -rn sh -c 'ip link set lo up; scripts/pty-drive.py "[(\"\", 1), (\"long\
 | `scripts/mock-deepseek.py [port]` | the DeepSeek web API over HTTP | client, stream parser, token and rate-limit paths: `DSC_API_BASE=http://127.0.0.1:<port>`; a challenge with algorithm `none` skips the proof of work; a token starting with `dead` is rejected |
 | `scripts/pty-drive.py '<keys>' [rows] [columns]` | a person at a terminal | starts the HTTP mock on a free port, a home `var/mock-home` (mock token, no throttle), runs `target/debug/dsc` in a pseudo-terminal, prints scrollback, screen (`-` output, `#` dock), cursor and the mock's request counts |
 
-Both mocks understand the same tasks (`mock::TASKS`): `!<cmd>`, `run <cmd>`, `read`, `write`, `think`, `slow`,
+Both mocks understand the same tasks (`mock::TASKS`): `!<cmd>`, `run <cmd>`, `browse <url>` (a curl of the page:
+approving it does fetch that site, not DeepSeek), `read`, `write`, `think`, `slow`,
 `long`, `code`, `broken`, `two`, `early` (done at once), `dead`, `429`; anything else is echoed.
 
 ```bash
