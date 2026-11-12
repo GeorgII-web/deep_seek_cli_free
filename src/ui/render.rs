@@ -1,10 +1,9 @@
-//! Turns the streamed answer into what the user sees: the `dsc` action block and
-//! DeepSeek's own tool-call markup (DSML) are hidden (the action line shows them), blank lines at the edges are dropped, and
+//! Turns the streamed answer into what the user sees: the tool calls (DeepSeek's
+//! own markup, DSML) are hidden (the action line shows them), blank lines at the edges are dropped, and
 //! with colors on a little markdown is styled (inline code, code blocks with a
 //! bar instead of the fences, bold, headings).
 
 use super::style::Style;
-use crate::agent::protocol::FENCE;
 
 /// How DeepSeek's own tool-call markup starts a line (`<｜DSML｜function_calls>`, with
 /// one or two fullwidth bars).
@@ -28,10 +27,10 @@ pub struct Markdown {
     /// Line ends not printed yet; printed before the next visible character
     pending_newlines: usize,
     emitted: bool,
-    in_action: bool,
     /// Inside DSML tool calls (`<｜DSML｜…`): hidden until their closing `calls>` line
     in_dsml: bool,
-    action_line: String,
+    /// The current line inside the tool calls
+    dsml_line: String,
     in_code: bool,
     inline_code: bool,
     bold: bool,
@@ -57,9 +56,8 @@ impl Markdown {
             line_start: true,
             pending_newlines: 0,
             emitted: false,
-            in_action: false,
             in_dsml: false,
-            action_line: String::new(),
+            dsml_line: String::new(),
             in_code: false,
             inline_code: false,
             bold: false,
@@ -89,7 +87,7 @@ impl Markdown {
         // A fence as the very last line has no line end: with colors it is dropped like the others.
         let fence = held.trim().starts_with("```");
         let dsml = self.in_dsml || held.trim_start().starts_with(DSML_START);
-        if !self.in_action && !dsml && held.trim() != FENCE && !(fence && self.style.on()) {
+        if !dsml && !(fence && self.style.on()) {
             for c in held.trim_end().chars() {
                 if fence {
                     self.put(c, Look::Dim, &mut out);
@@ -108,34 +106,19 @@ impl Markdown {
     fn push(&mut self, c: char, out: &mut String) {
         if self.in_dsml {
             if c == '\n' {
-                let line = std::mem::take(&mut self.action_line);
+                let line = std::mem::take(&mut self.dsml_line);
                 let line = line.trim();
                 if line.starts_with("</") && line.contains("DSML") && line.ends_with("calls>") {
                     self.in_dsml = false;
                 }
             } else {
-                self.action_line.push(c);
-            }
-            return;
-        }
-        if self.in_action {
-            if c == '\n' {
-                if self.action_line.trim() == "```" {
-                    self.in_action = false;
-                }
-                self.action_line.clear();
-            } else {
-                self.action_line.push(c);
+                self.dsml_line.push(c);
             }
             return;
         }
         if c == '\n' {
             let held = std::mem::take(&mut self.held);
             let fence = held.trim();
-            if fence == FENCE {
-                self.in_action = true;
-                return;
-            }
             // DSML tool calls: hidden from here on (one call on a single line ends at once).
             if fence.starts_with(DSML_START) {
                 self.in_dsml = !(fence.contains("calls>")
@@ -163,7 +146,7 @@ impl Markdown {
             self.held.push(c);
             let start = self.held.trim_start();
             if start.is_empty()
-                || FENCE.starts_with(start)
+                || "```".starts_with(start)
                 || start.starts_with("```")
                 || DSML_START.starts_with(start)
                 || start.starts_with(DSML_START)
@@ -377,6 +360,14 @@ mod tests {
                 "chunk {chunk}"
             );
         }
+        // The spelling the prompt asks for, at the end of an answer.
+        let call = crate::agent::protocol::dsml(r#"{"tool":"shell","cmd":"ls"}"#);
+        for chunk in [1, 3, 1000] {
+            assert_eq!(
+                render(&format!("\n\nLet me look.\n\n{call}\n"), false, chunk),
+                "Let me look."
+            );
+        }
         // Without its closing line (the stream ended): hidden to the end.
         assert_eq!(
             render(
@@ -388,19 +379,6 @@ mod tests {
         );
         // Text that only mentions it stays.
         assert_eq!(render("a <b> tag", false, 2), "a <b> tag");
-    }
-
-    #[test]
-    fn action_block_is_hidden_in_any_chunking() {
-        let answer = "\n\nLet me look.\n\n```dsc\n{\"tool\":\"shell\",\"cmd\":\"ls\"}\n```\n";
-        for chunk in [1, 3, 1000] {
-            assert_eq!(render(answer, false, chunk), "Let me look.");
-        }
-        assert_eq!(render("```dsc\n{\"tool\":\"shell\"}", false, 2), "");
-        assert_eq!(
-            render("before\n```dsc\n{}\n```\nafter", false, 4),
-            "before\nafter"
-        );
     }
 
     #[test]

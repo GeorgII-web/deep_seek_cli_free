@@ -2,7 +2,7 @@
 //! with `/model` (or `deepseek.api = "mock"`), for trying the app and for tests.
 //! `scripts/mock-deepseek.py` plays the same parts over HTTP for the client code.
 
-use crate::agent::protocol::FENCE;
+use crate::agent::protocol;
 use crate::attach::Attachment;
 use crate::backend::{Backend, Event};
 use crate::config::MockSpeed;
@@ -17,28 +17,28 @@ const RESULT_STARTS: [&str; 7] = [
     "Written:",
     "Denied",
     "Error:",
-    "Your action block",
+    "Your tool call",
     "The user interrupted",
 ];
 
 /// What the mock understands; shown by `/model` and `/help`.
 pub const TASKS: &str = "\
-`!<command>`      asks to run the command, then ends with the silent done block
+`!<command>`      asks to run the command, then ends with the silent done call
 `run <command>`   asks to run it, then answers with a sentence
 `browse <url>`    with Browse on: reads the page on the model's side (nothing runs here);
                   with Browse off: asks to fetch it with curl here, like `curl <url>`
 `curl <url>`      the local way: asks to fetch the page with curl here, then answers
 `weather <place>` asks to curl wttr.in even with Browse on (as the real model does); with
                   Browse on the app runs a web search instead and the mock answers from it
-`site <host>`     asks to curl the site in DeepSeek's own tool-call markup (DSML), as the real
-                  model does; with Browse on the app runs a web search instead
+`site <host>`     asks to curl the site in the other DSML spelling the real model sent
+                  (`<｜｜DSML｜｜ calls>`); with Browse on the app runs a web search instead
 `web <query>`     asks for the web tool: the app runs the (mock) web search
 `read <path>`     asks to read the file; `write <path>` asks to write `mock` to it
 `think <text>`    reasoning first, then an answer
 `slow`            a long answer at a quarter of the speed (try Esc, scrolling)
 `long`            80 lines; `code` = bold, inline code, a code block, a link
-`broken`          an action block that is not JSON; `two` = two action blocks
-`early`           the done block at once (the app asks again), then a sentence
+`broken`          a shell call without its command; `two` = two tool calls
+`early`           the done call at once (the app asks again), then a sentence
 `dead`            the \"token dead\" error; `429` = the \"too many requests\" error
 anything else     `Mock answer to: <task>`
 dropped files     \"uploaded\" and \"read\": the answer starts with their names, sizes and first lines;
@@ -67,7 +67,7 @@ pub struct Mock {
 }
 
 fn block(json: &str) -> String {
-    format!("{FENCE}\n{json}\n```")
+    protocol::dsml(json)
 }
 
 /// The text as one word for bash.
@@ -132,7 +132,7 @@ impl Mock {
                 .take()
                 .unwrap_or_else(|| "Mock: finished.".into())));
         }
-        if prompt.starts_with("You sent the done block") {
+        if prompt.starts_with("You sent the done call") {
             return Ok(say("Mock: a real answer after the early done.".into()));
         }
         let task = prompt.rsplit("Task: ").next().unwrap_or(prompt).trim();
@@ -182,12 +182,12 @@ impl Mock {
             let command = format!("curl -s {}", shell_quote(&url));
             return Ok(say(shell(&command)));
         }
-        // Like the real model on "check ya.ru": a curl in DeepSeek's own tool-call markup.
+        // Like the real model on "check ya.ru": a curl, in the other DSML spelling it sent.
         if let Some(site) = task.strip_prefix("site ") {
             let site = site.trim();
             self.after = Some(format!("Mock: that is what is on {site}."));
             return Ok(say(format!(
-                "<｜DSML｜function_calls>\n<｜DSML｜invoke name=\"shell\">\n<｜DSML｜parameter name=\"cmd\" string=\"true\">curl -sL {} | head -c 2000</｜DSML｜parameter>\n<｜DSML｜parameter name=\"why\" string=\"true\">fetch {site}</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜function_calls>",
+                "<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"shell\">\n<｜｜DSML｜｜ parameter name=\"cmd\" string=\"true\">curl -sL {} | head -c 2000</｜｜DSML｜｜ parameter>\n<｜｜DSML｜｜ parameter name=\"why\" string=\"true\">fetch {site}</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>",
                 shell_quote(&format!("https://{site}"))
             )));
         }
@@ -242,7 +242,7 @@ impl Mock {
                 "Here is **bold**, `inline code` and a link https://example.org/docs.\n\n```bash\necho \"hello\"\nls -la\n```\n\n# Heading\nDone."
                     .into(),
             ),
-            "broken" => say(format!("{FENCE}\nthis is not json\n```")),
+            "broken" => say(block(r#"{"tool":"shell","why":"mock: no command"}"#)),
             "early" => say(block(r#"{"tool":"done"}"#)),
             "two" => {
                 self.after = Some("Mock: finished.".into());

@@ -1,6 +1,6 @@
 ---
 name: agent-loop
-description: The agent in `src/agent/` — the text protocol that emulates tool calls (`protocol.rs`, first prompt, `dsc` action block, parser, result messages), the tools (`tools.rs`, shell in its own process group, output cap, file read and write), the loop and the `Ui` trait (`run.rs`). Use when the model's actions are parsed wrong, a tool misbehaves, a tool is added, the prompt or the loop end conditions change.
+description: The agent in `src/agent/` — the text protocol that emulates tool calls (`protocol.rs`, first prompt, tool calls in DSML, parser, result messages), the tools (`tools.rs`, shell in its own process group, output cap, file read and write), the loop and the `Ui` trait (`run.rs`). Use when the model's actions are parsed wrong, a tool misbehaves, a tool is added, the prompt or the loop end conditions change.
 ---
 
 # Agent loop
@@ -11,35 +11,46 @@ see `../approval-policy/SKILL.md`).
 
 | File | Content |
 |---|---|
-| `src/agent/protocol.rs` | `Action`, `FENCE`, `first_prompt`, `next_prompt`, `with_files` (the note `Attached files (…): a, b` before the `Task:` line), `parse` → `Parsed`, `shell_result` |
+| `src/agent/protocol.rs` | `Action`, `CALLS_OPEN` / `CALLS_CLOSE`, `dsml` (one call from its JSON object), `dsml_calls`, `first_prompt`, `next_prompt`, `with_files` (the note `Attached files (…): a, b` before the `Task:` line), `parse` → `Parsed`, `shell_result` |
 | `src/agent/interrupt.rs` | `Interrupt`, `Interrupts` (`signal`, `channel`, `clear`, `next`) |
 | `src/agent/tools.rs` | `shell` → `ShellOutput`, `cap`, `read_file`, `write_file`; constants `KEEP_BYTES`, `DRAIN` |
 | `src/agent/run.rs` | `run`, `act` (policy, question, edit), `execute`; `Ui`, `Decision`; tests with `Script` and `FakeUi` |
 
 ## Protocol
 
-First message of a conversation = `first_prompt`: role, the action format, the tools, the rules (one action per
-answer, never invent the result, no interactive commands, prefer read-only, plain text when done), the working
-directory, the task. The model answers either plain text (final answer, the loop ends) or with a block:
+First message of a conversation = `first_prompt`: role, the tool-call format, the tools and their parameters, the
+rules (one call per answer, never invent the result, no interactive commands, prefer read-only, plain text when
+done), the working directory, the task. The model answers either plain text (final answer, the loop ends) or with
+one tool call in DSML, DeepSeek's own tool-call markup (the format of its chat template):
 
-````
-```dsc
-{"tool":"shell","cmd":"ls -la","why":"see the files"}
 ```
-````
+<｜DSML｜function_calls>
+<｜DSML｜invoke name="shell">
+<｜DSML｜parameter name="cmd" string="true">ls -la</｜DSML｜parameter>
+<｜DSML｜parameter name="why" string="true">see the files</｜DSML｜parameter>
+</｜DSML｜invoke>
+</｜DSML｜function_calls>
+```
 
-| Tool | Fields | Result message |
+`string="true"` = text as it is (no quoting or escaping, several lines); `string="false"` = a JSON value (a number).
+Why DSML and not a format of our own: the web chat has no function calling, and the model is trained on DSML; asked
+for a format of ours it still fell back to DSML now and then (seen 2026-11-12), so the prompt asks for the
+format it keeps to. Not yet checked live: that the web chat passes the markup in the
+prompt through unchanged.
+
+| Tool | Parameters | Result message |
 |---|---|---|
-| `shell` | `cmd`, `timeout_s` (optional, capped by `agent.command_timeout_secs`), `why` | `Result: exit code N` / `timed out, killed` / `killed by a signal`, then `--- stdout ---`, `--- stderr ---` or `(no output)` |
+| `shell` | `cmd`, `timeout_s` (optional, capped by `agent.command_timeout_secs`; a number, also read from text), `why` | `Result: exit code N` / `timed out, killed` / `killed by a signal`, then `--- stdout ---`, `--- stderr ---` or `(no output)` |
 | `read_file` | `path`, `why` | `--- <path> ---` + content |
 | `write_file` | `path`, `content` (whole file), `why` | `Written: <path> (N bytes)` |
 | `web` (offered only with Browse on) | `query`, `why` | `protocol::web_result`: `Result: searched the web`, `Query: …`, the answer of `Backend::search`; with Browse off `protocol::WEB_OFF` |
-
-The model also answers in DeepSeek's own tool-call markup (DSML, seen 2026-11-12: `<｜｜DSML｜｜ calls>`,
-`<｜DSML｜invoke name="shell">`, `<｜DSML｜parameter name="cmd" string="true">…</｜DSML｜parameter>`).
-Without a `dsc` block, `parse` reads it with `dsml_calls` into the same JSON objects (`string="false"` = a JSON
-value), so it is the same action; `ui::render` hides it like the `dsc` block.
 | `done` | none | nothing is run: the task ends without a text answer (`Parsed::Done`) |
+
+`dsml_calls` turns each `invoke` into a JSON object (`{"tool":"shell","cmd":"ls -la","why":"…"}`) that serde reads
+into `Action` (`deny_unknown_fields`). The bars and words around the tags vary (the real model also sent
+`<｜｜DSML｜｜ calls>`, `<｜｜DSML｜｜ invoke name="shell">`), so only `invoke name="`, `parameter name="` and the
+closing tags are relied on. `dsml` writes one call from its JSON object (the mocks and tests use it). `ui::render`
+hides the calls from the screen.
 
 - Web: `first_prompt(task, cwd, web)`. With `web` (Browse on) the tools include `web` and the rules say that
   anything on the web or current (weather, news, prices, a page) is got with it, then answered in text; nothing
@@ -52,15 +63,15 @@ value), so it is the same action; `ui::render` hides it like the `dsc` block.
   as a plain message on the site searches ("Found 24 web pages"). So `web` asks the question that way:
   `Backend::search` in a chat of its own, without the rules (see `../deepseek-client/SKILL.md`). And the loop
   replaces a public fetch by such a search, see the loop steps.
-- No repeated output: the user sees every result, so the prompt tells the model to send `{"tool":"done"}` as its
+- No repeated output: the user sees every result, so the prompt tells the model to send the `done` call as its
   whole answer when the output already is what was asked, and to write text only when it adds something (a
   conclusion, a computed number, an explanation, the reason for a failure). `parse` checks for `done` before the
-  actions; the block is hidden like every `dsc` block. The prompts say that `done` is never the first answer to a
+  actions; the call is hidden like every call. The prompts say that `done` is never the first answer to a
   task and that each task starts from nothing; `next_prompt` repeats it, because a model that already did a
   similar task tends to end the new one at once.
-- `parse`: lines between a `` ```dsc `` line and a `` ``` `` line; an unclosed block counts. The **first** block
-  runs; further blocks are ignored and the model is told so. Broken JSON, an unknown tool or field → `Invalid`,
-  its text goes back to the model.
+- `parse`: the calls of `dsml_calls`; a call without its closing tags counts. The **first** call runs; further
+  calls are ignored and the model is told so. An unknown tool, a missing or unknown parameter → `Invalid`
+  (`Your tool call is not valid: …`), its text goes back to the model.
 - Output is capped per stream to `agent.max_output_bytes` (`tools::cap`: head + tail, cut on character borders).
 - `tools::shell(cmd, timeout, interrupts, on_output)`: `bash -c`, stdin closed, own process group; a timeout or an
   interrupt kills the group; each piece read from stdout or stderr goes to `on_output` at once (`Ui::output`) and

@@ -24,14 +24,14 @@ File names steer the upload: "reject" in the name = refused at upload (unsupport
 A token that starts with "dead" gets the "invalid token" answer on every call.
 
 What the model "answers" depends on the task (the text after "Task: " in the prompt):
-  !<command>        asks to run the shell command; after its result sends the done block
+  !<command>        asks to run the shell command; after its result sends the done call
   run <command>     asks to run it; after the result answers with a sentence
   browse <url>      with search_enabled (Browse): reads the page on the model's side and answers
                     (nothing runs locally); without it: asks to fetch the page with curl, like `curl`
   curl <url>        the local way: asks to fetch the page with curl, then answers
   weather <place>   asks to curl wttr.in even with search on (like the real model); dsc then
                     runs a web search instead and the mock answers from its result
-  site <host>       asks to curl the site in DSML, DeepSeek's own tool-call markup (like the real model)
+  site <host>       asks to curl the site in the other DSML spelling the real model sent (<｜｜DSML｜｜ calls>)
   web <query>       asks for the web tool
 A prompt without "Task: " and with search_enabled is a web search of dsc (a chat without the agent
 rules): it is answered with three made-up pages and counted in /_stats as "searches".
@@ -39,11 +39,12 @@ rules): it is answered with three made-up pages and counted in /_stats as "searc
   think <text>      reasoning first, then an answer
   slow              a long answer, one word every 0.3 s (to try Esc and scrolling)
   long              80 numbered lines               code           markdown: bold, inline code, a code block, a link
-  broken            a dsc block that is not JSON    two            two action blocks in one answer
-  early             the done block at once (dsc must ask again), then a sentence
+  broken            a shell call without a command  two            two tool calls in one answer
+  early             the done call at once (dsc must ask again), then a sentence
   dead              the "invalid token" error       429            HTTP 429 with Retry-After: 1
   anything else     "Mock answer to: <task>"
-A tool result as the prompt is answered by what the task planned (done block or a sentence).
+A tool result as the prompt is answered by what the task planned (done call or a sentence).
+Tool calls are written in DSML, DeepSeek's own tool-call markup, like the prompt asks for.
 MOCK_DELAY (seconds between chunks, default 0.01) slows everything down.
 """
 import base64
@@ -56,7 +57,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
 DELAY = float(os.environ.get('MOCK_DELAY', '0.01'))
 FENCE = '```'
-RESULT_STARTS = ('Result:', '--- ', 'Written:', 'Denied', 'Error:', 'Your action block', 'The user interrupted')
+RESULT_STARTS = ('Result:', '--- ', 'Written:', 'Denied', 'Error:', 'Your tool call', 'The user interrupted')
 
 COMPLETION_PATH = '/api/v0/chat/completion'
 UPLOAD_PATH = '/api/v0/file/upload_file'
@@ -117,7 +118,13 @@ def file_view(file_id):
 
 
 def block(action):
-    return f'{FENCE}dsc\n{json.dumps(action)}\n{FENCE}'
+    """One tool call in DSML, like `protocol::dsml`."""
+    params = ''.join(
+        f'<｜DSML｜parameter name="{key}" string="{"true" if isinstance(value, str) else "false"}">'
+        f'{value if isinstance(value, str) else json.dumps(value)}</｜DSML｜parameter>\n'
+        for key, value in action.items() if key != 'tool')
+    return (f'<｜DSML｜function_calls>\n<｜DSML｜invoke name="{action["tool"]}">\n{params}'
+            '</｜DSML｜invoke>\n</｜DSML｜function_calls>')
 
 
 def plan(prompt, session, search=True):
@@ -126,7 +133,7 @@ def plan(prompt, session, search=True):
     if prompt.startswith(RESULT_STARTS):
         after = session.pop('after', 'Mock: finished.')
         return '', after, DELAY
-    if prompt.startswith('You sent the done block'):
+    if prompt.startswith('You sent the done call'):
         return '', 'Mock: a real answer after the early done.', DELAY
     # A web search of dsc: a plain question in a chat without the agent rules, search on.
     if search and 'Task: ' not in prompt:
@@ -167,13 +174,13 @@ def plan(prompt, session, search=True):
         url = f"https://wttr.in/{place.replace(' ', '+')}?format=3"
         return '', block({'tool': 'shell', 'cmd': f"curl -s '{url}'", 'why': 'mock: the weather'}), DELAY
     if task.startswith('site '):
-        # Like the real model on "check ya.ru": a curl in DeepSeek's own tool-call markup (DSML).
+        # Like the real model on "check ya.ru": a curl, in the other DSML spelling it sent.
         site = task[len('site '):].strip()
         session['after'] = f'Mock: that is what is on {site}.'
-        return '', ('<｜DSML｜function_calls>\n<｜DSML｜invoke name="shell">\n'
-                    f'<｜DSML｜parameter name="cmd" string="true">curl -sL \'https://{site}\' | head -c 2000</｜DSML｜parameter>\n'
-                    f'<｜DSML｜parameter name="why" string="true">fetch {site}</｜DSML｜parameter>\n'
-                    '</｜DSML｜invoke>\n</｜DSML｜function_calls>'), DELAY
+        return '', ('<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name="shell">\n'
+                    f'<｜｜DSML｜｜ parameter name="cmd" string="true">curl -sL \'https://{site}\' | head -c 2000</｜｜DSML｜｜ parameter>\n'
+                    f'<｜｜DSML｜｜ parameter name="why" string="true">fetch {site}</｜｜DSML｜｜ parameter>\n'
+                    '</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>'), DELAY
     if task.startswith('web '):
         session['after'] = 'Mock: that is what the web search found.'
         return '', block({'tool': 'web', 'query': task[len('web '):].strip(), 'why': 'mock: look it up'}), DELAY
@@ -193,7 +200,7 @@ def plan(prompt, session, search=True):
         return '', ('Here is **bold**, `inline code` and a link https://example.org/docs.\n\n'
                     f'{FENCE}bash\necho "hello"\nls -la\n{FENCE}\n\n# Heading\nDone.'), DELAY
     if task == 'broken':
-        return '', f'{FENCE}dsc\nthis is not json\n{FENCE}', DELAY
+        return '', block({'tool': 'shell', 'why': 'mock: no command'}), DELAY
     if task == 'two':
         session['after'] = 'Mock: finished.'
         one = block({'tool': 'shell', 'cmd': 'echo first', 'why': 'mock'})

@@ -21,7 +21,7 @@ exists: web search and thinking streams, the `expert` model.
 | Tests | never the real API: scripted model, built-in mock, local HTTP mock; `client::base()` refuses the real address in tests and with a custom `DSC_HOME` | the free account was blocked by test traffic and by 25 requests an hour |
 | Throttle | 30 to 45 s between requests, 2 a minute, 12 an hour, growing pauses after a rate limit | the account is blocked quickly |
 | Screen | the chat runs on the alternate screen and keeps its own output (`ui::scrollback::View`) | the input box stays at the bottom while only the output scrolls, folds and can be selected |
-| Tool calls | emulated in text: the model answers with one fenced action block | the web chat has no function calling and no system role |
+| Tool calls | emulated in text: the model answers with one tool call in DSML, its own tool-call markup | the web chat has no function calling and no system role; DSML is the format the model was trained on, so it keeps to it (with a format of our own it still fell back to DSML) |
 | History | kept by DeepSeek (`chat_session_id` + `parent_message_id`); each turn sends only the new text | no resend of the whole context |
 | Safety | every action passes `policy`; default ask | a free web model runs shell on a real machine |
 | Fallback | `Backend` trait; a browser backend can be added if the HTTP path gets blocked | the web API is unofficial and may change |
@@ -32,7 +32,7 @@ exists: web search and thinking streams, the `expert` model.
 main (cli, chat loop)  →  agent::run (loop)  →  Backend trait  →  model::Model
         │                       │                                   ├─ deepseek::{client, pow, stream, session, throttle}
         │                       │                                   └─ mock::Mock (no network)
-        │                       ├─ agent::protocol    prompt text, parser of the model's action block
+        │                       ├─ agent::protocol    prompt text, parser of the model's tool calls
         │                       ├─ agent::policy      allow / ask / deny per action
         │                       ├─ agent::tools       shell (live output), read_file, write_file
         │                       ├─ agent::interrupt   Esc = stop the task, Ctrl-C twice = quit

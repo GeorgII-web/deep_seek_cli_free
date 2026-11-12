@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.4.12 · DeepSeek web · default
+  ✻ dsc 0.4.13 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -384,18 +384,23 @@ commands: anything with `; & | > < $ ( )` asks.
 
 ```
 cli → agent loop → Backend trait → DeepSeek web client (HTTP, proof of work, SSE)
-          ├─ protocol   the rules sent to the model, parser of its action block
+          ├─ protocol   the rules sent to the model, parser of its tool calls
           ├─ policy     allow / ask / deny
           └─ tools      shell, read_file, write_file
 ```
 
-- **No function calling in the web chat**, so the model is told to end its answer with one fenced block:
-  ````
-  ```dsc
-  {"tool":"shell","cmd":"df -h /","why":"check free space"}
+- **No function calling in the web chat**, so the model is told to end its answer with one tool call written
+  in its own tool-call markup (DSML, the format DeepSeek's chat template uses), as text:
   ```
-  ````
-  `dsc` runs it and sends the result as the next message. An answer without a block is the final answer.
+  <｜DSML｜function_calls>
+  <｜DSML｜invoke name="shell">
+  <｜DSML｜parameter name="cmd" string="true">df -h /</｜DSML｜parameter>
+  <｜DSML｜parameter name="why" string="true">check free space</｜DSML｜parameter>
+  </｜DSML｜invoke>
+  </｜DSML｜function_calls>
+  ```
+  `dsc` hides it, runs it and sends the result as the next message. An answer without a tool call is the final
+  answer.
 - **Web pages**: DeepSeek's own web search (the Search button of the site) is on by default. For "open this
   site" or "look this up" the model reads the page on its side and answers; nothing is fetched from your
   machine. It uses `curl` here only when you ask for that ("fetch it locally", "with curl") or when the address

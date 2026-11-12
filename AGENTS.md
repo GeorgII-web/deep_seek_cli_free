@@ -24,7 +24,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/deepseek/session.rs` | `Conversation`: session id, `parent_message_id`, wasm cache, `pow_header()`, `send()` with throttle and 429 retries, `upload_pending` (attached files: upload, wait until read), `impl Backend` (`ask` = upload + `answer`; `search` = `answer` in the search chat: search on, no rules), `answer` (send + parse + keep the answer id as that chat's next parent), `state` / `resume` (continue an earlier conversation), `set_client`; built with the `TurnOpts` of the run |
 | `src/deepseek/throttle.rs` | `delay_ms` (gap, per-minute and per-hour caps), `acquire` (wait + record in `<home>/cache/throttle.json`), `cooldown` (pause after a 429, kept across runs) |
 | `src/deepseek/stream.rs` | `Parser`: `feed(bytes) -> Vec<Event>`, `finish()` (error unless status `FINISHED`), `response_message_id`; tests on the recorded streams in `src/deepseek/fixtures/` |
-| `src/agent/protocol.rs` | `Action` (`shell`, `read_file`, `write_file`), `first_prompt` (rules + task), `next_prompt` (a further task), `with_files` (note on attached files), the `web` tool, `web_result`, `searched_instead`, `WEB_OFF`, `fetches_public_web`, `asks_local_fetch`, DSML tool calls read as actions (`dsml_calls`), `parse` → `Final` / `Done` / `Action` / `Invalid`, `shell_result` text |
+| `src/agent/protocol.rs` | `Action` (`shell`, `read_file`, `write_file`), `first_prompt` (rules + task), `next_prompt` (a further task), `with_files` (note on attached files), the `web` tool, `web_result`, `searched_instead`, `WEB_OFF`, `fetches_public_web`, `asks_local_fetch`, tool calls in DSML (`dsml` writes one, `dsml_calls` reads them), `parse` → `Final` / `Done` / `Action` / `Invalid`, `shell_result` text |
 | `src/agent/policy.rs` | `check` → `Allow` / `Ask` / `Deny`, `always_key` (what "always" covers) |
 | `src/agent/interrupt.rs` | `Interrupt` (`Stop`, `Quit`), `Interrupts` (keys from the UI, or the Ctrl-C signal without a terminal) |
 | `src/agent/tools.rs` | `shell` (bash, own process group, timeout, interrupt, output collected and passed on live), `cap`, `read_file`, `write_file` |
@@ -35,7 +35,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/ui/clipboard.rs` | `read`: the system clipboard through the desktop's own tool, for a paste by right click |
 | `src/ui/editor.rs` | `Buffer`, `Editor` (multiline input box inline or docked with a scroll region above, history, slash-command menu, dropped files in the top border; `handle` = the keys, used by `read` and by `busy_event` while a task runs; the prompt queue `Queue` of up to 5 `Queued` above the box), `command_matches`, `read_choice` (one key) |
 | `src/ui/scrollback.rs` | `View`: the chat's output kept by the app, wrapped and scrolled (the input box stays at the bottom), with foldable blocks for the output of actions (click or Ctrl-O), mouse selection with copy, and the progress mark on the step that runs |
-| `src/ui/render.rs` | `Markdown`: hides the `dsc` block and DSML tool calls, trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings, links |
+| `src/ui/render.rs` | `Markdown`: hides the tool calls (DSML), trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings, links |
 | `src/ui/spinner.rs`, `style.rs` | progress line with a clock, key hint and mode; every color code, two grays for hints (`key`, `faint`) |
 | `.github/workflows/ci.yml`, `release.yml` | `ci`: the checks, by hand only; `release`: on a tag `v<version>` the checks, the Linux binary and the GitHub release. A push starts nothing |
 | `.githooks/pre-commit` | raises the patch version when a commit changes `src/` |
@@ -49,7 +49,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | [architecture](.agents/skills/general/architecture/SKILL.md) | orienting, decisions and their reasons, layers, `Backend` and `Ui` traits, runtime files, which skill covers which module |
 | [cli-config-auth](.agents/skills/artifact/cli-config-auth/SKILL.md) | commands and flags, `main.rs` dispatch, `doctor`, `config.toml` sections and defaults, `auth.json`, login |
 | [deepseek-client](.agents/skills/artifact/deepseek-client/SKILL.md) | DeepSeek calls and headers, error envelope, proof of work, SSE format and parser, conversation, throttle, what to do when the site changes |
-| [agent-loop](.agents/skills/artifact/agent-loop/SKILL.md) | action block protocol, first prompt, tools, loop steps, `Ui` trait, adding a tool |
+| [agent-loop](.agents/skills/artifact/agent-loop/SKILL.md) | tool-call protocol (DSML), first prompt, tools, loop steps, `Ui` trait, adding a tool |
 | [terminal-ui](.agents/skills/artifact/terminal-ui/SKILL.md) | look of a run, the two layouts, print rules, progress lines, keys while a task runs, mode and hint lines, markdown rendering, colors |
 | [scrollback](.agents/skills/artifact/scrollback/SKILL.md) | the output kept by the app: scrolling, foldable action output, the status line, mouse selection, saved sessions, repaint |
 | [attachments](.agents/skills/artifact/attachments/SKILL.md) | files dropped on the chat box: paste → attachments, private-file warning and question, upload flow, mocks |

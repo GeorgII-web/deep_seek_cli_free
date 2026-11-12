@@ -134,7 +134,7 @@ pub async fn run<B: Backend, U: Ui>(
                 protocol::DONE_TOO_EARLY.to_string()
             }
             Parsed::Invalid(message) => {
-                ui.note("the model sent a broken action block; asking it to repeat");
+                ui.note("the model sent a broken tool call; asking it to repeat");
                 message
             }
             // Browse is on, yet the model fetches a web page here (it does, with the agent
@@ -177,7 +177,9 @@ pub async fn run<B: Backend, U: Ui>(
             Parsed::Action { action, extra } => {
                 let mut result = act(action, ui, settings, yes, always, interrupts).await?;
                 if extra > 0 {
-                    result.push_str("\nNote: only your first action block was run. Send one block per answer.\n");
+                    result.push_str(
+                        "\nNote: only your first tool call was run. Send one call per answer.\n",
+                    );
                 }
                 ui.result(&result);
                 // A denied action showed nothing.
@@ -365,7 +367,7 @@ mod tests {
     }
 
     fn block(json: &str) -> String {
-        format!("ok\n```dsc\n{json}\n```")
+        format!("ok\n{}", protocol::dsml(json))
     }
 
     async fn run_task(
@@ -472,18 +474,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn broken_block_is_sent_back_and_the_step_limit_stops() {
+    async fn broken_call_is_sent_back_and_the_step_limit_stops() {
         let mut limited = settings();
         limited.agent.max_steps = 2;
         let mut backend = Script::new(&[
-            "```dsc\nnot json\n```",
+            &block(r#"{"tool":"shell"}"#),
             &block(r#"{"tool":"shell","cmd":"echo a"}"#),
         ]);
         let mut ui = FakeUi::default();
         run_task(&mut backend, &mut ui, "t", &limited, false)
             .await
             .unwrap();
-        assert!(backend.prompts[1].starts_with("Your action block is not valid"));
+        assert!(backend.prompts[1].starts_with("Your tool call is not valid"));
         assert!(ui.notes.last().unwrap().contains("step limit 2"));
     }
 
