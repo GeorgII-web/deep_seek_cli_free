@@ -36,7 +36,7 @@ What the model "answers" depends on the task (the text after "Task: " in the pro
 A prompt without "Task: " and with search_enabled is a web search of dsc (a chat without the agent
 rules): it is answered with three made-up pages and counted in /_stats as "searches".
   read <path>       asks to read the file          write <path>   asks to write "mock\\n" to it
-  think <text>      reasoning first, then an answer
+  think <text>      seven lines of reasoning first (with thinking on), then an answer
   slow              a long answer, one word every 0.3 s (to try Esc and scrolling)
   long              80 numbered lines               code           markdown: bold, inline code, a code block, a link
   broken            a shell call without a command  two            two tool calls in one answer
@@ -191,7 +191,7 @@ def plan(prompt, session, search=True):
         session['after'] = 'Mock: written.'
         return '', block({'tool': 'write_file', 'path': task[6:], 'content': 'mock\n', 'why': 'mock: write'}), DELAY
     if task.startswith('think'):
-        return 'The user wants a thought. Two plus two is four.', 'Mock thought: 4.', DELAY
+        return 'The user wants a thought.\nFirst: what is asked?\nA sum of two numbers.\nTwo plus two.\nCount: one, two, three, four.\nCheck it again: four.\nSo the answer is four.', 'Mock thought: 4.', DELAY
     if task == 'slow':
         return '', ' '.join(f'word{n}' for n in range(1, 41)), 0.3
     if task == 'long':

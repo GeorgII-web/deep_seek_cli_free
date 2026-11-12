@@ -34,7 +34,7 @@ pub const TASKS: &str = "\
                   (`<｜｜DSML｜｜ calls>`); with Browse on the app runs a web search instead
 `web <query>`     asks for the web tool: the app runs the (mock) web search
 `read <path>`     asks to read the file; `write <path>` asks to write `mock` to it
-`think <text>`    reasoning first, then an answer
+`think <text>`    seven lines of reasoning first (a folded block), then an answer
 `slow`            a long answer at a quarter of the speed (try Esc, scrolling)
 `long`            80 lines; `code` = bold, inline code, a code block, a link
 `broken`          a shell call without its command; `two` = two tool calls
@@ -249,7 +249,7 @@ impl Mock {
                 say(format!("{}\n\n{}", shell("echo first"), shell("echo second")))
             }
             task if task.starts_with("think") => Plan {
-                thinking: "The user wants a thought. Two plus two is four.".into(),
+                thinking: "The user wants a thought.\nFirst: what is asked?\nA sum of two numbers.\nTwo plus two.\nCount: one, two, three, four.\nCheck it again: four.\nSo the answer is four.".into(),
                 answer: "Mock thought: 4.".into(),
                 delay,
             },

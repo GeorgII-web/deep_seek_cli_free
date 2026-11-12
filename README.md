@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.4.15 · DeepSeek web · default
+  ✻ dsc 0.4.16 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -137,7 +137,8 @@ The step in progress is marked right where it happens: a spinner and the seconds
 (`⎿ ⠧ running… 2s`), and a line of its own at the start of the answer (`⠧ Waiting for DeepSeek… 3s`, then `⠧ Answering… 5s`)
 that disappears when the answer is complete. A command's output appears line by line while it runs. When it has finished, a long output folds to one line
 (`⎿ ✓ exit code 0 · 23 lines ▸ show`; a failed one is red with `✗`); click that line, or press Ctrl-O for the last one, to open and close it. Up
-to five lines stay open, and so does an output that is itself the answer to your task.
+to five lines stay open, and so does an output that is itself the answer to your task. With `/think` on, the model's
+reasoning is shown in gray and folds the same way (`✻ Thought for 12s · 30 lines ▸ show`).
 
 While `dsc` works, the line under the box shows what it waits for and for how long
 (model and mode stay at the left as when idle; at the right edge the icon with a short word that changes now and
@@ -155,7 +156,7 @@ key.
 | `/` | list the commands: Up / Down choose, Enter runs the chosen one at once, Tab only completes it in the box, Esc closes the list |
 | Shift+Enter, Ctrl-J, or `\` then Enter | new line (Shift+Enter needs a terminal that reports it; Ctrl-J always works) |
 | PgUp / PgDn, mouse wheel | scroll the output; Ctrl+Home = top, Ctrl+End = bottom |
-| Click on `▸ show` / `▾ hide`, Ctrl-O | unfold or fold the output of a command (Ctrl-O: the last one) |
+| Click on `▸ show` / `▾ hide`, Ctrl-O | unfold or fold the output of a command or the model's reasoning (Ctrl-O: the last one) |
 | Drag with the mouse | select text in the output (nothing is copied yet) |
 | Right click, or Ctrl-C | copy the selected text to the clipboard |
 | Right click (nothing selected), or Ctrl-V | paste the clipboard into the input box, also text copied in other windows |

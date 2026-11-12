@@ -34,7 +34,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/ui/dialog.rs` | `ask_token`: the token window (masked field, OK / Cancel); `pick`: a list window (arrows, Enter) |
 | `src/ui/clipboard.rs` | `read`: the system clipboard through the desktop's own tool, for a paste by right click |
 | `src/ui/editor.rs` | `Buffer`, `Editor` (multiline input box inline or docked with a scroll region above, history, slash-command menu, dropped files in the top border; `handle` = the keys, used by `read` and by `busy_event` while a task runs; the prompt queue `Queue` of up to 5 `Queued` above the box), `command_matches`, `read_choice` (one key) |
-| `src/ui/scrollback.rs` | `View`: the chat's output kept by the app, wrapped and scrolled (the input box stays at the bottom), with foldable blocks for the output of actions (click or Ctrl-O), mouse selection with copy, and the progress mark on the step that runs |
+| `src/ui/scrollback.rs` | `View`: the chat's output kept by the app, wrapped and scrolled (the input box stays at the bottom), with foldable blocks for the output of actions and the model's reasoning (click or Ctrl-O), mouse selection with copy, and the progress mark on the step that runs |
 | `src/ui/render.rs` | `Markdown`: hides the tool calls (DSML), trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings, links |
 | `src/ui/spinner.rs`, `style.rs` | progress line with a clock, key hint and mode; every color code, two grays for hints (`key`, `faint`) |
 | `.github/workflows/ci.yml`, `release.yml` | `ci`: the checks, by hand only; `release`: on a tag `v<version>` the checks, the Linux binary and the GitHub release. A push starts nothing |
@@ -51,7 +51,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | [deepseek-client](.agents/skills/artifact/deepseek-client/SKILL.md) | DeepSeek calls and headers, error envelope, proof of work, SSE format and parser, conversation, throttle, what to do when the site changes |
 | [agent-loop](.agents/skills/artifact/agent-loop/SKILL.md) | tool-call protocol (DSML), first prompt, tools, loop steps, `Ui` trait, adding a tool |
 | [terminal-ui](.agents/skills/artifact/terminal-ui/SKILL.md) | look of a run, the two layouts, print rules, progress lines, keys while a task runs, mode and hint lines, markdown rendering, colors |
-| [scrollback](.agents/skills/artifact/scrollback/SKILL.md) | the output kept by the app: scrolling, foldable action output, the status line, mouse selection, saved sessions, repaint |
+| [scrollback](.agents/skills/artifact/scrollback/SKILL.md) | the output kept by the app: scrolling, foldable action output and reasoning, the status line, mouse selection, saved sessions, repaint |
 | [attachments](.agents/skills/artifact/attachments/SKILL.md) | files dropped on the chat box: paste → attachments, private-file warning and question, upload flow, mocks |
 | [input-box](.agents/skills/artifact/input-box/SKILL.md) | the multiline box and its keys, history, command menu, copy and paste, the token window and the list window |
 | [approval-policy](.agents/skills/artifact/approval-policy/SKILL.md) | allow, deny, ask, "always", edit, default lists |

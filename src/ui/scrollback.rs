@@ -129,15 +129,21 @@ struct SavedBlock {
     folded: bool,
     folded_text: String,
     open_text: String,
+    /// The model's reasoning, not the output of an action
+    #[serde(default)]
+    thinking: bool,
 }
 
-/// A block of lines that can be folded to its header: the output of an action.
+/// A block of lines that can be folded to its header: the output of an action,
+/// or the model's reasoning.
 struct Fold {
     /// Index of the header line in `closed`
     header: usize,
     /// One past the last body line; the body is `header + 1..end`
     end: usize,
     folded: bool,
+    /// The model's reasoning: its header is not animated, and it is never "the answer"
+    thinking: bool,
     /// The header as it reads folded and unfolded (set when the block ends)
     texts: Option<(String, String)>,
 }
@@ -205,6 +211,8 @@ pub struct View {
     folds: Vec<Fold>,
     /// The next complete line starts a block
     fold_pending: bool,
+    /// That block is the model's reasoning
+    pending_thinking: bool,
     /// A block is being written: new lines join it
     fold_active: bool,
     /// When that block started: its header shows the seconds
@@ -241,6 +249,7 @@ impl View {
             wrapped: Vec::new(),
             folds: Vec::new(),
             fold_pending: false,
+            pending_thinking: false,
             fold_active: false,
             fold_started: Instant::now(),
             status_pending: false,
@@ -287,6 +296,7 @@ impl View {
                     header: index,
                     end: index + 1,
                     folded: false,
+                    thinking: self.pending_thinking,
                     texts: None,
                 });
                 self.fold_active = true;
@@ -321,9 +331,10 @@ impl View {
     }
 
     /// The next complete line is the header of a block; the lines after it are
-    /// its body until `end_fold`.
-    pub fn begin_fold(&mut self) {
+    /// its body until `end_fold`. `thinking` = the model's reasoning, else an action's output.
+    pub fn begin_fold(&mut self, thinking: bool) {
         self.fold_pending = true;
+        self.pending_thinking = thinking;
     }
 
     /// The step in progress: while a block is being written its header shows
@@ -332,7 +343,12 @@ impl View {
         if !self.fold_active {
             return;
         }
-        let Some(header) = self.folds.last().map(|fold| fold.header) else {
+        let Some(header) = self
+            .folds
+            .last()
+            .filter(|fold| !fold.thinking)
+            .map(|fold| fold.header)
+        else {
             return;
         };
         let s = self.style;
@@ -480,9 +496,12 @@ impl View {
         }
     }
 
-    /// Shows the body of the last finished block, when it is hidden.
+    /// Shows the body of the last finished action block, when it is hidden.
     pub fn unfold_last(&mut self) {
-        if let Some(index) = self.folds.iter().rposition(|fold| fold.texts.is_some())
+        if let Some(index) = self
+            .folds
+            .iter()
+            .rposition(|fold| fold.texts.is_some() && !fold.thinking)
             && self.folds[index].folded
         {
             // It is shown because it is the answer: the view stays at the end of the output.
@@ -808,6 +827,7 @@ impl View {
                     folded: fold.folded,
                     folded_text,
                     open_text,
+                    thinking: fold.thinking,
                 })
             })
             .collect();
@@ -832,6 +852,7 @@ impl View {
                 header: block.header,
                 end: block.end,
                 folded: block.folded,
+                thinking: block.thinking,
                 texts: Some((block.folded_text, block.open_text)),
             })
             .collect();
@@ -951,7 +972,7 @@ mod tests {
     fn with_block(folded: bool) -> View {
         let mut v = view(20, 10);
         v.push("before\n");
-        v.begin_fold();
+        v.begin_fold(false);
         v.push("running\n");
         assert_eq!(v.fold_lines(), 0);
         v.push("b1\nb2\nb3\n");
@@ -980,7 +1001,7 @@ mod tests {
         v.push("before\n");
         // No block yet: nothing to animate.
         v.animate("x");
-        v.begin_fold();
+        v.begin_fold(false);
         v.push("running\nb1\n");
         v.animate("⠹");
         assert_eq!(v.visible()[1], "  ⎿ ⠹ running… 0s");
@@ -1002,7 +1023,7 @@ mod tests {
         assert_eq!(v.visible(), ["before", "⠹ Answering… 0s", "the answer "]);
         v.push("goes on\n");
         // A block after it keeps working when the line is removed.
-        v.begin_fold();
+        v.begin_fold(false);
         v.push("running\nb1\nb2\n");
         v.end_fold("2 [show]".into(), "2 [hide]".into(), true);
         assert!(v.end_status());
@@ -1109,9 +1130,33 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_folds_but_is_not_animated_nor_the_answer() {
+        // An action's block (open), then the reasoning of the next answer (folded).
+        let mut v = with_block(false);
+        v.begin_fold(true);
+        v.push("Thinking\n");
+        v.push("t1\nt2\n");
+        v.animate("x");
+        assert_eq!(v.visible()[6], "Thinking");
+        v.end_fold("thought [show]".into(), "thought [hide]".into(), true);
+        assert_eq!(&v.visible()[6..], ["thought [show]", ""]);
+        // "The output is the answer" is about the action: the reasoning stays folded.
+        v.toggle_last();
+        assert_eq!(v.visible().len(), 10);
+        v.toggle_last();
+        v.unfold_last();
+        assert_eq!(&v.visible()[6..], ["thought [show]", ""]);
+        // Saved and restored, it is still the reasoning.
+        let mut back = view(20, 10);
+        back.restore(v.snapshot());
+        back.animate("x");
+        assert_eq!(back.visible(), v.visible());
+    }
+
+    #[test]
     fn a_block_without_body_is_not_folded_and_old_lines_take_their_blocks_along() {
         let mut v = view(20, 10);
-        v.begin_fold();
+        v.begin_fold(false);
         v.push("running\n");
         v.end_fold("x [show]".into(), "done".into(), true);
         assert_eq!(v.visible(), ["done", ""]);

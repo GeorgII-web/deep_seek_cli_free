@@ -291,7 +291,12 @@ pub struct Terminal {
     queue: Queue,
     /// The answer printed something and its line is still open
     text_open: bool,
+    /// The model's reasoning is being printed (gray; a foldable block in the screen layout)
     thinking_open: bool,
+    thinking_started: Instant,
+    /// Lines of the reasoning so far, and whether the next piece starts a line
+    thinking_lines: usize,
+    thinking_line_start: bool,
     /// The last thing printed was a blank line
     gap: bool,
     started: Instant,
@@ -360,6 +365,9 @@ impl Terminal {
             editor: Arc::new(Mutex::new(editor)),
             text_open: false,
             thinking_open: false,
+            thinking_started: Instant::now(),
+            thinking_lines: 0,
+            thinking_line_start: true,
             gap: false,
             files: Vec::new(),
             started: Instant::now(),
@@ -1233,8 +1241,93 @@ impl Terminal {
         if !self.spinner.docked() {
             self.spinner.stop();
         }
-        if std::mem::take(&mut self.thinking_open) || std::mem::take(&mut self.text_open) {
+        if self.thinking_open {
+            self.end_thinking();
+        } else if std::mem::take(&mut self.text_open) {
             self.text("\n");
+        }
+    }
+
+    /// A piece of the model's reasoning: gray. In the screen layout it is the body
+    /// of a block under `✻ Thinking…`, folded like an action's output when it ends.
+    fn print_thinking(&mut self, text: &str) {
+        let s = self.style;
+        if !std::mem::replace(&mut self.thinking_open, true) {
+            self.thinking_started = Instant::now();
+            self.thinking_lines = 0;
+            self.thinking_line_start = true;
+            if let Some(view) = &self.view {
+                view.lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .begin_fold(true);
+                self.line(&format!("{}✻ Thinking…{}", s.gray(), s.reset()));
+            }
+        }
+        // Leading line ends of the reasoning are dropped.
+        let text = match self.thinking_lines == 0 && self.thinking_line_start {
+            true => text.trim_start_matches('\n'),
+            false => text,
+        };
+        if text.is_empty() {
+            return;
+        }
+        // Each line on its own in gray: a line of the scrollback keeps its color when drawn again.
+        let indent = if self.view.is_some() { "  " } else { "" };
+        let mut out = String::new();
+        for (i, part) in text.split('\n').enumerate() {
+            if i > 0 {
+                out.push('\n');
+                self.thinking_lines += 1;
+                self.thinking_line_start = true;
+            }
+            if part.is_empty() {
+                continue;
+            }
+            if std::mem::take(&mut self.thinking_line_start) {
+                out.push_str(indent);
+            }
+            out.push_str(&format!("{}{part}{}", s.gray(), s.reset()));
+        }
+        self.text(&out);
+    }
+
+    /// The reasoning ended (the answer starts, or an action): its line is closed and,
+    /// in the screen layout, the block gets its header `✻ Thought for Ns · N lines`;
+    /// a long one folds.
+    fn end_thinking(&mut self) {
+        if !std::mem::take(&mut self.thinking_open) {
+            return;
+        }
+        if !self.thinking_line_start {
+            self.text("\n");
+            self.thinking_lines += 1;
+        }
+        let s = self.style;
+        if let Some(view) = &self.view {
+            let lines = self.thinking_lines;
+            let summary = format!(
+                "✻ Thought for {}s · {lines} line{}",
+                self.thinking_started.elapsed().as_secs(),
+                if lines == 1 { "" } else { "s" }
+            );
+            let switch = |mark: &str, what: &str| {
+                format!(
+                    "{}{summary}{}  {}{mark}{} {}{what}{}",
+                    s.gray(),
+                    s.reset(),
+                    s.accent(),
+                    s.reset(),
+                    s.faint(),
+                    s.reset()
+                )
+            };
+            let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            view.end_fold(
+                switch("▸", "show"),
+                switch("▾", "hide"),
+                lines > FOLD_OPEN_LINES,
+            );
+            view.repaint();
         }
     }
 
@@ -1247,8 +1340,10 @@ impl Terminal {
         } else {
             self.spinner.stop();
         }
-        if std::mem::take(&mut self.thinking_open) {
-            self.text("\n\n");
+        if self.thinking_open {
+            self.end_thinking();
+            self.gap = false;
+            self.blank();
         }
         self.text(text);
         self.text_open = true;
@@ -1354,8 +1449,7 @@ impl Ui for Terminal {
                 } else {
                     self.spinner.stop();
                 }
-                self.text(&format!("{}{text}{}", self.style.dim(), self.style.reset()));
-                self.thinking_open = true;
+                self.print_thinking(text);
                 self.gap = false;
             }
             Event::Text(text) => {
@@ -1423,7 +1517,7 @@ impl Ui for Terminal {
         if let Some(view) = &self.view {
             view.lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .begin_fold();
+                .begin_fold(false);
             self.line(&format!(
                 "{}  ⎿ running…{}",
                 self.style.gray(),

@@ -36,9 +36,6 @@ impl Style {
     pub fn bold(&self) -> &'static str {
         self.code("\x1b[1m")
     }
-    pub fn dim(&self) -> &'static str {
-        self.code("\x1b[2m")
-    }
     /// Prompt, headings, the brand color
     pub fn accent(&self) -> &'static str {
         self.code("\x1b[38;5;75m")
