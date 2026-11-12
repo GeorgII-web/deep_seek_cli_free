@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.4.2 · DeepSeek web · default
+  ✻ dsc 0.4.3 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -183,7 +183,7 @@ Windows Terminal and most others). Colors switch off with
 While a task runs, the input box stays usable: write the next prompt (and drop files) and press Enter. It goes
 into a queue shown above the box, one row per prompt with its number, and runs when the tasks before it are done.
 Up to 5 prompts wait; with a full queue the text stays in the box. Alt+1…5 (or Ctrl+1…5 where the terminal reports
-it) drops that prompt. Esc stops only the running task, the queue goes on; Ctrl-C twice
+it) drops that prompt. The tab title shows how many wait (`⏳ +2 dsc · …`). Esc stops only the running task, the queue goes on; Ctrl-C twice
 quits. While an approval question is shown, keys answer the question.
 
 ### Attach files

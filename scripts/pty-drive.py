@@ -16,12 +16,14 @@ Home: DSC_HOME, default var/mock-home (made here: a mock token and a config with
 MOCK_TOKEN sets the token of a new home (`dead...` = the mock rejects it). target/debug/dsc is run,
 with the arguments in DSC_ARGS (e.g. DSC_ARGS=--session=mock-1).
 Default screen: 24 rows, 60 columns. The output shows the lines that scrolled off the top, then the
-screen (`-` output area, `#` dock), the cursor, and what the mock was asked.
+screen (`-` output area, `#` dock), the cursor, the tab titles in order, and what the mock was asked.
 """
 import codecs, fcntl, json, os, pty, re, select, socket, struct, subprocess, sys, termios, time, urllib.request
 
 # A read can end inside a multi-byte character: the decoder keeps the rest for the next one.
 DECODER = codecs.getincrementaldecoder('utf8')('replace')
+# The tab titles the app wrote, in order (OSC 2).
+titles = []
 
 keys = eval(sys.argv[1])
 H = int(sys.argv[2]) if len(sys.argv) > 2 else 24
@@ -93,6 +95,9 @@ def feed(text):
                     pending = s[i:]
                     return
                 end = min(ends)
+                # A tab title (OSC 2): kept, each change once, printed at the end.
+                if s.startswith('2;', i + 2) and (not titles or titles[-1] != s[i + 4:end]):
+                    titles.append(s[i + 4:end])
                 i = end + (2 if s[end] == '\x1b' else 1)
                 continue
             if s[i + 1] in '78':
@@ -191,6 +196,7 @@ for n, line in enumerate(rows):
     mark = '-' if top <= n <= bottom else '#'
     print(f'{n + 1:3}{mark}' + ''.join(line).rstrip())
 print(f'cursor row {y + 1} column {x + 1}; scroll region rows {top + 1}-{bottom + 1}')
+print('tab titles:', ' | '.join(titles))
 if mock:
     try:
         with urllib.request.urlopen(os.environ['DSC_API_BASE'] + '/_stats', timeout=2) as response:

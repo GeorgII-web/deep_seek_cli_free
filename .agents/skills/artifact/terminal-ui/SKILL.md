@@ -49,7 +49,10 @@ Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_i
 - Tab title: `open_chat` saves the terminal's title (`ESC[22;0t`), `write_title` writes `ESC]0;<icon> <title>BEL` and the same as `ESC]2;…BEL`,
   `drop` restores it (`ESC[23;0t`). `set_title` sets the text (`dsc`, or `dsc · <conversation>` from the first
   task on); `set_tab_state` sets the icon: `⏳` from `begin` to `finish` (`TabState::Working`), `❓` during an
-  approval question (`Asking`), `✻` otherwise (`Idle`), so the state is visible from another tab.
+  approval question (`Asking`), `✻` otherwise (`Idle`), so the state is visible from another tab. While prompts
+  wait in the queue, `+N` follows the icon (`⏳ +2 dsc · <conversation>`; nothing for an empty queue): `tab_text`,
+  written by `write_tab` from the shared `Tab` (icon and title of the last `write_title`), by `write_title` and by
+  the key watcher when a prompt is queued or dropped; `input` writes it again when it takes a queued prompt.
 - `Terminal::drop` → `close_dock` (scroll region reset), mouse reports off, back to the normal screen, then
   `View::transcript` is printed once so the conversation stays in the terminal.
 

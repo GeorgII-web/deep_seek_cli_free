@@ -158,6 +158,29 @@ enum TabState {
     Asking,
 }
 
+/// What the tab title is made of. Shared with the key watcher, which writes the
+/// title again when the queue changes while a task runs.
+struct Tab {
+    icon: &'static str,
+    title: String,
+}
+
+/// `<icon> <title>`, with `+N` after the icon while N prompts wait in the queue.
+fn tab_text(tab: &Tab, queued: usize) -> String {
+    match queued {
+        0 => format!("{} {}", tab.icon, tab.title),
+        n => format!("{} +{n} {}", tab.icon, tab.title),
+    }
+}
+
+/// Writes the tab title. Both forms: OSC 0 (icon name and title) and OSC 2
+/// (title only); some terminal setups act on one of them only.
+fn write_tab(tab: &Mutex<Tab>, queue: &Queue) {
+    let queued = queue.lock().unwrap_or_else(|p| p.into_inner()).len();
+    let text = tab_text(&tab.lock().unwrap_or_else(|p| p.into_inner()), queued);
+    screen_write(&format!("\x1b]0;{text}\x07\x1b]2;{text}\x07"));
+}
+
 /// Reads keys while a task runs: Esc stops the task, Ctrl-C twice leaves the app.
 /// The terminal is in raw mode for that time, so lines end with `\r\n`.
 struct Watch {
@@ -281,6 +304,8 @@ pub struct Terminal {
     /// The title of the terminal tab, without its icon
     title: String,
     tab_state: TabState,
+    /// The tab title as last written, for the key watcher (`write_tab`)
+    tab: Arc<Mutex<Tab>>,
     /// The status line of the answer in progress is up (screen layout)
     status_on: bool,
     /// Output of the running command not yet ended by a line end
@@ -338,6 +363,10 @@ impl Terminal {
             mouse: true,
             title: String::from("dsc"),
             tab_state: TabState::Idle,
+            tab: Arc::new(Mutex::new(Tab {
+                icon: "✻",
+                title: String::from("dsc"),
+            })),
             status_on: false,
             live: String::new(),
             live_lines: 0,
@@ -387,10 +416,11 @@ impl Terminal {
                 TabState::Working => "⏳",
                 TabState::Asking => "❓",
             };
-            // Both forms: OSC 0 (icon name and title) and OSC 2 (title only). Some
-            // terminal setups act on one of them only.
-            let title = format!("{icon} {}", self.title);
-            screen_write(&format!("\x1b]0;{title}\x07\x1b]2;{title}\x07"));
+            *self.tab.lock().unwrap_or_else(|p| p.into_inner()) = Tab {
+                icon,
+                title: self.title.clone(),
+            };
+            write_tab(&self.tab, &self.queue);
         }
     }
 
@@ -442,6 +472,7 @@ impl Terminal {
         );
         let mode = self.allow_all.clone();
         let view = self.view.clone();
+        let (tab, queue) = (self.tab.clone(), self.queue.clone());
         // The chat screen: the box takes the other keys, so the next prompt can be
         // written (and queued) while this one runs.
         let editor = (screen && view.is_some()).then(|| self.editor.clone());
@@ -454,12 +485,20 @@ impl Terminal {
                     Ok(false) => continue,
                     Err(_) => break,
                 }
-                let to_box = |event: TermEvent| match &editor {
-                    Some(editor) => editor
+                let to_box = |event: TermEvent| {
+                    let Some(editor) = &editor else {
+                        return Busy::Nothing;
+                    };
+                    let before = queue.lock().unwrap_or_else(|p| p.into_inner()).len();
+                    let outcome = editor
                         .lock()
                         .unwrap_or_else(|poisoned| poisoned.into_inner())
-                        .busy_event(event),
-                    None => Busy::Nothing,
+                        .busy_event(event);
+                    // A prompt queued or dropped: the count in the tab follows.
+                    if queue.lock().unwrap_or_else(|p| p.into_inner()).len() != before {
+                        write_tab(&tab, &queue);
+                    }
+                    outcome
                 };
                 let key = match event::read() {
                     Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => key,
@@ -720,6 +759,7 @@ impl Terminal {
             .pop_front();
         if let Some(Queued { text, files }) = queued {
             let _ = self.editor().redraw_idle();
+            self.write_title();
             return self.submitted(text, files);
         }
         if !self.screen {
@@ -1477,7 +1517,17 @@ impl Ui for Terminal {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_output, outcome_failed};
+    use super::{Tab, clean_output, outcome_failed, tab_text};
+
+    #[test]
+    fn the_tab_counts_queued_prompts() {
+        let tab = Tab {
+            icon: "⏳",
+            title: "dsc · fix the build".into(),
+        };
+        assert_eq!(tab_text(&tab, 0), "⏳ dsc · fix the build");
+        assert_eq!(tab_text(&tab, 3), "⏳ +3 dsc · fix the build");
+    }
 
     #[test]
     fn failed_outcomes_are_recognized() {

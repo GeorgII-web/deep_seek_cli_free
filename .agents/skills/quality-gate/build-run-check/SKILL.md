@@ -49,7 +49,7 @@ unshare -rn sh -c 'ip link set lo up; scripts/pty-drive.py "[(\"\", 1), (\"long\
 | `Script` + `FakeUi` (`src/agent/run.rs` tests) | model and terminal | `cargo test`: the loop |
 | `src/mock.rs` (`deepseek.api = "mock"`, `/model`) | the model, inside the app | UI, keys, approvals; no network at all |
 | `scripts/mock-deepseek.py [port]` | the DeepSeek web API over HTTP | client, stream parser, token and rate-limit paths: `DSC_API_BASE=http://127.0.0.1:<port>`; a challenge with algorithm `none` skips the proof of work, but its `target_path` must name the call; a token starting with `dead` is rejected; file upload and reading (`../../artifact/attachments/SKILL.md`) |
-| `scripts/pty-drive.py '<keys>' [rows] [columns]` | a person at a terminal | starts the HTTP mock on a free port, a home `var/mock-home` (mock token, no throttle), runs `target/debug/dsc` in a pseudo-terminal, prints scrollback, screen (`-` output, `#` dock), cursor and the mock's request counts with the switches of the last request (`thinking_enabled`, `search_enabled`) |
+| `scripts/pty-drive.py '<keys>' [rows] [columns]` | a person at a terminal | starts the HTTP mock on a free port, a home `var/mock-home` (mock token, no throttle), runs `target/debug/dsc` in a pseudo-terminal, prints scrollback, screen (`-` output, `#` dock), cursor, the tab titles in order and the mock's request counts with the switches of the last request (`thinking_enabled`, `search_enabled`) |
 
 Both mocks understand the same tasks (`mock::TASKS`): `!<cmd>`, `run <cmd>`, `browse <url>` (answers as if read on the model's side),
 `curl <url>` (the local fetch: approving it does fetch that site, not DeepSeek), `read`, `write`, `think`, `slow`,

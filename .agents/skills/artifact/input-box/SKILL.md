@@ -74,6 +74,7 @@ starts. An edited shell command (`remember = false`) gets a `Typing` of its own.
   `Style::queue_bg`. The dock grows by `QUEUE_HEAD_ROWS` (2) plus one row per prompt. `View::set_above_border`
   tells the output how many rows come before the top border, where its scroll mark sits.
 - Drop: Alt+N or Ctrl+N (where the terminal reports Ctrl with a digit) in `handle`; `drop_queued(index)`.
+- The tab title shows the count after its icon (`⏳ +2 …`), see the tab title in `../terminal-ui/SKILL.md`.
 - `Terminal::input` takes the oldest queued prompt before it reads the box (`redraw_idle` shows the shorter queue),
   then `submitted` treats it like a typed one: echo, files confirmed, commands run. So a prompt is echoed when it
   runs, in order with the output. Esc stops only the running task; Ctrl-C twice quits and drops the queue.
