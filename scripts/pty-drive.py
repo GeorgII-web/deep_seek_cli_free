@@ -18,7 +18,10 @@ with the arguments in DSC_ARGS (e.g. DSC_ARGS=--session=mock-1).
 Default screen: 24 rows, 60 columns. The output shows the lines that scrolled off the top, then the
 screen (`-` output area, `#` dock), the cursor, and what the mock was asked.
 """
-import fcntl, json, os, pty, re, select, socket, struct, subprocess, sys, termios, time, urllib.request
+import codecs, fcntl, json, os, pty, re, select, socket, struct, subprocess, sys, termios, time, urllib.request
+
+# A read can end inside a multi-byte character: the decoder keeps the rest for the next one.
+DECODER = codecs.getincrementaldecoder('utf8')('replace')
 
 keys = eval(sys.argv[1])
 H = int(sys.argv[2]) if len(sys.argv) > 2 else 24
@@ -168,7 +171,7 @@ def pump(seconds):
         ready, _, _ = select.select([fd], [], [], 0.05)
         if ready:
             try:
-                feed(os.read(fd, 65536).decode('utf8', 'replace'))
+                feed(DECODER.decode(os.read(fd, 65536)))
             except OSError:
                 return
 

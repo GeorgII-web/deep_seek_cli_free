@@ -30,7 +30,8 @@ escape sequences and carries colors over a break). The view is the last rows of 
 
 - Everything printed in the screen layout must go through `emit` (`line`, `partial`, `text`) or `erase_partial`
   (removes the open line: the approval question). A direct write would put the model and the screen out of step.
-- The scroll mark (`View::indicator`) sits on the dock's top border, right side; the box redraws it after itself.
+- The scroll mark (`View::indicator`) sits on the box's top border, right side, below the prompt queue rows
+  (`set_above_border`); the box redraws it after itself.
 - Keys reach the view from two places: `Editor::read` (while typing) and the key watcher (while a task runs).
 - Mouse reports (`ESC[?1000h` buttons, `ESC[?1002h` motion while a button is down, `ESC[?1006h` SGR form) are on
   when `ui.mouse_scroll` is true: the terminal gives the mouse to the app, which scrolls, folds and selects itself.

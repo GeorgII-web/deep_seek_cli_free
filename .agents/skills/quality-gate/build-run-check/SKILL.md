@@ -57,9 +57,14 @@ Both mocks understand the same tasks (`mock::TASKS`): `!<cmd>`, `run <cmd>`, `br
 
 ```bash
 scripts/pty-drive.py '[("", 1), ("!echo hi\r", 2), ("y", 2)]' 24 100        # a task, the question, yes
+scripts/pty-drive.py '[("slow\r", 1.5), ("next\r", 0.5), ("\x1b1", 0.5)]' 30 90  # queue a prompt, drop it (Alt+1)
 scripts/pty-drive.py '[("", 1), ("long\r", 3), "\x1b[<64;1;1M"]' 16 100     # scroll while it answers
 MOCK_TOKEN=dead DSC_HOME=var/mock-dead scripts/pty-drive.py '[("", 2)]'     # the token window at the start
 ```
+
+The emulator of `pty-drive.py` counts every character as one column (a real terminal draws 📎 two wide), so a row
+with an emoji looks one column short there; it decodes the stream incrementally, so a multi-byte character split
+between two reads stays whole.
 
 ## Live checks
 

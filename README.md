@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.3.2 · DeepSeek web · default
+  ✻ dsc 0.4.0 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -177,6 +177,14 @@ In answers, `inline code` is colored, code blocks are shown with a bar on the le
 blue and real terminal links: the terminal underlines one under the mouse and opens it on click (Ctrl+click in
 Windows Terminal and most others). Colors switch off with
 `NO_COLOR=1` or when the output is not a terminal.
+
+### Queue
+
+While a task runs, the input box stays usable: write the next prompt (and drop files) and press Enter. It goes
+into a queue shown above the box, one row per prompt with its number, and runs when the tasks before it are done.
+Up to 5 prompts wait; with a full queue the text stays in the box. Alt+1…5 (or Ctrl+1…5 where the terminal reports
+it) or a click on a row's ✕ drops that prompt. Esc stops only the running task, the queue goes on; Ctrl-C twice
+quits. While an approval question is shown, keys answer the question.
 
 ### Attach files
 

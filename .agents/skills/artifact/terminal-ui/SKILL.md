@@ -105,11 +105,14 @@ after) and `drop` → `watch_stop`: thread joined, raw mode off.
 | Esc | `Interrupt::Stop`: the loop ends the task, a running command is killed |
 | Ctrl-C | first: "Press Ctrl-C again to exit" on the progress line (`Notifier::show`; a line of its own when no progress line is drawn); second within `AGAIN`: `Interrupt::Quit` |
 | Shift+Tab | switches the mode flag; the progress line shows it |
-| other keys | swallowed (no type-ahead) |
+| other keys, a paste, the mouse | chat screen: `Editor::busy_event` (the box takes them: typing, dropped files, Enter queues the prompt, Alt+N / Ctrl+N / a click on ✕ drops queued prompt N, the wheel and selection as in the box; a full queue shows `QUEUE_FULL` on the progress line). Inline (single task): swallowed, the mouse goes to the output |
+
+`watch_start` sets `Editor::set_busy(true)` and gives the thread the shared `Arc<Mutex<Editor>>` (chat screen only);
+`watch_stop` sets it back. The prompt queue itself is in `../input-box/SKILL.md` ("Prompt queue").
 
 The terminal cursor is hidden while the watcher runs (`ESC[?25l` in `watch_start`, `ESC[?25h` in `watch_stop`):
-the progress marks show where the work is, a blinking cursor next to them only distracts. It is back for the
-input box, an approval question, a window and at exit.
+the progress marks show where the work is, a blinking cursor next to them only distracts. The box draws a cursor
+of its own (inverse) meanwhile. The real one is back for the input box, an approval question, a window and at exit.
 
 ## Mode and hint lines
 

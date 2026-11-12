@@ -50,6 +50,35 @@ command is not echoed into the output (`Terminal::input`): only its effect is sh
 
 History: `<home>/history.json`, the last 200 inputs, consecutive duplicates skipped; only the chat passes a file.
 
+## Keys of the box, two callers (`Editor::handle`)
+
+`handle(typing, event, items, remember, width) -> Step` (`Continue`, `Submit`, `Exit`) is the whole key, paste and
+mouse logic; `parts` gives the menu items, menu rows and hint line. `Typing` is the state of one reading: buffer,
+place in the history and draft, armed Ctrl-C, menu selection. Two callers:
+
+- `read` (between tasks): draws with the real cursor and the hint row, waits for events; `Submit` moves the
+  files to `sent`, `erase` draws the box at rest, the text goes into the history.
+- `busy_event` (while a task runs, from the key watcher thread, `Editor` behind `Arc<Mutex>`): the same `handle`;
+  `Submit` puts `Queued { text, files }` into the queue (or `Busy::Full`, the text stays), then `dock_idle` draws.
+
+The chat prompt's `Typing` lives on in `Editor::typing`: what is typed while a task runs is in the box when `read`
+starts. An edited shell command (`remember = false`) gets a `Typing` of its own.
+
+## Prompt queue
+
+`Queue = Arc<Mutex<VecDeque<Queued>>>`, at most `QUEUE_MAX` (5), shared by the box and `Terminal` (`queue`).
+
+- Shown above the box (`queue_lines`, the dock grows by one row each): ` N  <first line of the text, line ends
+  as ⏎, cut with …>  📎 <files> ✕ ` on `Style::queue_bg`. `View::set_above_border` tells the output how many
+  rows come before the top border, where its scroll mark sits.
+- Drop: Alt+N or Ctrl+N (where the terminal reports Ctrl with a digit) in `handle`, or a left click on the ✕
+  (`queue_click`: the last five columns of a queue row); `drop_queued(index)`.
+- `Terminal::input` takes the oldest queued prompt before it reads the box (`redraw_idle` shows the shorter queue),
+  then `submitted` treats it like a typed one: echo, files confirmed, commands run. So a prompt is echoed when it
+  runs, in order with the output. Esc stops only the running task; Ctrl-C twice quits and drops the queue.
+- While a task runs the box has no hint row (the progress line uses it); `draw_docked` with `hint = None` puts the
+  real cursor back into the output and the box draws its own (`with_cursor`).
+
 ## Token window (`dialog::ask_token`)
 
 A modal window centered on the terminal's alternate screen (`ESC[?1049h` … `l`), so the chat is not overwritten

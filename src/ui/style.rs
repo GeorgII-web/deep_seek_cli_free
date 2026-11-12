@@ -100,6 +100,10 @@ impl Style {
     pub fn menu_selected_bg(&self) -> &'static str {
         self.code("\x1b[48;5;24m")
     }
+    /// Background of the rows of the prompt queue above the box
+    pub fn queue_bg(&self) -> &'static str {
+        self.code("\x1b[48;5;23m")
+    }
     /// Background of the user's prompt in the output
     pub fn prompt_bg(&self) -> &'static str {
         self.code("\x1b[48;5;237m")

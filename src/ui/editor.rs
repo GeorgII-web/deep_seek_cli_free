@@ -10,10 +10,12 @@ use crate::attach::{self, Attachment, MAX_FILES};
 use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    KeyboardEnhancementFlags, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{execute, queue};
+use std::collections::VecDeque;
 use std::io::{self, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -34,7 +36,7 @@ fn width_of(c: char) -> usize {
 }
 
 /// Text with a cursor; positions count characters.
-#[derive(Default, Debug)]
+#[derive(Default, Debug, Clone)]
 pub struct Buffer {
     chars: Vec<char>,
     cursor: usize,
@@ -228,6 +230,66 @@ impl Drop for RawMode {
     }
 }
 
+/// A prompt sent while a task ran: it waits for its turn.
+#[derive(Debug, Clone)]
+pub struct Queued {
+    pub text: String,
+    pub files: Vec<Attachment>,
+}
+
+/// The prompts waiting for their turn, shared by the box and the chat loop.
+pub type Queue = Arc<Mutex<VecDeque<Queued>>>;
+/// Most prompts the queue holds.
+pub const QUEUE_MAX: usize = 5;
+
+/// What an event while a task runs did (`Editor::busy_event`).
+#[derive(Debug, PartialEq)]
+pub enum Busy {
+    Nothing,
+    /// A prompt went into the queue
+    Queued,
+    /// Enter, but the queue is full: the text stays in the box
+    Full,
+}
+
+/// The state of one reading of the box: the text, the place in the history,
+/// the command menu and an armed Ctrl-C. The chat prompt's state lives on
+/// between tasks, so what was typed while one ran is still there.
+struct Typing {
+    buffer: Buffer,
+    /// Index into the history while going through it; its length = the draft
+    position: usize,
+    /// The text before going into the history
+    draft: String,
+    /// Time of a Ctrl-C that a second one within `AGAIN` turns into an exit
+    armed: Option<Instant>,
+    /// The command menu: the chosen row, the text for which Esc closed it, the text it was made for
+    selected: usize,
+    closed_for: Option<String>,
+    menu_text: String,
+}
+
+impl Typing {
+    fn new(initial: &str, history: usize) -> Self {
+        Self {
+            buffer: Buffer::new(initial),
+            position: history,
+            draft: String::new(),
+            armed: None,
+            selected: 0,
+            closed_for: None,
+            menu_text: String::new(),
+        }
+    }
+}
+
+/// What an event did to the box.
+enum Step {
+    Continue,
+    Submit(String),
+    Exit,
+}
+
 pub enum Input {
     Submit(String),
     /// Ctrl-C twice, or Ctrl-D on an empty box
@@ -275,9 +337,36 @@ pub struct Editor {
     /// The files of the input just submitted: out of the box before it is drawn
     /// empty, until `take_files`
     sent: Vec<Attachment>,
+    /// The chat prompt as typed so far, kept while a task runs and between reads
+    typing: Option<Typing>,
+    /// Prompts sent while a task ran (`busy_event`); the chat loop takes them first
+    queue: Queue,
+    /// A task runs: the hint row belongs to the progress line, the cursor is drawn by the box
+    busy: bool,
     /// A message about the last drop (a file that could not be attached), shown
     /// in the hint line until the next key
     note: Option<String>,
+}
+
+/// The row text with the character at `column` (a space at the end) shown inverse:
+/// the box's own cursor while the real one stays in the output.
+fn with_cursor(text: &str, column: usize, s: Style) -> String {
+    let mut out = String::new();
+    let mut used = 0;
+    let mut placed = false;
+    for c in text.chars() {
+        if !placed && used >= column {
+            out.push_str(&format!("{}{c}{}", s.inverse(), s.reset()));
+            placed = true;
+        } else {
+            out.push(c);
+        }
+        used += width_of(c);
+    }
+    if !placed {
+        out.push_str(&format!("{} {}", s.inverse(), s.reset()));
+    }
+    out
 }
 
 /// A slash command: name with the slash, what it does.
@@ -332,10 +421,18 @@ impl Editor {
             files: Vec::new(),
             sent: Vec::new(),
             note: None,
+            typing: None,
+            queue: Arc::new(Mutex::new(VecDeque::new())),
+            busy: false,
         }
     }
 
     /// The files dropped on the box for the input just submitted; the box is empty after.
+    /// The queue of this box, for the chat loop.
+    pub fn queue(&self) -> Queue {
+        self.queue.clone()
+    }
+
     pub fn take_files(&mut self) -> Vec<Attachment> {
         std::mem::take(&mut self.sent)
     }
@@ -608,52 +705,37 @@ impl Editor {
             return;
         };
         let columns = terminal::size().map_or(80, |(columns, _)| columns as usize);
+        let queued = self.queue.lock().unwrap_or_else(|p| p.into_inner()).len();
         let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        view.set_above_border(queued);
         if view.resize(columns, dock.height as usize - dock.area) {
             view.repaint();
         }
         dock.out = view.out();
     }
 
-    /// The docked box, empty, with the cursor back in the output.
+    /// The docked box at rest, with the cursor back in the output: the queue, the
+    /// text typed so far (or nothing) and the files; no hint row (the progress
+    /// line uses it). While a task runs the box shows its own cursor.
     fn dock_idle(&mut self) -> io::Result<()> {
         let width = Self::inner_width();
-        let lines = self.box_lines(&Buffer::default(), width, 0, 1);
-        let (_, height) = terminal::size()?;
-        let push = self.view.is_none();
-        let Some(dock) = &mut self.dock else {
-            return Ok(());
-        };
-        // The area first, then the output above it, then the box: each step may
-        // clear rows the next one draws.
-        let mut frame = String::new();
-        Self::set_area(dock, 1 + DOCK_EXTRA, height, push, &mut frame);
-        screen_write(&frame);
-        self.sync_view();
-        let Some(dock) = &self.dock else {
-            return Ok(());
-        };
-        let top = height as usize - dock.area + 1;
-        let mut frame = String::new();
-        for (i, line) in lines.iter().enumerate() {
-            frame.push_str(&format!("\x1b[{};1H{line}", top + i));
-        }
-        frame.push_str(&format!("\x1b[{};{}H", dock.out.0, dock.out.1));
-        screen_write(&frame);
-        if let Some(view) = &self.view {
-            view.lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .indicator();
-        }
-        Ok(())
+        let buffer = self
+            .typing
+            .as_ref()
+            .map(|typing| typing.buffer.clone())
+            .unwrap_or_default();
+        self.draw_docked(&buffer, width, &[], None)
     }
 
+    /// The dock: queue rows, the box, the command menu, the hint row. With a hint the
+    /// cursor goes into the box (the box reads keys); without one the hint row is
+    /// left to the progress line and the cursor goes back to the output.
     fn draw_docked(
         &mut self,
         buffer: &Buffer,
         width: usize,
         menu: &[String],
-        hint: &str,
+        hint: Option<&str>,
     ) -> io::Result<()> {
         let (_, height) = terminal::size()?;
         let rows = buffer.rows(width);
@@ -662,7 +744,10 @@ impl Editor {
             .len()
             .min((height as usize / 3).clamp(1, DOCK_MAX_ROWS));
         let first = (cursor_row + 1).saturating_sub(visible);
-        let lines = self.box_lines(buffer, width, first, visible);
+        // A running task keeps the real cursor in the output: the box draws its own.
+        let fake = (self.busy && hint.is_none()).then_some((cursor_row, cursor_column));
+        let lines = self.box_lines(buffer, width, first, visible, fake);
+        let queue = self.queue_lines(width + FRAME_COLS - 1);
         let push = self.view.is_none();
         let Some(dock) = &mut self.dock else {
             return Ok(());
@@ -670,7 +755,7 @@ impl Editor {
         let mut frame = String::new();
         Self::set_area(
             dock,
-            visible + DOCK_EXTRA + menu.len(),
+            queue.len() + visible + DOCK_EXTRA + menu.len(),
             height,
             push,
             &mut frame,
@@ -682,16 +767,21 @@ impl Editor {
         };
         let mut frame = String::new();
         let top = height as usize - dock.area + 1;
-        // Box, then the command menu, then the hint on the last row.
-        for (i, line) in lines.iter().chain(menu).enumerate() {
+        // The queue, the box, then the command menu, then the hint on the last row.
+        for (i, line) in queue.iter().chain(&lines).chain(menu).enumerate() {
             frame.push_str(&format!("\x1b[{};1H{line}", top + i));
         }
-        frame.push_str(&format!("\x1b[{height};1H  {hint}"));
-        frame.push_str(&format!(
-            "\x1b[{};{}H",
-            top + 1 + cursor_row - first,
-            5 + cursor_column
-        ));
+        match hint {
+            Some(hint) => {
+                frame.push_str(&format!("\x1b[{height};1H  {hint}"));
+                frame.push_str(&format!(
+                    "\x1b[{};{}H",
+                    top + queue.len() + 1 + cursor_row - first,
+                    5 + cursor_column
+                ));
+            }
+            None => frame.push_str(&format!("\x1b[{};{}H", dock.out.0, dock.out.1)),
+        }
         screen_write(&frame);
         if let Some(view) = &self.view {
             view.lock()
@@ -701,8 +791,16 @@ impl Editor {
         Ok(())
     }
 
-    /// Top border, `count` text rows from row `first`, bottom border.
-    fn box_lines(&self, buffer: &Buffer, width: usize, first: usize, count: usize) -> Vec<String> {
+    /// Top border, `count` text rows from row `first`, bottom border. `cursor` =
+    /// row and column where the box draws a cursor of its own (inverse).
+    fn box_lines(
+        &self,
+        buffer: &Buffer,
+        width: usize,
+        first: usize,
+        count: usize,
+        cursor: Option<(usize, usize)>,
+    ) -> Vec<String> {
         let s = self.style;
         let rows = buffer.rows(width);
         let border = "─".repeat(width + FRAME_COLS - 2);
@@ -718,15 +816,20 @@ impl Editor {
         };
         let mut lines = vec![format!("{}╭{top}{}╮{}", s.gray(), s.gray(), s.reset())];
         for (i, &row) in rows.iter().enumerate().skip(first).take(count) {
-            let text = buffer.row_text(row);
+            let mut text = buffer.row_text(row);
             let used: usize = text.chars().map(width_of).sum();
+            if let Some((_, column)) = cursor.filter(|(r, _)| *r == i) {
+                text = with_cursor(&text, column, s);
+            }
             let mark = if i == 0 { ">" } else { " " };
             lines.push(format!(
                 "{gray}│{reset} {accent}{mark}{reset} {text}{pad} {gray}│{reset}",
                 gray = s.gray(),
                 reset = s.reset(),
                 accent = s.accent(),
-                pad = " ".repeat(width.saturating_sub(used)),
+                pad = " ".repeat(width.saturating_sub(
+                    used + usize::from(cursor.is_some_and(|(r, c)| r == i && c >= used))
+                )),
             ));
         }
         lines.push(format!("{}╰{border}╯{}", s.gray(), s.reset()));
@@ -740,7 +843,8 @@ impl Editor {
     }
 
     /// Shows the box with `initial` in it and reads until Enter. `remember` = the
-    /// input goes into the history (not for an edited command).
+    /// chat prompt: the input goes into the history, files and the queue belong
+    /// to it, and it goes on with what was typed while the last task ran.
     pub fn read(
         &mut self,
         initial: &str,
@@ -748,15 +852,13 @@ impl Editor {
         remember: bool,
     ) -> io::Result<Input> {
         let _raw = RawMode::enter()?;
-        let mut buffer = Buffer::new(initial);
-        let mut position = self.history.len();
-        let mut draft = String::new();
-        // Time of a Ctrl-C that a second one within `AGAIN` turns into an exit
-        let mut armed: Option<Instant> = None;
-        // The command menu: the chosen row, and the text for which Esc closed it
-        let mut selected = 0usize;
-        let mut closed_for: Option<String> = None;
-        let mut menu_text = String::new();
+        let mut typing = match remember {
+            true => self
+                .typing
+                .take()
+                .unwrap_or_else(|| Typing::new(initial, self.history.len())),
+            false => Typing::new(initial, self.history.len()),
+        };
         self.cursor_line = 0;
         if let Some(dock) = &mut self.dock
             && self.view.is_none()
@@ -766,120 +868,19 @@ impl Editor {
         }
         loop {
             let width = Self::inner_width();
-            let armed_now = armed.is_some_and(|at| at.elapsed() < AGAIN);
-            let text = buffer.text();
-            if text != menu_text {
-                selected = 0;
-                menu_text = text.clone();
-            }
-            // Only the chat prompt has commands, not the box that edits a shell command.
-            let items = match remember && closed_for.as_deref() != Some(text.as_str()) {
-                true => command_matches(self.commands, &text),
-                false => Vec::new(),
-            };
-            selected = selected.min(items.len().saturating_sub(1));
-            // With files in the box and no text, Backspace takes the last one out.
-            let mut file_hints: Vec<(&str, &str)> = Vec::new();
-            if remember && !self.files.is_empty() && buffer.is_empty() {
-                file_hints.push(("Backspace", "drops a file"));
-            }
-            file_hints.extend_from_slice(hints);
-            let hint = match (armed_now, items.is_empty(), &self.note) {
-                (true, _, _) => {
-                    format!("{}{AGAIN_HINT}{}", self.style.action(), self.style.reset())
-                }
-                (false, true, Some(note)) => {
-                    let mut note: String = note.clone();
-                    let max = width + FRAME_COLS - 2;
-                    if note.chars().count() > max {
-                        note = note.chars().take(max.saturating_sub(1)).collect::<String>() + "…";
-                    }
-                    format!("{}{note}{}", self.style.action(), self.style.reset())
-                }
-                (false, false, _) => self.hint_line(MENU_HINTS, width + FRAME_COLS - 2),
-                (false, true, None) => self.hint_line(&file_hints, width + FRAME_COLS - 2),
-            };
-            let menu = self.menu_lines(&items, selected, width + FRAME_COLS - 2);
-            self.draw(&buffer, width, &menu, &hint)?;
+            let (items, menu, hint) = self.parts(&mut typing, hints, remember, width);
+            self.draw(&typing.buffer, width, &menu, &hint)?;
             // The "again" hint disappears by itself.
-            if let Some(at) = armed.filter(|_| armed_now)
+            if let Some(at) = typing.armed.filter(|at| at.elapsed() < AGAIN)
                 && !event::poll(AGAIN.saturating_sub(at.elapsed()))?
             {
-                armed = None;
+                typing.armed = None;
                 continue;
             }
-            let key = match event::read()? {
-                Event::Key(key) if key.kind != KeyEventKind::Release => key,
-                // Files dropped on the terminal arrive as a paste of their paths.
-                Event::Paste(text) => {
-                    match attach::from_paste(&text).filter(|_| remember) {
-                        Some(dropped) => self.add_files(dropped),
-                        None => buffer.insert_str(&text),
-                    }
-                    continue;
-                }
-                // The wheel scrolls the output; the box is drawn again by the loop.
-                Event::Mouse(mouse) => {
-                    if let Some(view) = &self.view
-                        && let Some(paste) = super::mouse_event(view, mouse)
-                    {
-                        // Right click without a selection: what was copied goes into the box.
-                        buffer.insert_str(&paste);
-                    }
-                    continue;
-                }
-                _ => continue,
-            };
-            self.note = None;
-            if let Some(view) = &self.view
-                && super::scroll_by_key(view, key.code, key.modifiers)
-            {
-                continue;
-            }
-            let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
-            let alt = key.modifiers.contains(KeyModifiers::ALT);
-            let shift = key.modifiers.contains(KeyModifiers::SHIFT);
-            // With the menu open the arrows choose and Enter runs the command.
-            if !items.is_empty() {
-                match key.code {
-                    KeyCode::Up => {
-                        selected = (selected + items.len() - 1) % items.len();
-                        continue;
-                    }
-                    KeyCode::Down => {
-                        selected = (selected + 1) % items.len();
-                        continue;
-                    }
-                    // Enter runs the chosen command at once; Tab only completes it in the box.
-                    KeyCode::Enter if !alt && !shift => {
-                        self.sent = std::mem::take(&mut self.files);
-                        self.erase()?;
-                        return Ok(Input::Submit(items[selected].0.to_string()));
-                    }
-                    KeyCode::Tab => {
-                        buffer = Buffer::new(items[selected].0);
-                        continue;
-                    }
-                    KeyCode::Esc => {
-                        closed_for = Some(text);
-                        continue;
-                    }
-                    _ => {}
-                }
-            }
-            match key.code {
-                KeyCode::Enter if alt || shift => buffer.insert('\n'),
-                KeyCode::Char('j') if ctrl => buffer.insert('\n'),
-                KeyCode::Enter if buffer.before_cursor() == Some('\\') => {
-                    buffer.backspace();
-                    buffer.insert('\n');
-                }
-                KeyCode::Enter => {
-                    let text = buffer.text().trim().to_string();
-                    // Files alone are a prompt too.
-                    if text.is_empty() && (self.files.is_empty() || !remember) {
-                        continue;
-                    }
+            let event = event::read()?;
+            match self.handle(&mut typing, event, &items, remember, width) {
+                Step::Continue => {}
+                Step::Submit(text) => {
                     // The empty box drawn by `erase` shows no files any more.
                     self.sent = std::mem::take(&mut self.files);
                     self.erase()?;
@@ -888,79 +889,343 @@ impl Editor {
                     }
                     return Ok(Input::Submit(text));
                 }
-                // With text selected in the output, Ctrl-C copies it.
-                KeyCode::Char('c')
-                    if ctrl && self.view.as_deref().is_some_and(super::copy_selection) =>
+                Step::Exit => {
+                    self.erase()?;
+                    return Ok(Input::Exit);
+                }
+            }
+        }
+    }
+
+    /// A task is running (`true`) or not. While it runs, `busy_event` gets the keys:
+    /// the box can be filled and Enter puts the prompt into the queue.
+    pub fn set_busy(&mut self, busy: bool) {
+        self.busy = busy;
+    }
+
+    /// An event while a task runs (the keys Esc, Ctrl-C and Shift+Tab stay with the
+    /// task's key watcher). Draws the box again.
+    pub fn busy_event(&mut self, event: Event) -> Busy {
+        let mut typing = self
+            .typing
+            .take()
+            .unwrap_or_else(|| Typing::new("", self.history.len()));
+        let width = Self::inner_width();
+        let (items, _, _) = self.parts(&mut typing, &[], true, width);
+        let mut outcome = Busy::Nothing;
+        if let Step::Submit(text) = self.handle(&mut typing, event, &items, true, width) {
+            let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+            if queue.len() >= QUEUE_MAX {
+                // The text stays in the box until a place is free.
+                outcome = Busy::Full;
+            } else {
+                queue.push_back(Queued {
+                    text: text.clone(),
+                    files: std::mem::take(&mut self.files),
+                });
+                drop(queue);
+                self.remember(&text);
+                typing = Typing::new("", self.history.len());
+                outcome = Busy::Queued;
+            }
+        }
+        self.typing = Some(typing);
+        let _ = self.dock_idle();
+        outcome
+    }
+
+    /// Draws the box at rest again (the queue changed outside the box).
+    pub fn redraw_idle(&mut self) -> io::Result<()> {
+        self.dock_idle()
+    }
+
+    /// The command menu items, its rows and the hint line for the box as it is now.
+    fn parts(
+        &self,
+        typing: &mut Typing,
+        hints: &[(&str, &str)],
+        remember: bool,
+        width: usize,
+    ) -> (Vec<Command>, Vec<String>, String) {
+        let armed_now = typing.armed.is_some_and(|at| at.elapsed() < AGAIN);
+        let text = typing.buffer.text();
+        if text != typing.menu_text {
+            typing.selected = 0;
+            typing.menu_text = text.clone();
+        }
+        // Only the chat prompt has commands, not the box that edits a shell command.
+        let items = match remember && typing.closed_for.as_deref() != Some(text.as_str()) {
+            true => command_matches(self.commands, &text),
+            false => Vec::new(),
+        };
+        typing.selected = typing.selected.min(items.len().saturating_sub(1));
+        // With files in the box and no text, Backspace takes the last one out.
+        let mut more_hints: Vec<(&str, &str)> = Vec::new();
+        if remember && !self.files.is_empty() && typing.buffer.is_empty() {
+            more_hints.push(("Backspace", "drops a file"));
+        }
+        if remember && !self.queue_items().is_empty() {
+            more_hints.push(("Alt + 1…5", "drops a queued prompt"));
+        }
+        more_hints.extend_from_slice(hints);
+        let max = width + FRAME_COLS - 2;
+        let hint = match (armed_now, items.is_empty(), &self.note) {
+            (true, _, _) => format!("{}{AGAIN_HINT}{}", self.style.action(), self.style.reset()),
+            (false, true, Some(note)) => {
+                let mut note: String = note.clone();
+                if note.chars().count() > max {
+                    note = note.chars().take(max.saturating_sub(1)).collect::<String>() + "…";
+                }
+                format!("{}{note}{}", self.style.action(), self.style.reset())
+            }
+            (false, false, _) => self.hint_line(MENU_HINTS, max),
+            (false, true, None) => self.hint_line(&more_hints, max),
+        };
+        let menu = self.menu_lines(&items, typing.selected, max);
+        (items, menu, hint)
+    }
+
+    /// One event for the box: keys edit it, a paste adds text or dropped files,
+    /// the mouse scrolls or selects the output, or drops a queued prompt (its ✕).
+    fn handle(
+        &mut self,
+        typing: &mut Typing,
+        event: Event,
+        items: &[Command],
+        remember: bool,
+        width: usize,
+    ) -> Step {
+        let armed_now = typing.armed.is_some_and(|at| at.elapsed() < AGAIN);
+        let buffer = &mut typing.buffer;
+        let key = match event {
+            Event::Key(key) if key.kind != KeyEventKind::Release => key,
+            // Files dropped on the terminal arrive as a paste of their paths.
+            Event::Paste(text) => {
+                match attach::from_paste(&text).filter(|_| remember) {
+                    Some(dropped) => self.add_files(dropped),
+                    None => buffer.insert_str(&text),
+                }
+                return Step::Continue;
+            }
+            Event::Mouse(mouse) => {
+                if remember && let Some(index) = self.queue_click(mouse) {
+                    self.drop_queued(index);
+                    return Step::Continue;
+                }
+                // The wheel scrolls the output; the box is drawn again by the caller.
+                if let Some(view) = &self.view
+                    && let Some(paste) = super::mouse_event(view, mouse)
                 {
-                    continue;
+                    // Right click without a selection: what was copied goes into the box.
+                    buffer.insert_str(&paste);
                 }
-                // Ctrl-V: most terminals paste themselves (that arrives as a paste);
-                // where the key reaches the app, the clipboard is read here.
-                KeyCode::Char('v') if ctrl => {
-                    if let Some(view) = &self.view {
-                        buffer.insert_str(&super::paste_text(view));
-                    }
-                }
-                KeyCode::Char('c') if ctrl && !armed_now => {
-                    buffer = Buffer::default();
-                    self.files.clear();
-                    armed = Some(Instant::now());
-                    continue;
-                }
-                KeyCode::Char('c') if ctrl => {
-                    self.erase()?;
-                    return Ok(Input::Exit);
-                }
-                KeyCode::Esc => {
-                    buffer = Buffer::default();
-                    self.files.clear();
-                }
-                KeyCode::Char('d') if ctrl && buffer.is_empty() => {
-                    self.erase()?;
-                    return Ok(Input::Exit);
-                }
-                KeyCode::Char('d') if ctrl => buffer.delete(),
-                KeyCode::Char('a') if ctrl => buffer.home(),
-                KeyCode::Char('e') if ctrl => buffer.end(),
-                KeyCode::Char('u') if ctrl => buffer.kill_to_start(),
-                KeyCode::Char('k') if ctrl => buffer.kill_to_end(),
-                KeyCode::Char('w') if ctrl => buffer.delete_word(),
-                KeyCode::Backspace if alt || ctrl => buffer.delete_word(),
-                KeyCode::Backspace if buffer.is_empty() && remember => {
-                    self.files.pop();
-                }
-                KeyCode::Backspace => buffer.backspace(),
-                KeyCode::Delete => buffer.delete(),
-                KeyCode::Left => buffer.left(),
-                KeyCode::Right => buffer.right(),
-                KeyCode::Home => buffer.home(),
-                KeyCode::End => buffer.end(),
+                return Step::Continue;
+            }
+            _ => return Step::Continue,
+        };
+        self.note = None;
+        if let Some(view) = &self.view
+            && super::scroll_by_key(view, key.code, key.modifiers)
+        {
+            return Step::Continue;
+        }
+        let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+        let alt = key.modifiers.contains(KeyModifiers::ALT);
+        let shift = key.modifiers.contains(KeyModifiers::SHIFT);
+        // Alt+N (or Ctrl+N where the terminal reports it) drops queued prompt N.
+        if remember
+            && (alt || ctrl)
+            && let KeyCode::Char(digit @ '1'..='9') = key.code
+        {
+            self.drop_queued(digit as usize - '1' as usize);
+            return Step::Continue;
+        }
+        // With the menu open the arrows choose and Enter runs the command.
+        if !items.is_empty() {
+            match key.code {
                 KeyCode::Up => {
-                    if !buffer.vertical(-1, width) && position > 0 {
-                        if position == self.history.len() {
-                            draft = buffer.text();
-                        }
-                        position -= 1;
-                        buffer = Buffer::new(&self.history[position]);
-                    }
+                    typing.selected = (typing.selected + items.len() - 1) % items.len();
+                    return Step::Continue;
                 }
                 KeyCode::Down => {
-                    if !buffer.vertical(1, width) && position < self.history.len() {
-                        position += 1;
-                        buffer = Buffer::new(self.history.get(position).unwrap_or(&draft));
-                    }
+                    typing.selected = (typing.selected + 1) % items.len();
+                    return Step::Continue;
                 }
-                KeyCode::BackTab => {
-                    if let Some(mode) = &self.mode {
-                        mode.fetch_xor(true, Ordering::Relaxed);
-                    }
+                // Enter runs the chosen command at once; Tab only completes it in the box.
+                KeyCode::Enter if !alt && !shift => {
+                    let command = items[typing.selected].0.to_string();
+                    *buffer = Buffer::default();
+                    return Step::Submit(command);
                 }
-                KeyCode::Tab => buffer.insert_str("\t"),
-                KeyCode::Char(c) if !ctrl && !alt => buffer.insert(c),
+                KeyCode::Tab => {
+                    *buffer = Buffer::new(items[typing.selected].0);
+                    return Step::Continue;
+                }
+                KeyCode::Esc => {
+                    typing.closed_for = Some(buffer.text());
+                    return Step::Continue;
+                }
                 _ => {}
             }
-            armed = None;
         }
+        match key.code {
+            KeyCode::Enter if alt || shift => buffer.insert('\n'),
+            KeyCode::Char('j') if ctrl => buffer.insert('\n'),
+            KeyCode::Enter if buffer.before_cursor() == Some('\\') => {
+                buffer.backspace();
+                buffer.insert('\n');
+            }
+            KeyCode::Enter => {
+                let text = buffer.text().trim().to_string();
+                // Files alone are a prompt too.
+                if text.is_empty() && (self.files.is_empty() || !remember) {
+                    return Step::Continue;
+                }
+                return Step::Submit(text);
+            }
+            // With text selected in the output, Ctrl-C copies it.
+            KeyCode::Char('c')
+                if ctrl && self.view.as_deref().is_some_and(super::copy_selection) =>
+            {
+                return Step::Continue;
+            }
+            // Ctrl-V: most terminals paste themselves (that arrives as a paste);
+            // where the key reaches the app, the clipboard is read here.
+            KeyCode::Char('v') if ctrl => {
+                if let Some(view) = &self.view {
+                    buffer.insert_str(&super::paste_text(view));
+                }
+            }
+            KeyCode::Char('c') if ctrl && !armed_now => {
+                *buffer = Buffer::default();
+                self.files.clear();
+                typing.armed = Some(Instant::now());
+                return Step::Continue;
+            }
+            KeyCode::Char('c') if ctrl => return Step::Exit,
+            KeyCode::Esc => {
+                *buffer = Buffer::default();
+                self.files.clear();
+            }
+            KeyCode::Char('d') if ctrl && buffer.is_empty() && !self.busy => return Step::Exit,
+            KeyCode::Char('d') if ctrl => buffer.delete(),
+            KeyCode::Char('a') if ctrl => buffer.home(),
+            KeyCode::Char('e') if ctrl => buffer.end(),
+            KeyCode::Char('u') if ctrl => buffer.kill_to_start(),
+            KeyCode::Char('k') if ctrl => buffer.kill_to_end(),
+            KeyCode::Char('w') if ctrl => buffer.delete_word(),
+            KeyCode::Backspace if alt || ctrl => buffer.delete_word(),
+            KeyCode::Backspace if buffer.is_empty() && remember => {
+                self.files.pop();
+            }
+            KeyCode::Backspace => buffer.backspace(),
+            KeyCode::Delete => buffer.delete(),
+            KeyCode::Left => buffer.left(),
+            KeyCode::Right => buffer.right(),
+            KeyCode::Home => buffer.home(),
+            KeyCode::End => buffer.end(),
+            KeyCode::Up => {
+                if !buffer.vertical(-1, width) && typing.position > 0 {
+                    if typing.position == self.history.len() {
+                        typing.draft = buffer.text();
+                    }
+                    typing.position -= 1;
+                    *buffer = Buffer::new(&self.history[typing.position]);
+                }
+            }
+            KeyCode::Down => {
+                if !buffer.vertical(1, width) && typing.position < self.history.len() {
+                    typing.position += 1;
+                    *buffer =
+                        Buffer::new(self.history.get(typing.position).unwrap_or(&typing.draft));
+                }
+            }
+            KeyCode::BackTab => {
+                if let Some(mode) = &self.mode {
+                    mode.fetch_xor(true, Ordering::Relaxed);
+                }
+            }
+            KeyCode::Tab => buffer.insert_str("\t"),
+            KeyCode::Char(c) if !ctrl && !alt => buffer.insert(c),
+            _ => {}
+        }
+        typing.armed = None;
+        Step::Continue
+    }
+
+    /// The prompts waiting in the queue, oldest first.
+    fn queue_items(&self) -> Vec<Queued> {
+        self.queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .iter()
+            .cloned()
+            .collect()
+    }
+
+    /// Takes queued prompt `index` (0 = number 1) out; nothing when there is none.
+    fn drop_queued(&mut self, index: usize) {
+        let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
+        if index < queue.len() {
+            queue.remove(index);
+        }
+    }
+
+    /// The queued prompt whose ✕ a left click hit (docked box only).
+    fn queue_click(&self, mouse: MouseEvent) -> Option<usize> {
+        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
+            return None;
+        }
+        let dock = self.dock.as_ref()?;
+        let count = self.queue_items().len();
+        let top = dock.height as usize - dock.area + 1;
+        let row = mouse.row as usize + 1;
+        let total = Self::inner_width() + FRAME_COLS;
+        // The ✕ sits in the last columns of the row.
+        (row >= top && row < top + count && mouse.column as usize + 5 >= total).then(|| row - top)
+    }
+
+    /// One row per queued prompt, above the box: its number, the first line of
+    /// its text, the files it carries and the ✕ that drops it, on a bar of its own color.
+    fn queue_lines(&self, total: usize) -> Vec<String> {
+        let s = self.style;
+        let columns = |text: &str| text.chars().map(width_of).sum::<usize>();
+        self.queue_items()
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let number = format!(" {} ", i + 1);
+                let files = match item.files.len() {
+                    0 => String::new(),
+                    n => format!("  📎 {n}"),
+                };
+                let close = " ✕ ";
+                let room = total.saturating_sub(columns(&number) + 1 + columns(&files) + columns(close) + 1);
+                let flat = item.text.replace('\n', " ⏎ ");
+                let mut text = String::new();
+                let mut used = 0;
+                for c in flat.chars() {
+                    if used + width_of(c) > room {
+                        text.pop();
+                        text.push('…');
+                        break;
+                    }
+                    used += width_of(c);
+                    text.push(c);
+                }
+                let used = columns(&text);
+                format!(
+                    "{bg}{accent}{bold}{number}{reset}{bg}{key} {text}{pad}{faint}{files}{key}{close} {reset}",
+                    bg = s.queue_bg(),
+                    accent = s.accent(),
+                    bold = s.bold(),
+                    key = s.key(),
+                    faint = s.faint(),
+                    reset = s.reset(),
+                    pad = " ".repeat(room.saturating_sub(used)),
+                )
+            })
+            .collect()
     }
 
     fn remember(&mut self, text: &str) {
@@ -1013,7 +1278,7 @@ impl Editor {
         hint: &str,
     ) -> io::Result<()> {
         if self.dock.is_some() {
-            return self.draw_docked(buffer, width, menu, hint);
+            return self.draw_docked(buffer, width, menu, Some(hint));
         }
         let rows = buffer.rows(width);
         let (cursor_row, cursor_column) = buffer.locate(&rows);
@@ -1021,7 +1286,9 @@ impl Editor {
         let screen = terminal::size().map_or(24, |(_, lines)| lines as usize);
         let visible = rows.len().min(screen.saturating_sub(4).max(1));
         let first = (cursor_row + 1).saturating_sub(visible);
-        let mut frame = self.box_lines(buffer, width, first, visible).join("\r\n");
+        let mut frame = self
+            .box_lines(buffer, width, first, visible, None)
+            .join("\r\n");
         for line in menu {
             frame.push_str(&format!("\r\n{line}"));
         }
@@ -1066,6 +1333,86 @@ pub fn read_choice(keys: &str) -> io::Result<Option<char>> {
 mod tests {
     use super::*;
 
+    fn key(code: KeyCode, modifiers: KeyModifiers) -> Event {
+        Event::Key(crossterm::event::KeyEvent::new(code, modifiers))
+    }
+
+    fn type_text(editor: &mut Editor, text: &str) -> Busy {
+        for c in text.chars() {
+            editor.busy_event(key(KeyCode::Char(c), KeyModifiers::NONE));
+        }
+        editor.busy_event(key(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn prompts_typed_while_a_task_runs_are_queued() {
+        let mut editor = Editor::new(Style::new(false), None);
+        editor.set_busy(true);
+        for (i, text) in ["one", "two", "three", "four", "five"].iter().enumerate() {
+            assert_eq!(
+                type_text(&mut editor, text),
+                Busy::Queued,
+                "prompt {}",
+                i + 1
+            );
+        }
+        // The sixth waits in the box.
+        assert_eq!(type_text(&mut editor, "six"), Busy::Full);
+        assert_eq!(editor.typing.as_ref().unwrap().buffer.text(), "six");
+        // Alt+2 drops the second, Ctrl+9 (no such item) nothing.
+        editor.busy_event(key(KeyCode::Char('2'), KeyModifiers::ALT));
+        editor.busy_event(key(KeyCode::Char('9'), KeyModifiers::CONTROL));
+        let texts: Vec<String> = editor.queue_items().into_iter().map(|q| q.text).collect();
+        assert_eq!(texts, ["one", "three", "four", "five"]);
+        // Now there is room for it.
+        assert_eq!(
+            editor.busy_event(key(KeyCode::Enter, KeyModifiers::NONE)),
+            Busy::Queued
+        );
+        assert_eq!(editor.queue().lock().unwrap().back().unwrap().text, "six");
+        // An empty Enter queues nothing.
+        editor.busy_event(key(KeyCode::Char('1'), KeyModifiers::ALT));
+        assert_eq!(
+            editor.busy_event(key(KeyCode::Enter, KeyModifiers::NONE)),
+            Busy::Nothing
+        );
+        assert_eq!(editor.queue_items().len(), 4);
+    }
+
+    #[test]
+    fn queue_rows_are_numbered_cut_and_closable() {
+        let editor = Editor::new(Style::new(false), None);
+        editor.queue().lock().unwrap().extend([
+            Queued {
+                text: "short".into(),
+                files: Vec::new(),
+            },
+            Queued {
+                text: "a very long prompt\nwith two lines that does not fit".into(),
+                files: vec![Attachment {
+                    path: PathBuf::from("/x/a.txt"),
+                    name: "a.txt".into(),
+                    size: 1,
+                    warning: None,
+                }],
+            },
+        ]);
+        let rows = editor.queue_lines(40);
+        let columns = |text: &str| text.chars().map(width_of).sum::<usize>();
+        assert!(rows[0].starts_with(" 1  short "));
+        assert!(rows[0].ends_with(" ✕  "));
+        assert!(rows[1].starts_with(" 2  a very long prompt ⏎ with"));
+        assert!(rows[1].contains("…  📎 1 ✕"));
+        assert_eq!(columns(&rows[0]), columns(&rows[1]));
+    }
+
+    #[test]
+    fn the_box_draws_its_own_cursor_while_busy() {
+        let s = Style::new(true);
+        assert_eq!(with_cursor("abc", 1, s), "a\x1b[7mb\x1b[0mc");
+        assert_eq!(with_cursor("ab", 2, s), "ab\x1b[7m \x1b[0m");
+    }
+
     #[test]
     fn dropped_files_sit_in_the_top_border() {
         let mut editor = Editor::new(Style::new(false), None);
@@ -1080,7 +1427,7 @@ mod tests {
             file("id_ed25519", 40, true),
         ];
         let width = 60;
-        let lines = editor.box_lines(&Buffer::default(), width, 0, 1);
+        let lines = editor.box_lines(&Buffer::default(), width, 0, 1, None);
         let columns = |text: &str| text.chars().map(width_of).sum::<usize>();
         assert!(lines[0].starts_with("╭─ 📎 my report.txt · 24 B  ⚠ id_ed25519 · 40 B ──"));
         assert_eq!(columns(&lines[0]), columns(&lines[2]));
@@ -1088,7 +1435,7 @@ mod tests {
         editor.files = (0..9)
             .map(|i| file(&format!("file-{i}.txt"), 1024, i == 3))
             .collect();
-        let lines = editor.box_lines(&Buffer::default(), width, 0, 1);
+        let lines = editor.box_lines(&Buffer::default(), width, 0, 1, None);
         assert!(lines[0].starts_with("╭─ 📎 9 files · 9 KB · ⚠ 1 private ─"));
         assert_eq!(columns(&lines[0]), columns(&lines[2]));
     }
