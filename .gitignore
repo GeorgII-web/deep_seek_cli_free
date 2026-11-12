@@ -3,3 +3,6 @@
 /.idea
 auth.json
 deepseek-auth.json
+# a downloaded release binary in the repo folder
+/dsc
+/dsc-*.tar.gz*

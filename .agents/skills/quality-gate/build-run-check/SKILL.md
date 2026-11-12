@@ -95,3 +95,5 @@ user's word. Run state without a login: `https://api.github.com/repos/GeorgII-we
 - Commits use the repo-local GitHub noreply email; never another address.
 - No personal paths, names, tokens or data in tracked files; work files go to git-ignored `var/`.
 - A code change, its skills, `AGENTS.md` and `README.md` go in the same commit, pushed right away.
+- Look at `git status --short` before every commit and stage what belongs to the change. A blind `git add -A`
+  once committed a downloaded 8 MB binary that lay in the repo folder (2026-11-12); `/dsc` is ignored since then.
