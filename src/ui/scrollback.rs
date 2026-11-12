@@ -225,6 +225,9 @@ pub struct View {
     columns: usize,
     /// Rows of the output area (the screen above the dock)
     rows: usize,
+    /// Rows of the dock above the box's top border (the prompt queue); the
+    /// indicator sits on that border
+    above_border: usize,
     /// Rows hidden below the view; 0 = at the bottom
     offset: usize,
 }
@@ -248,6 +251,7 @@ impl View {
             copied: String::new(),
             columns: columns.max(1),
             rows: rows.max(1),
+            above_border: 0,
             offset: 0,
         }
     }
@@ -724,6 +728,11 @@ impl View {
         }
     }
 
+    /// How many dock rows come before the box's top border (the prompt queue).
+    pub fn set_above_border(&mut self, rows: usize) {
+        self.above_border = rows;
+    }
+
     /// Adapts to a new size of the output area. Returns true when it changed (the caller repaints).
     pub fn resize(&mut self, columns: usize, rows: usize) -> bool {
         let (columns, rows) = (columns.max(1), rows.max(1));
@@ -756,7 +765,7 @@ impl View {
         let column = self.columns - SPAN - 2;
         screen_write(&format!(
             "\x1b7\x1b[{};{column}H{}{fill}{}{}{text}{}\x1b8",
-            self.rows + 1,
+            self.rows + 1 + self.above_border,
             s.gray(),
             s.reset(),
             s.action(),

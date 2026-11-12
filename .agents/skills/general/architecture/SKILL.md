@@ -71,7 +71,7 @@ two traits, so its tests script both.
 | Path | Content |
 |---|---|
 | `<home>` | `$DSC_HOME`, else `~/.config/deep_seek_cli_free` |
-| `<home>/config.toml` | `version`, `deepseek.*` (`api` real or mock, model type, thinking, search, locale, timeout), `throttle.*`, `agent.*`, `ui.*`, `mock.*`, `policy.*` (the saved mode, allow, deny); rewritten when the mode, the model or thinking is switched |
+| `<home>/config.toml` | `version`, `deepseek.*` (`api` real or mock, model type, thinking, search, locale, timeout), `throttle.*`, `agent.*`, `ui.*`, `mock.*`, `policy.*` (the saved mode, allow, deny); rewritten when the mode, the model, thinking or Browse is switched |
 | `<home>/auth.json` | secret, 0600 |
 | `<home>/history.json` | the last 200 chat inputs |
 | `<home>/sessions.json` | the last 50 conversations started here: remote session id, last answer id, title, folder |

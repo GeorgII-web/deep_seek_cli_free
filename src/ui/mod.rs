@@ -25,7 +25,7 @@ use base64::Engine as _;
 use crossterm::event::{
     self, Event as TermEvent, KeyCode, KeyEventKind, KeyModifiers, MouseEventKind,
 };
-use editor::{AGAIN, AGAIN_HINT, Editor, Input, RawMode};
+use editor::{AGAIN, AGAIN_HINT, Busy, Editor, Input, Queue, Queued, RawMode};
 use render::Markdown;
 use scrollback::View;
 use spinner::Spinner;
@@ -98,6 +98,8 @@ const INPUT_HINTS: &[(&str, &str)] = &[
     ("↑↓", "history"),
 ];
 const EDIT_HINTS: &[(&str, &str)] = &[("Enter", "run"), ("Ctrl-D", "cancel")];
+/// Shown on the progress line when Enter finds the queue full.
+const QUEUE_FULL: &str = "Queue full · Alt+N drops one";
 /// The slash commands of the chat: offered in the menu when the input starts with `/`.
 /// `src/main.rs` (`chat`) runs them.
 const COMMANDS: &[editor::Command] = &[
@@ -113,9 +115,10 @@ const COMMANDS: &[editor::Command] = &[
         "/model",
         "choose the real DeepSeek account or the built-in mock",
     ),
+    ("/think", "deep thinking on or off (turns Browse off)"),
     (
-        "/think",
-        "deep thinking on or off (web search is off while it is on)",
+        "/browse",
+        "DeepSeek's web search and page reading on or off (turns Think off)",
     ),
     ("/sessions", "list earlier conversations and switch to one"),
     ("/login", "enter a new DeepSeek token"),
@@ -154,6 +157,29 @@ enum TabState {
     Working,
     /// The task waits for the user: an approval question
     Asking,
+}
+
+/// What the tab title is made of. Shared with the key watcher, which writes the
+/// title again when the queue changes while a task runs.
+struct Tab {
+    icon: &'static str,
+    title: String,
+}
+
+/// `<icon> <title>`, with `+N` after the icon while N prompts wait in the queue.
+fn tab_text(tab: &Tab, queued: usize) -> String {
+    match queued {
+        0 => format!("{} {}", tab.icon, tab.title),
+        n => format!("{} +{n} {}", tab.icon, tab.title),
+    }
+}
+
+/// Writes the tab title. Both forms: OSC 0 (icon name and title) and OSC 2
+/// (title only); some terminal setups act on one of them only.
+fn write_tab(tab: &Mutex<Tab>, queue: &Queue) {
+    let queued = queue.lock().unwrap_or_else(|p| p.into_inner()).len();
+    let text = tab_text(&tab.lock().unwrap_or_else(|p| p.into_inner()), queued);
+    screen_write(&format!("\x1b]0;{text}\x07\x1b]2;{text}\x07"));
 }
 
 /// Reads keys while a task runs: Esc stops the task, Ctrl-C twice leaves the app.
@@ -257,7 +283,10 @@ pub struct Terminal {
     screen: bool,
     spinner: Spinner,
     markdown: Markdown,
-    editor: Editor,
+    /// The input box; shared with the key watcher, which fills it while a task runs
+    editor: Arc<Mutex<Editor>>,
+    /// Prompts sent while a task ran, taken by `input` before the box is read again
+    queue: Queue,
     /// The answer printed something and its line is still open
     text_open: bool,
     thinking_open: bool,
@@ -276,6 +305,8 @@ pub struct Terminal {
     /// The title of the terminal tab, without its icon
     title: String,
     tab_state: TabState,
+    /// The tab title as last written, for the key watcher (`write_tab`)
+    tab: Arc<Mutex<Tab>>,
     /// The status line of the answer in progress is up (screen layout)
     status_on: bool,
     /// Output of the running command not yet ended by a line end
@@ -286,6 +317,8 @@ pub struct Terminal {
     mock: Arc<AtomicBool>,
     /// Deep thinking is on. Shown under the box and on the progress line.
     think: Arc<AtomicBool>,
+    /// Browse (DeepSeek's web search) is on: shown next to Think
+    browse: Arc<AtomicBool>,
     /// The approval mode: true = allow all (run without asking), false = ask.
     /// Shared with the box, the progress line, the key watcher and the agent loop.
     allow_all: Arc<AtomicBool>,
@@ -300,6 +333,7 @@ impl Terminal {
         let allow_all = Arc::new(AtomicBool::new(allow_all));
         let mock = Arc::new(AtomicBool::new(false));
         let think = Arc::new(AtomicBool::new(false));
+        let browse = Arc::new(AtomicBool::new(false));
         let mut spinner = Spinner::new(std::io::stderr().is_terminal(), style);
         let mut editor = Editor::new(style, history_file);
         if interactive {
@@ -310,6 +344,8 @@ impl Terminal {
             editor.set_model(mock.clone());
             spinner.set_think(think.clone());
             editor.set_think(think.clone());
+            spinner.set_browse(browse.clone());
+            editor.set_browse(browse.clone());
             editor.set_commands(COMMANDS);
         }
         Self {
@@ -318,7 +354,8 @@ impl Terminal {
             screen: false,
             spinner,
             markdown: Markdown::new(style),
-            editor,
+            queue: editor.queue(),
+            editor: Arc::new(Mutex::new(editor)),
             text_open: false,
             thinking_open: false,
             gap: false,
@@ -332,16 +369,32 @@ impl Terminal {
             mouse: true,
             title: String::from("dsc"),
             tab_state: TabState::Idle,
+            tab: Arc::new(Mutex::new(Tab {
+                icon: "✻",
+                title: String::from("dsc"),
+            })),
             status_on: false,
             live: String::new(),
             live_lines: 0,
             mock,
             think,
+            browse,
             allow_all,
         }
     }
 
+    /// The input box (the key watcher may hold it for a moment while a task runs).
+    fn editor(&self) -> MutexGuard<'_, Editor> {
+        self.editor
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
     /// Tells the UI whether deep thinking is on, for the lines at the bottom.
+    pub fn set_browse(&mut self, on: bool) {
+        self.browse.store(on, Ordering::Relaxed);
+    }
+
     pub fn set_think(&mut self, on: bool) {
         self.think.store(on, Ordering::Relaxed);
     }
@@ -374,10 +427,11 @@ impl Terminal {
                 TabState::Working => "⏳",
                 TabState::Asking => "❓",
             };
-            // Both forms: OSC 0 (icon name and title) and OSC 2 (title only). Some
-            // terminal setups act on one of them only.
-            let title = format!("{icon} {}", self.title);
-            screen_write(&format!("\x1b]0;{title}\x07\x1b]2;{title}\x07"));
+            *self.tab.lock().unwrap_or_else(|p| p.into_inner()) = Tab {
+                icon,
+                title: self.title.clone(),
+            };
+            write_tab(&self.tab, &self.queue);
         }
     }
 
@@ -429,6 +483,11 @@ impl Terminal {
         );
         let mode = self.allow_all.clone();
         let view = self.view.clone();
+        let (tab, queue) = (self.tab.clone(), self.queue.clone());
+        // The chat screen: the box takes the other keys, so the next prompt can be
+        // written (and queued) while this one runs.
+        let editor = (screen && view.is_some()).then(|| self.editor.clone());
+        self.editor().set_busy(true);
         let thread = std::thread::spawn(move || {
             let mut armed: Option<Instant> = None;
             while !flag.load(Ordering::Relaxed) {
@@ -437,13 +496,35 @@ impl Terminal {
                     Ok(false) => continue,
                     Err(_) => break,
                 }
+                let to_box = |event: TermEvent| {
+                    let Some(editor) = &editor else {
+                        return Busy::Nothing;
+                    };
+                    let before = queue.lock().unwrap_or_else(|p| p.into_inner()).len();
+                    let outcome = editor
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner())
+                        .busy_event(event);
+                    // A prompt queued or dropped: the count in the tab follows.
+                    if queue.lock().unwrap_or_else(|p| p.into_inner()).len() != before {
+                        write_tab(&tab, &queue);
+                    }
+                    outcome
+                };
                 let key = match event::read() {
                     Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => key,
                     Ok(TermEvent::Mouse(mouse)) => {
-                        if let Some(view) = &view {
-                            // A paste has no place while a task runs.
+                        if editor.is_some() {
+                            // The box: a right-click paste, or on to the output.
+                            to_box(TermEvent::Mouse(mouse));
+                        } else if let Some(view) = &view {
+                            // Inline there is no box to paste into.
                             let _ = mouse_event(view, mouse);
                         }
+                        continue;
+                    }
+                    Ok(paste @ TermEvent::Paste(_)) => {
+                        to_box(paste);
                         continue;
                     }
                     _ => continue,
@@ -488,7 +569,11 @@ impl Terminal {
                             }
                         }
                     }
-                    _ => {}
+                    _ => {
+                        if to_box(TermEvent::Key(key)) == Busy::Full {
+                            notifier.show(QUEUE_FULL);
+                        }
+                    }
                 }
             }
         });
@@ -509,6 +594,7 @@ impl Terminal {
             if let Some(thread) = watch.thread.take() {
                 let _ = thread.join();
             }
+            self.editor().set_busy(false);
             // Back for the input box, a question or the shell.
             screen_write("\x1b[?25h");
         }
@@ -598,7 +684,7 @@ impl Terminal {
     fn redraw(&mut self) {
         if let Some(view) = &self.view {
             screen_write("\x1b[2J");
-            self.editor.redraw_dock();
+            self.editor().redraw_dock();
             view.lock()
                 .unwrap_or_else(|poisoned| poisoned.into_inner())
                 .repaint();
@@ -623,7 +709,7 @@ impl Terminal {
             let (columns, rows) =
                 crossterm::terminal::size().map_or((80, 24), |(c, r)| (c as usize, r as usize));
             let view = Arc::new(Mutex::new(View::new(s, columns, rows.saturating_sub(4))));
-            self.editor.set_view(view.clone());
+            self.editor().set_view(view.clone());
             self.spinner.set_view(view.clone());
             self.view = Some(view);
             self.screen = true;
@@ -658,7 +744,7 @@ impl Terminal {
         self.line("");
         self.gap = true;
         if docked {
-            if self.editor.open_dock().is_ok() {
+            if self.editor().open_dock().is_ok() {
                 self.spinner.dock();
             } else {
                 self.screen = false;
@@ -676,36 +762,54 @@ impl Terminal {
                 _ => None,
             };
         }
+        // A prompt sent while the last task ran goes first; the box keeps what is typed in it.
+        let queued = self
+            .queue
+            .lock()
+            .unwrap_or_else(|p| p.into_inner())
+            .pop_front();
+        if let Some(Queued { text, files }) = queued {
+            let _ = self.editor().redraw_idle();
+            self.write_title();
+            return self.submitted(text, files);
+        }
         if !self.screen {
             self.blank();
         }
-        match self.editor.read("", INPUT_HINTS, true) {
+        let read = self.editor().read("", INPUT_HINTS, true);
+        match read {
             Ok(Input::Submit(text)) => {
-                let files = self.editor.take_files();
-                // A command is not part of the conversation: it is not echoed, its effect is shown.
-                if COMMANDS.iter().any(|(name, _)| *name == text) {
-                    if !files.is_empty() {
-                        self.info("The dropped files were not sent: a command takes no files.");
-                    }
-                    return Some(text);
-                }
-                self.echo(&text, &files);
-                match self.confirm_files(files) {
-                    Some(files) if text.is_empty() && files.is_empty() => Some(String::new()),
-                    Some(files) => {
-                        self.files = files;
-                        Some(text)
-                    }
-                    None => {
-                        self.info("Cancelled: nothing was sent.");
-                        Some(String::new())
-                    }
-                }
+                let files = self.editor().take_files();
+                self.submitted(text, files)
             }
             Ok(Input::Exit) => None,
             Err(err) => {
                 self.error(&format!("input: {err}"));
                 None
+            }
+        }
+    }
+
+    /// A prompt that is about to run (typed now or taken from the queue): echoed
+    /// with its files, flagged files confirmed. `Some("")` = nothing to run.
+    fn submitted(&mut self, text: String, files: Vec<Attachment>) -> Option<String> {
+        // A command is not part of the conversation: it is not echoed, its effect is shown.
+        if COMMANDS.iter().any(|(name, _)| *name == text) {
+            if !files.is_empty() {
+                self.info("The dropped files were not sent: a command takes no files.");
+            }
+            return Some(text);
+        }
+        self.echo(&text, &files);
+        match self.confirm_files(files) {
+            Some(files) if text.is_empty() && files.is_empty() => Some(String::new()),
+            Some(files) => {
+                self.files = files;
+                Some(text)
+            }
+            None => {
+                self.info("Cancelled: nothing was sent.");
+                Some(String::new())
             }
         }
     }
@@ -1081,8 +1185,21 @@ impl Terminal {
             ),
             row("Esc", "clear the box"),
             String::new(),
+            row(
+                "Drop files on the box",
+                "attach them; Backspace in an empty box drops the last",
+            ),
+            String::new(),
             heading("While a task runs"),
             row("Esc", "stop the task"),
+            row(
+                "Type, Enter",
+                "queue the next prompt (up to 5); queued prompts run in turn",
+            ),
+            row(
+                "Alt+1…5, Ctrl+1…5",
+                "drop a queued prompt (Ctrl+N where the terminal reports it)",
+            ),
             String::new(),
             heading("Anywhere"),
             row(
@@ -1170,7 +1287,8 @@ impl Terminal {
                 let Action::Shell { cmd, .. } = action else {
                     return Decision::No;
                 };
-                match self.editor.read(cmd, EDIT_HINTS, false) {
+                let read = self.editor().read(cmd, EDIT_HINTS, false);
+                match read {
                     Ok(Input::Submit(edited)) => Decision::Edit(edited),
                     _ => {
                         self.line(&denied);
@@ -1191,7 +1309,7 @@ impl Drop for Terminal {
         self.watch_stop();
         self.spinner.stop();
         if self.screen {
-            self.editor.close_dock();
+            self.editor().close_dock();
             if self.mouse {
                 screen_write("\x1b[?1006l\x1b[?1002l\x1b[?1000l");
             }
@@ -1410,7 +1528,17 @@ impl Ui for Terminal {
 
 #[cfg(test)]
 mod tests {
-    use super::{clean_output, outcome_failed};
+    use super::{Tab, clean_output, outcome_failed, tab_text};
+
+    #[test]
+    fn the_tab_counts_queued_prompts() {
+        let tab = Tab {
+            icon: "⏳",
+            title: "dsc · fix the build".into(),
+        };
+        assert_eq!(tab_text(&tab, 0), "⏳ dsc · fix the build");
+        assert_eq!(tab_text(&tab, 3), "⏳ +3 dsc · fix the build");
+    }
 
     #[test]
     fn failed_outcomes_are_recognized() {

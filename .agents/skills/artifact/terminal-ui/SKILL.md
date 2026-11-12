@@ -49,7 +49,10 @@ Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_i
 - Tab title: `open_chat` saves the terminal's title (`ESC[22;0t`), `write_title` writes `ESC]0;<icon> <title>BEL` and the same as `ESC]2;…BEL`,
   `drop` restores it (`ESC[23;0t`). `set_title` sets the text (`dsc`, or `dsc · <conversation>` from the first
   task on); `set_tab_state` sets the icon: `⏳` from `begin` to `finish` (`TabState::Working`), `❓` during an
-  approval question (`Asking`), `✻` otherwise (`Idle`), so the state is visible from another tab.
+  approval question (`Asking`), `✻` otherwise (`Idle`), so the state is visible from another tab. While prompts
+  wait in the queue, `+N` follows the icon (`⏳ +2 dsc · <conversation>`; nothing for an empty queue): `tab_text`,
+  written by `write_tab` from the shared `Tab` (icon and title of the last `write_title`), by `write_title` and by
+  the key watcher when a prompt is queued or dropped; `input` writes it again when it takes a queued prompt.
 - `Terminal::drop` → `close_dock` (scroll region reset), mouse reports off, back to the normal screen, then
   `View::transcript` is printed once so the conversation stays in the terminal.
 
@@ -105,11 +108,14 @@ after) and `drop` → `watch_stop`: thread joined, raw mode off.
 | Esc | `Interrupt::Stop`: the loop ends the task, a running command is killed |
 | Ctrl-C | first: "Press Ctrl-C again to exit" on the progress line (`Notifier::show`; a line of its own when no progress line is drawn); second within `AGAIN`: `Interrupt::Quit` |
 | Shift+Tab | switches the mode flag; the progress line shows it |
-| other keys | swallowed (no type-ahead) |
+| other keys, a paste, the mouse | chat screen: `Editor::busy_event` (the box takes them: typing, dropped files, Enter queues the prompt, Alt+N / Ctrl+N drops queued prompt N, the wheel and selection as in the box; a full queue shows `QUEUE_FULL` on the progress line). Inline (single task): swallowed, the mouse goes to the output |
+
+`watch_start` sets `Editor::set_busy(true)` and gives the thread the shared `Arc<Mutex<Editor>>` (chat screen only);
+`watch_stop` sets it back. The prompt queue itself is in `../input-box/SKILL.md` ("Prompt queue").
 
 The terminal cursor is hidden while the watcher runs (`ESC[?25l` in `watch_start`, `ESC[?25h` in `watch_stop`):
-the progress marks show where the work is, a blinking cursor next to them only distracts. It is back for the
-input box, an approval question, a window and at exit.
+the progress marks show where the work is, a blinking cursor next to them only distracts. The box draws a cursor
+of its own (inverse) meanwhile. The real one is back for the input box, an approval question, a window and at exit.
 
 ## Mode and hint lines
 
@@ -119,8 +125,8 @@ watcher and the agent loop (`Terminal::mode`). With a terminal it is shown as `S
 
 | Line | Content |
 |---|---|
-| under the box (`Editor::hint_line`) | left: model label (`Style::model_label`: `◆ DeepSeek` blue, `◆ Mock` cyan), `✦ Think` (`Style::think_label`: pink while deep thinking is on, gray while off; the flag `Terminal::think`, set by `set_think`), then the mode label with the key that switches it right after (`MODE_KEY`, `Shift + Tab`); right, ending at the box edge: `INPUT_HINTS` = `Ctrl + C twice quit` and `↑↓ history` only (every other key is in `/help`), or `EDIT_HINTS`, `MENU_HINTS` |
-| progress line (`Spinner`) | screen layout: the row under the box keeps its shape. Left, as when idle: model label, `✦ Think`, mode label, `Shift + Tab`. Right, ending at the box edge: spinner and a short word from `WORDS` (`busy_word`: a random start per piece of work, the next word every `WORD_SECS` = 6 s), then `Esc interrupt` or a 2 s notice in its place. The step and its seconds are not repeated here: they are in the output (the status line, the header of a running action). Inline it is the only progress line: spinner, the real label and clock, the hint, the labels |
+| under the box (`Editor::hint_line`) | left: the keys, as many as fit: `INPUT_HINTS` = `Ctrl + C twice quit` and `↑↓ history` only (every other key is in `/help`), or `EDIT_HINTS`, `MENU_HINTS`; right, ending at the box edge: model label (`Style::model_label`: `◆ DeepSeek` blue, `◆ Mock` cyan), `✦ Think` (`Style::think_label`: pink while deep thinking is on, gray while off; the flag `Terminal::think`, set by `set_think`), `◉ Browse` (`Style::browse_label`: pink while DeepSeek's web search is on, gray while off; the flag `Terminal::browse`, set by `set_browse`), then the mode label with the key that switches it right after (`MODE_KEY`, `Shift + Tab`) |
+| progress line (`Spinner`) | screen layout: the row under the box keeps its shape. Left, where the keys are when idle: spinner and a short word from `WORDS` (`busy_word`: a random start per piece of work, the next word every `WORD_SECS` = 6 s), then `Esc interrupt` or a 2 s notice in its place. Right, as when idle, ending at the box edge: model label, `✦ Think`, `◉ Browse`, mode label, `Shift + Tab`. The step and its seconds are not repeated here: they are in the output (the status line, the header of a running action). Inline it is the only progress line: spinner, the real label and clock, the hint, the labels |
 
 The model flag `Terminal::mock` (`Arc<AtomicBool>`, set by `Terminal::set_model` from `chat()` at the start and on
 `/model`) is shared with the box and the progress thread the same way as the mode.

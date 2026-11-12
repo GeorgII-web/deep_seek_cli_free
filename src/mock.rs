@@ -25,7 +25,8 @@ const RESULT_STARTS: [&str; 7] = [
 pub const TASKS: &str = "\
 `!<command>`      asks to run the command, then ends with the silent done block
 `run <command>`   asks to run it, then answers with a sentence
-`browse <url>`    reads the page on the model's side and answers (nothing runs here)
+`browse <url>`    with Browse on: reads the page on the model's side (nothing runs here);
+                  with Browse off: asks to fetch it with curl here, like `curl <url>`
 `curl <url>`      the local way: asks to fetch the page with curl here, then answers
 `read <path>`     asks to read the file; `write <path>` asks to write `mock` to it
 `think <text>`    reasoning first, then an answer
@@ -49,6 +50,8 @@ pub struct Mock {
     messages: u64,
     /// Deep thinking is on: every answer comes with some reasoning first
     thinking: bool,
+    /// Browse (DeepSeek's web search) is on: `browse <url>` is read on the model's side
+    search: bool,
     /// Pause before an answer starts
     wait: Duration,
     /// Pause between two pieces of an answer
@@ -89,6 +92,10 @@ impl Mock {
             delay: Duration::from_millis(speed.word_ms),
             ..Self::default()
         }
+    }
+
+    pub fn set_search(&mut self, on: bool) {
+        self.search = on;
     }
 
     pub fn set_thinking(&mut self, on: bool) {
@@ -138,13 +145,24 @@ impl Mock {
             self.after = Some("Mock: the command finished.".into());
             return Ok(say(format!("I will run it.\n\n{}", shell(cmd))));
         }
-        // "Open this site": by default the model reads it on its own side (DeepSeek's
-        // web search) and just answers; nothing runs on the user's machine.
+        // "Open this site": with Browse on the model reads it on its own side (DeepSeek's
+        // web search) and just answers; nothing runs on the user's machine. With Browse
+        // off it has no web of its own and fetches the page here, like `curl`.
         if task == "browse" || task.starts_with("browse ") {
             let url = match task["browse".len()..].trim() {
                 "" => "https://example.org",
                 url => url,
             };
+            if !self.search {
+                self.after = Some(format!(
+                    "Mock: Browse is off, so that is the page at {url} as fetched from your machine."
+                ));
+                let command = format!("curl -sSL --max-time 20 {} | head -n 40", shell_quote(url));
+                return Ok(say(format!(
+                    "Browse is off: I will fetch the page from your machine.\n\n{}",
+                    shell(&command)
+                )));
+            }
             return Ok(say(format!(
                 "Mock: I opened {url} with the browser on my side (nothing ran on your machine).\n\n# Example page\nThis is what the page says, as the model read it. See also https://example.org/more."
             )));
@@ -326,7 +344,8 @@ mod tests {
     #[tokio::test]
     async fn browse_answers_from_the_models_side_and_curl_fetches_here() {
         let mut mock = Mock::default();
-        // Browsing is the model's own business: a text answer, no action.
+        mock.set_search(true);
+        // With Browse on, browsing is the model's own business: a text answer, no action.
         let (answer, _) = ask(&mut mock, "Task: browse https://ya.ru").await;
         assert_eq!(protocol::parse(&answer), Parsed::Final);
         assert!(answer.contains("https://ya.ru") && answer.contains("on my side"));
@@ -345,6 +364,14 @@ mod tests {
                 .0
                 .contains("fetched from your machine")
         );
+        // With Browse off the model has no web: it fetches the page here.
+        mock.set_search(false);
+        let (answer, _) = ask(&mut mock, "Task: browse https://ya.ru").await;
+        assert!(answer.starts_with("Browse is off"));
+        let Parsed::Action { action, .. } = protocol::parse(&answer) else {
+            panic!("{answer}")
+        };
+        assert!(matches!(action, Action::Shell { cmd, .. } if cmd.starts_with("curl ")));
     }
 
     #[tokio::test]

@@ -105,8 +105,9 @@ pub struct Deepseek {
     /// `default` (fast) or `expert`
     pub model_type: String,
     pub thinking: bool,
-    /// DeepSeek's own web search and browser (the "Search" button of the site):
-    /// on, the model reads web pages on its side instead of through this machine
+    /// Browse: DeepSeek's own web search and browser (the "Search" button of the
+    /// site, `/browse`): on, the model reads web pages on its side instead of
+    /// through this machine. Never together with `thinking`
     pub search: bool,
     pub locale: String,
     pub timeout_secs: u64,

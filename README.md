@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.3.2 · DeepSeek web · default
+  ✻ dsc 0.4.4 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -167,7 +167,7 @@ key.
 | Ctrl-D | quit (empty box) |
 
 Pasting several lines works. `/new` starts a fresh conversation, `/sessions` lists the earlier ones and switches to the one you pick, `/model`
-chooses the real account or the mock, `/think` switches deep thinking, `/permissions` switches the mode, `/login` asks for a new token, `/help` lists the
+chooses the real account or the mock, `/think` switches deep thinking, `/browse` DeepSeek's web search, `/permissions` switches the mode, `/login` asks for a new token, `/help` lists the
 commands and keys, `/exit` quits. Flags
 work here too (`dsc --think`). What you allowed with `a` holds until you quit. Inputs are remembered in
 `~/.config/deep_seek_cli_free/history.json`. After a restart the chat begins a new conversation; `/sessions` goes back to an
@@ -177,6 +177,14 @@ In answers, `inline code` is colored, code blocks are shown with a bar on the le
 blue and real terminal links: the terminal underlines one under the mouse and opens it on click (Ctrl+click in
 Windows Terminal and most others). Colors switch off with
 `NO_COLOR=1` or when the output is not a terminal.
+
+### Queue
+
+While a task runs, the input box stays usable: write the next prompt (and drop files) and press Enter. It goes
+into a queue shown above the box, one row per prompt with its number, and runs when the tasks before it are done.
+Up to 5 prompts wait; with a full queue the text stays in the box. Alt+1…5 (or Ctrl+1…5 where the terminal reports
+it) drops that prompt. The tab title shows how many wait (`⏳ +2 dsc · …`). Esc stops only the running task, the queue goes on; Ctrl-C twice
+quits. While an approval question is shown, keys answer the question.
 
 ### Attach files
 
@@ -217,12 +225,18 @@ machine, `run <command>` runs it and then answers, `long` prints 80 lines, `slow
 scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back. Dropped files
 are "uploaded" and "read" without any network (`reject` or `unreadable` in a file name shows the failures).
 
-### Deep thinking
+### Deep thinking and Browse
 
-`/think` switches deep thinking on and off. The bottom line shows it: `✦ Think` is pink while it is on and gray
-while it is off. With it on, the model reasons before it answers and the reasoning is shown dimmed above the
-answer; answers take longer. DeepSeek's web search is switched off while thinking is on and comes back when you
-turn thinking off. The choice is saved (`deepseek.thinking`) and used on the next start.
+`/think` switches deep thinking on and off. With it on, the model reasons before it answers and the reasoning is
+shown dimmed above the answer; answers take longer.
+
+`/browse` switches Browse on and off: DeepSeek's own web search and browser (the Search button of the site). With
+it on, the model reads web pages on its side; with it off, a task that needs a page fetches it from your machine
+(you approve the `curl`).
+
+DeepSeek does not do both at once: turning one on turns the other off. Both can be off. The bottom line shows
+them: `✦ Think` and `◉ Browse` are pink while on and gray while off. The choice is saved (`deepseek.thinking`,
+`deepseek.search`) and used on the next start.
 
 ### Sessions
 
@@ -318,7 +332,7 @@ comments in it are not kept.
 api = "deepseek"            # or "mock": the fake model inside dsc; `/model` switches and saves it
 model_type = "default"      # or "expert"
 thinking = false
-search = true               # DeepSeek's own web search and browser; off: pages are fetched from this machine
+search = true               # Browse (/browse): DeepSeek's web search; off: pages are fetched from this machine
 locale = "en"
 timeout_secs = 180
 
@@ -376,7 +390,8 @@ cli → agent loop → Backend trait → DeepSeek web client (HTTP, proof of wor
 - **Web pages**: DeepSeek's own web search (the Search button of the site) is on by default. For "open this
   site" or "look this up" the model reads the page on its side and answers; nothing is fetched from your
   machine. It uses `curl` here only when you ask for that ("fetch it locally", "with curl") or when the address
-  is only reachable from your machine (localhost). `--no-search` or `search = false` turns the search off.
+  is only reachable from your machine (localhost). `/browse`, `--no-search` or `search = false` turns the
+  search off.
 - **No repeated output**: you see the output of every command. When that output already is the answer (a file
   listing, a file's content), the model is told to send a silent "done" block instead of printing it again; a
   long output is then shown in full instead of the first 8 lines.

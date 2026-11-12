@@ -100,6 +100,10 @@ impl Style {
     pub fn menu_selected_bg(&self) -> &'static str {
         self.code("\x1b[48;5;24m")
     }
+    /// Background of the rows of the prompt queue above the box
+    pub fn queue_bg(&self) -> &'static str {
+        self.code("\x1b[48;5;23m")
+    }
     /// Background of the user's prompt in the output
     pub fn prompt_bg(&self) -> &'static str {
         self.code("\x1b[48;5;237m")
@@ -127,6 +131,16 @@ impl Style {
         }
     }
     /// `✦ Think`: pink while deep thinking is on, gray while it is off.
+    /// `◉ Browse`: DeepSeek's web search, pink while on, gray while off (like Think).
+    pub fn browse_label(&self, on: bool) -> String {
+        let color = if on {
+            self.code("\x1b[38;5;212m")
+        } else {
+            self.faint()
+        };
+        format!("{color}◉ Browse{}", self.reset())
+    }
+
     pub fn think_label(&self, on: bool) -> String {
         let color = if on {
             self.code("\x1b[38;5;212m")
