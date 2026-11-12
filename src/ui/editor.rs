@@ -10,8 +10,7 @@ use crate::attach::{self, Attachment, MAX_FILES};
 use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
-    KeyboardEnhancementFlags, MouseButton, MouseEvent, MouseEventKind, PopKeyboardEnhancementFlags,
-    PushKeyboardEnhancementFlags,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{execute, queue};
@@ -582,49 +581,47 @@ impl Editor {
     fn hint_line(&self, hints: &[(&str, &str)], max: usize) -> String {
         let s = self.style;
         let dot = format!("{} · {}", s.faint(), s.reset());
-        // The model first, then the mode with its key right after it: the key belongs to the mode.
-        let (mut left, mut left_columns) = (String::new(), 0);
+        // Right: the model, deep thinking, then the mode with its key right after it
+        // (the key belongs to the mode). Left: the other keys, as many as fit.
+        let (mut right, mut right_columns) = (String::new(), 0);
+        let mut add_right = |text: String, columns: usize| {
+            if !right.is_empty() {
+                right.push_str(&dot);
+                right_columns += 3;
+            }
+            right.push_str(&text);
+            right_columns += columns;
+        };
         if let Some(model) = &self.model {
             let mock = model.load(Ordering::Relaxed);
-            left.push_str(&s.model_label(mock));
-            left_columns += if mock { 6 } else { 10 };
+            add_right(s.model_label(mock), if mock { 6 } else { 10 });
         }
         if let Some(think) = &self.think {
-            if !left.is_empty() {
-                left.push_str(&dot);
-                left_columns += 3;
-            }
-            left.push_str(&s.think_label(think.load(Ordering::Relaxed)));
-            left_columns += 7;
+            add_right(s.think_label(think.load(Ordering::Relaxed)), 7);
         }
         if let Some(mode) = &self.mode {
             let allow_all = mode.load(Ordering::Relaxed);
-            if !left.is_empty() {
-                left.push_str(&dot);
-                left_columns += 3;
+            add_right(s.mode_label(allow_all), if allow_all { 12 } else { 5 });
+            if hints.iter().any(|(key, _)| *key == MODE_KEY) {
+                add_right(s.hint(MODE_KEY, ""), MODE_KEY.chars().count());
             }
-            left.push_str(&s.mode_label(allow_all));
-            left_columns += if allow_all { 12 } else { 5 };
         }
-        let (mut right, mut right_columns) = (String::new(), 0);
+        let (mut left, mut left_columns) = (String::new(), 0);
         for (key, what) in hints {
+            if *key == MODE_KEY && self.mode.is_some() {
+                continue;
+            }
             let item = key.chars().count() + what.chars().count() + usize::from(!what.is_empty());
-            let on_left = *key == MODE_KEY && self.mode.is_some();
-            let other = if on_left { right_columns } else { left_columns };
-            let (side, used) = match on_left {
-                true => (&mut left, &mut left_columns),
-                false => (&mut right, &mut right_columns),
-            };
-            let separator = if side.is_empty() { 0 } else { 3 };
+            let separator = if left.is_empty() { 0 } else { 3 };
             // Two columns stay between the sides.
-            if *used + separator + item + other + 2 > max {
+            if left_columns + separator + item + right_columns + 2 > max {
                 break;
             }
             if separator > 0 {
-                side.push_str(&dot);
+                left.push_str(&dot);
             }
-            side.push_str(&s.hint(key, what));
-            *used += separator + item;
+            left.push_str(&s.hint(key, what));
+            left_columns += separator + item;
         }
         let gap = max.saturating_sub(left_columns + right_columns);
         format!("{left}{}{right}", " ".repeat(gap))
@@ -991,7 +988,7 @@ impl Editor {
     }
 
     /// One event for the box: keys edit it, a paste adds text or dropped files,
-    /// the mouse scrolls or selects the output, or drops a queued prompt (its ✕).
+    /// the mouse scrolls or selects the output.
     fn handle(
         &mut self,
         typing: &mut Typing,
@@ -1013,10 +1010,6 @@ impl Editor {
                 return Step::Continue;
             }
             Event::Mouse(mouse) => {
-                if remember && let Some(index) = self.queue_click(mouse) {
-                    self.drop_queued(index);
-                    return Step::Continue;
-                }
                 // The wheel scrolls the output; the box is drawn again by the caller.
                 if let Some(view) = &self.view
                     && let Some(paste) = super::mouse_event(view, mouse)
@@ -1176,25 +1169,10 @@ impl Editor {
         }
     }
 
-    /// The queued prompt whose ✕ a left click hit (docked box only).
-    fn queue_click(&self, mouse: MouseEvent) -> Option<usize> {
-        if !matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left)) {
-            return None;
-        }
-        let dock = self.dock.as_ref()?;
-        let count = self.queue_items().len();
-        // The prompts start below the empty row and the title.
-        let top = dock.height as usize - dock.area + 1 + QUEUE_HEAD_ROWS;
-        let row = mouse.row as usize + 1;
-        let total = Self::inner_width() + FRAME_COLS;
-        // The ✕ sits in the last columns of the row.
-        (row >= top && row < top + count && mouse.column as usize + 5 >= total).then(|| row - top)
-    }
-
     /// The queue above the box: an empty row that keeps it apart from the output,
     /// the title `Queued prompts:` with the keys that drop one, then one row per
-    /// prompt: its number, the first line of its text, the files it carries and the
-    /// ✕ that drops it, on a bar of its own color. Nothing when the queue is empty.
+    /// prompt: its number, the first line of its text and the files it carries, on a
+    /// bar of its own color. Nothing when the queue is empty.
     fn queue_lines(&self, total: usize) -> Vec<String> {
         let s = self.style;
         let columns = |text: &str| text.chars().map(width_of).sum::<usize>();
@@ -1203,12 +1181,8 @@ impl Editor {
             return Vec::new();
         }
         let title = " Queued prompts:";
-        let keys = format!(
-            "{} · {} ",
-            s.hint("Alt + 1…5", "drops one"),
-            s.hint("click ✕", "")
-        );
-        let keys_columns = columns("Alt + 1…5 drops one · click ✕ ");
+        let keys = format!("{} ", s.hint("Alt + 1…5", "drops one"));
+        let keys_columns = columns("Alt + 1…5 drops one ");
         let gap = total.saturating_sub(columns(title) + keys_columns);
         let title_row = match gap {
             0 => format!("{}{}{title}{}", s.bold(), s.accent(), s.reset()),
@@ -1221,42 +1195,37 @@ impl Editor {
             ),
         };
         let mut lines = vec![String::new(), title_row];
-        lines.extend(items
-            .iter()
-            .enumerate()
-            .map(|(i, item)| {
-                let number = format!(" {} ", i + 1);
-                let files = match item.files.len() {
-                    0 => String::new(),
-                    n => format!("  📎 {n}"),
-                };
-                let close = " ✕ ";
-                let room = total.saturating_sub(columns(&number) + 1 + columns(&files) + columns(close) + 1);
-                let flat = item.text.replace('\n', " ⏎ ");
-                let mut text = String::new();
-                let mut used = 0;
-                for c in flat.chars() {
-                    if used + width_of(c) > room {
-                        text.pop();
-                        text.push('…');
-                        break;
-                    }
-                    used += width_of(c);
-                    text.push(c);
+        lines.extend(items.iter().enumerate().map(|(i, item)| {
+            let number = format!(" {} ", i + 1);
+            let files = match item.files.len() {
+                0 => String::new(),
+                n => format!("  📎 {n}"),
+            };
+            let room = total.saturating_sub(columns(&number) + 1 + columns(&files) + 1);
+            let flat = item.text.replace('\n', " ⏎ ");
+            let mut text = String::new();
+            let mut used = 0;
+            for c in flat.chars() {
+                if used + width_of(c) > room {
+                    text.pop();
+                    text.push('…');
+                    break;
                 }
-                let used = columns(&text);
-                format!(
-                    "{bg}{accent}{bold}{number}{reset}{bg}{key} {text}{pad}{faint}{files}{key}{close} {reset}",
-                    bg = s.queue_bg(),
-                    accent = s.accent(),
-                    bold = s.bold(),
-                    key = s.key(),
-                    faint = s.faint(),
-                    reset = s.reset(),
-                    pad = " ".repeat(room.saturating_sub(used)),
-                )
-            }),
-        );
+                used += width_of(c);
+                text.push(c);
+            }
+            let used = columns(&text);
+            format!(
+                "{bg}{accent}{bold}{number}{reset}{bg}{key} {text}{pad}{faint}{files} {reset}",
+                bg = s.queue_bg(),
+                accent = s.accent(),
+                bold = s.bold(),
+                key = s.key(),
+                faint = s.faint(),
+                reset = s.reset(),
+                pad = " ".repeat(room.saturating_sub(used)),
+            )
+        }));
         lines
     }
 
@@ -1434,14 +1403,14 @@ mod tests {
         // An empty row apart from the output, the title with the keys, then the prompts.
         assert_eq!(rows[0], "");
         assert!(rows[1].starts_with(" Queued prompts: "));
-        assert!(rows[1].ends_with("Alt + 1…5 drops one · click ✕ "));
+        assert!(rows[1].ends_with("Alt + 1…5 drops one "));
         assert_eq!(columns(&rows[1]), 50);
         // Too narrow for the keys: the title alone.
-        assert_eq!(editor.queue_lines(40)[1], " Queued prompts:");
+        assert_eq!(editor.queue_lines(30)[1], " Queued prompts:");
         assert!(rows[2].starts_with(" 1  short "));
-        assert!(rows[2].ends_with(" ✕  "));
+        assert!(rows[2].ends_with("  "));
         assert!(rows[3].starts_with(" 2  a very long prompt ⏎ with"));
-        assert!(rows[3].contains("…  📎 1 ✕"));
+        assert!(rows[3].ends_with("…  📎 1 "));
         assert_eq!(columns(&rows[2]), columns(&rows[3]));
         assert!(
             Editor::new(Style::new(false), None)

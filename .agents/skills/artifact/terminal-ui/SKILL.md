@@ -105,7 +105,7 @@ after) and `drop` → `watch_stop`: thread joined, raw mode off.
 | Esc | `Interrupt::Stop`: the loop ends the task, a running command is killed |
 | Ctrl-C | first: "Press Ctrl-C again to exit" on the progress line (`Notifier::show`; a line of its own when no progress line is drawn); second within `AGAIN`: `Interrupt::Quit` |
 | Shift+Tab | switches the mode flag; the progress line shows it |
-| other keys, a paste, the mouse | chat screen: `Editor::busy_event` (the box takes them: typing, dropped files, Enter queues the prompt, Alt+N / Ctrl+N / a click on ✕ drops queued prompt N, the wheel and selection as in the box; a full queue shows `QUEUE_FULL` on the progress line). Inline (single task): swallowed, the mouse goes to the output |
+| other keys, a paste, the mouse | chat screen: `Editor::busy_event` (the box takes them: typing, dropped files, Enter queues the prompt, Alt+N / Ctrl+N drops queued prompt N, the wheel and selection as in the box; a full queue shows `QUEUE_FULL` on the progress line). Inline (single task): swallowed, the mouse goes to the output |
 
 `watch_start` sets `Editor::set_busy(true)` and gives the thread the shared `Arc<Mutex<Editor>>` (chat screen only);
 `watch_stop` sets it back. The prompt queue itself is in `../input-box/SKILL.md` ("Prompt queue").
@@ -122,8 +122,8 @@ watcher and the agent loop (`Terminal::mode`). With a terminal it is shown as `S
 
 | Line | Content |
 |---|---|
-| under the box (`Editor::hint_line`) | left: model label (`Style::model_label`: `◆ DeepSeek` blue, `◆ Mock` cyan), `✦ Think` (`Style::think_label`: pink while deep thinking is on, gray while off; the flag `Terminal::think`, set by `set_think`), then the mode label with the key that switches it right after (`MODE_KEY`, `Shift + Tab`); right, ending at the box edge: `INPUT_HINTS` = `Ctrl + C twice quit` and `↑↓ history` only (every other key is in `/help`), or `EDIT_HINTS`, `MENU_HINTS` |
-| progress line (`Spinner`) | screen layout: the row under the box keeps its shape. Left, as when idle: model label, `✦ Think`, mode label, `Shift + Tab`. Right, ending at the box edge: spinner and a short word from `WORDS` (`busy_word`: a random start per piece of work, the next word every `WORD_SECS` = 6 s), then `Esc interrupt` or a 2 s notice in its place. The step and its seconds are not repeated here: they are in the output (the status line, the header of a running action). Inline it is the only progress line: spinner, the real label and clock, the hint, the labels |
+| under the box (`Editor::hint_line`) | left: the keys, as many as fit: `INPUT_HINTS` = `Ctrl + C twice quit` and `↑↓ history` only (every other key is in `/help`), or `EDIT_HINTS`, `MENU_HINTS`; right, ending at the box edge: model label (`Style::model_label`: `◆ DeepSeek` blue, `◆ Mock` cyan), `✦ Think` (`Style::think_label`: pink while deep thinking is on, gray while off; the flag `Terminal::think`, set by `set_think`), then the mode label with the key that switches it right after (`MODE_KEY`, `Shift + Tab`) |
+| progress line (`Spinner`) | screen layout: the row under the box keeps its shape. Left, where the keys are when idle: spinner and a short word from `WORDS` (`busy_word`: a random start per piece of work, the next word every `WORD_SECS` = 6 s), then `Esc interrupt` or a 2 s notice in its place. Right, as when idle, ending at the box edge: model label, `✦ Think`, mode label, `Shift + Tab`. The step and its seconds are not repeated here: they are in the output (the status line, the header of a running action). Inline it is the only progress line: spinner, the real label and clock, the hint, the labels |
 
 The model flag `Terminal::mock` (`Arc<AtomicBool>`, set by `Terminal::set_model` from `chat()` at the start and on
 `/model`) is shared with the box and the progress thread the same way as the mode.

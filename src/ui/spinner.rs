@@ -239,9 +239,10 @@ impl Spinner {
                 let frame_text = FRAMES[state.frame];
                 if docked {
                     // The row under the box keeps its shape while work goes on: model and
-                    // mode stay at the left, where they are when the box is idle; the icon
+                    // mode stay at the right, where they are when the box is idle; the icon
                     // with a word that changes now and then, and the key to interrupt, are
-                    // at the right edge. The step and its seconds are in the output itself.
+                    // at the left, where the keys are when the box is idle. The step and
+                    // its seconds are in the output itself.
                     let word = busy_word(state.seed, secs);
                     let progress_columns = 1 + 1 + word.chars().count() + 1 + after_columns;
                     let columns =
@@ -250,7 +251,7 @@ impl Spinner {
                     let gap =
                         " ".repeat(room.saturating_sub(label_columns + progress_columns).max(2));
                     let line = format!(
-                        "{labels}{gap}{}{frame_text} {word}…{}{after}",
+                        "{}{frame_text} {word}…{}{after}{gap}{labels}",
                         style.accent(),
                         style.reset()
                     );

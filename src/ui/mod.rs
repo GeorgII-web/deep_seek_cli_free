@@ -465,7 +465,7 @@ impl Terminal {
                     Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => key,
                     Ok(TermEvent::Mouse(mouse)) => {
                         if editor.is_some() {
-                            // The box: a ✕ of the queue, a right-click paste, or on to the output.
+                            // The box: a right-click paste, or on to the output.
                             to_box(TermEvent::Mouse(mouse));
                         } else if let Some(view) = &view {
                             // Inline there is no box to paste into.
@@ -1146,7 +1146,7 @@ impl Terminal {
                 "queue the next prompt (up to 5); queued prompts run in turn",
             ),
             row(
-                "Alt+1…5, Ctrl+1…5, click ✕",
+                "Alt+1…5, Ctrl+1…5",
                 "drop a queued prompt (Ctrl+N where the terminal reports it)",
             ),
             String::new(),
