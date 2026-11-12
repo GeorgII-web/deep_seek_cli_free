@@ -115,9 +115,10 @@ const COMMANDS: &[editor::Command] = &[
         "/model",
         "choose the real DeepSeek account or the built-in mock",
     ),
+    ("/think", "deep thinking on or off (turns Browse off)"),
     (
-        "/think",
-        "deep thinking on or off (web search is off while it is on)",
+        "/browse",
+        "DeepSeek's web search and page reading on or off (turns Think off)",
     ),
     ("/sessions", "list earlier conversations and switch to one"),
     ("/login", "enter a new DeepSeek token"),
@@ -316,6 +317,8 @@ pub struct Terminal {
     mock: Arc<AtomicBool>,
     /// Deep thinking is on. Shown under the box and on the progress line.
     think: Arc<AtomicBool>,
+    /// Browse (DeepSeek's web search) is on: shown next to Think
+    browse: Arc<AtomicBool>,
     /// The approval mode: true = allow all (run without asking), false = ask.
     /// Shared with the box, the progress line, the key watcher and the agent loop.
     allow_all: Arc<AtomicBool>,
@@ -330,6 +333,7 @@ impl Terminal {
         let allow_all = Arc::new(AtomicBool::new(allow_all));
         let mock = Arc::new(AtomicBool::new(false));
         let think = Arc::new(AtomicBool::new(false));
+        let browse = Arc::new(AtomicBool::new(false));
         let mut spinner = Spinner::new(std::io::stderr().is_terminal(), style);
         let mut editor = Editor::new(style, history_file);
         if interactive {
@@ -340,6 +344,8 @@ impl Terminal {
             editor.set_model(mock.clone());
             spinner.set_think(think.clone());
             editor.set_think(think.clone());
+            spinner.set_browse(browse.clone());
+            editor.set_browse(browse.clone());
             editor.set_commands(COMMANDS);
         }
         Self {
@@ -372,6 +378,7 @@ impl Terminal {
             live_lines: 0,
             mock,
             think,
+            browse,
             allow_all,
         }
     }
@@ -384,6 +391,10 @@ impl Terminal {
     }
 
     /// Tells the UI whether deep thinking is on, for the lines at the bottom.
+    pub fn set_browse(&mut self, on: bool) {
+        self.browse.store(on, Ordering::Relaxed);
+    }
+
     pub fn set_think(&mut self, on: bool) {
         self.think.store(on, Ordering::Relaxed);
     }

@@ -85,6 +85,8 @@ pub struct Spinner {
     model: Option<Arc<AtomicBool>>,
     /// Deep thinking on or off, shown after the model
     think: Option<Arc<AtomicBool>>,
+    /// Browse (DeepSeek's web search) on or off: shown after Think
+    browse: Option<Arc<AtomicBool>>,
     /// Screen layout: the output, whose running block gets the same spinner frame
     view: Option<Arc<Mutex<View>>>,
     style: Style,
@@ -113,6 +115,7 @@ impl Spinner {
             mode: None,
             model: None,
             think: None,
+            browse: None,
             view: None,
             style,
             started: false,
@@ -144,6 +147,10 @@ impl Spinner {
     }
 
     /// Call before the first `start`.
+    pub fn set_browse(&mut self, browse: Arc<AtomicBool>) {
+        self.browse = Some(browse);
+    }
+
     pub fn set_think(&mut self, think: Arc<AtomicBool>) {
         self.think = Some(think);
     }
@@ -181,6 +188,7 @@ impl Spinner {
         let mode = self.mode.clone();
         let model = self.model.clone();
         let think = self.think.clone();
+        let browse = self.browse.clone();
         let view = self.view.clone();
         // A plain thread: it must tick also while the async runtime is busy.
         std::thread::spawn(move || {
@@ -221,6 +229,14 @@ impl Spinner {
                     }
                     labels.push_str(&style.think_label(think.load(Ordering::Relaxed)));
                     label_columns += 7;
+                }
+                if let Some(browse) = &browse {
+                    if !labels.is_empty() {
+                        labels.push_str(&dot);
+                        label_columns += 3;
+                    }
+                    labels.push_str(&style.browse_label(browse.load(Ordering::Relaxed)));
+                    label_columns += 8;
                 }
                 if let Some(mode) = &mode {
                     let allow_all = mode.load(Ordering::Relaxed);

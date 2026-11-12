@@ -328,6 +328,8 @@ pub struct Editor {
     model: Option<Arc<AtomicBool>>,
     /// Deep thinking on or off: shown after the model
     think: Option<Arc<AtomicBool>>,
+    /// Browse (DeepSeek's web search) on or off: shown after Think
+    browse: Option<Arc<AtomicBool>>,
     /// Slash commands offered in a menu while the input is the start of one: name, meaning
     commands: &'static [Command],
     /// Docked: the scrollable output above the dock; the box tells it the size of
@@ -417,6 +419,7 @@ impl Editor {
             mode: None,
             model: None,
             think: None,
+            browse: None,
             commands: &[],
             view: None,
             files: Vec::new(),
@@ -511,6 +514,10 @@ impl Editor {
         self.view = Some(view);
     }
 
+    pub fn set_browse(&mut self, browse: Arc<AtomicBool>) {
+        self.browse = Some(browse);
+    }
+
     pub fn set_think(&mut self, think: Arc<AtomicBool>) {
         self.think = Some(think);
     }
@@ -598,6 +605,9 @@ impl Editor {
         }
         if let Some(think) = &self.think {
             add_right(s.think_label(think.load(Ordering::Relaxed)), 7);
+        }
+        if let Some(browse) = &self.browse {
+            add_right(s.browse_label(browse.load(Ordering::Relaxed)), 8);
         }
         if let Some(mode) = &self.mode {
             let allow_all = mode.load(Ordering::Relaxed);

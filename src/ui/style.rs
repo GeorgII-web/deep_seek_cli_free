@@ -131,6 +131,16 @@ impl Style {
         }
     }
     /// `✦ Think`: pink while deep thinking is on, gray while it is off.
+    /// `◉ Browse`: DeepSeek's web search, pink while on, gray while off (like Think).
+    pub fn browse_label(&self, on: bool) -> String {
+        let color = if on {
+            self.code("\x1b[38;5;212m")
+        } else {
+            self.faint()
+        };
+        format!("{color}◉ Browse{}", self.reset())
+    }
+
     pub fn think_label(&self, on: bool) -> String {
         let color = if on {
             self.code("\x1b[38;5;212m")

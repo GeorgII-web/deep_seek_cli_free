@@ -27,7 +27,10 @@ impl Model {
     pub fn set_thinking(&mut self, thinking: bool, search: bool) {
         match self {
             Self::Deepseek(conversation) => conversation.set_thinking(thinking, search),
-            Self::Mock(mock) => mock.set_thinking(thinking),
+            Self::Mock(mock) => {
+                mock.set_thinking(thinking);
+                mock.set_search(search);
+            }
         }
     }
 

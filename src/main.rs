@@ -55,8 +55,14 @@ async fn main() -> Result<()> {
             // Deep thinking and DeepSeek's web search do not go together: thinking wins.
             let thinking = cli.run.think || settings.deepseek.thinking;
             let web = web_search(&settings, &cli.run) && !thinking;
-            let mut conversation =
-                new_model(&paths, &settings, &cli.run, settings.deepseek.api, thinking)?;
+            let mut conversation = new_model(
+                &paths,
+                &settings,
+                &cli.run,
+                settings.deepseek.api,
+                thinking,
+                web,
+            )?;
             let task = cli.run.task.join(" ");
             // With `--session` the task continues that conversation, which has the rules already.
             let prompt = match &cli.run.session {
@@ -75,6 +81,7 @@ async fn main() -> Result<()> {
                 ui::Terminal::new(None, cli.run.yes || settings.policy.mode == Mode::AllowAll);
             terminal.set_model(settings.deepseek.api == Api::Mock);
             terminal.set_think(thinking);
+            terminal.set_browse(web);
             let mode = terminal.mode();
             let mut saver = ModeSaver::new(&paths, &settings, mode.clone());
             let mut interrupts = terminal.interrupts();
@@ -137,12 +144,13 @@ impl<'a> ModeSaver<'a> {
         }
     }
 
-    /// Saves whether deep thinking is on (`/think`).
-    fn save_thinking(&mut self, on: bool) {
+    /// Saves deep thinking and Browse (`/think`, `/browse`): one turns the other off.
+    fn save_modes(&mut self, thinking: bool, browse: bool) {
         self.sync();
-        self.settings.deepseek.thinking = on;
+        self.settings.deepseek.thinking = thinking;
+        self.settings.deepseek.search = browse;
         if let Err(err) = self.settings.save(self.paths) {
-            eprintln!("dsc: the thinking choice was not saved: {err:#}");
+            eprintln!("dsc: the think and browse choice was not saved: {err:#}");
         }
     }
 
@@ -175,11 +183,13 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         Api::Deepseek => ensure_login(paths, settings, &mut terminal).await?,
         Api::Mock => None,
     };
-    // Deep thinking (`/think`, `--think`, the config); DeepSeek's web search is off while it is on.
+    // Deep thinking (`/think`, `--think`, the config) and Browse, DeepSeek's web search
+    // (`/browse`, `--search`, the config): never both, thinking wins at the start.
     let mut thinking = run.think || settings.deepseek.thinking;
-    let web_base = web_search(settings, run);
+    let mut browse = web_search(settings, run) && !thinking;
     terminal.set_think(thinking);
-    let mut conversation = new_model(paths, settings, run, api, thinking)?;
+    terminal.set_browse(browse);
+    let mut conversation = new_model(paths, settings, run, api, thinking, browse)?;
     let mode = terminal.mode();
     let mut saver = ModeSaver::new(paths, settings, mode.clone());
     let mut interrupts = terminal.interrupts();
@@ -267,14 +277,31 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             }
             "/think" => {
                 thinking = !thinking;
-                conversation.set_thinking(thinking, web_base && !thinking);
+                let was_browsing = browse;
+                browse = browse && !thinking;
+                conversation.set_thinking(thinking, browse);
                 terminal.set_think(thinking);
-                saver.save_thinking(thinking);
-                terminal.info(match (thinking, web_base) {
-                    (true, true) => "Deep thinking on: the model reasons before it answers. Web search is off while it is on.",
+                terminal.set_browse(browse);
+                saver.save_modes(thinking, browse);
+                terminal.info(match (thinking, was_browsing) {
+                    (true, true) => "Deep thinking on: the model reasons before it answers. Browse is off: the two do not work together.",
                     (true, false) => "Deep thinking on: the model reasons before it answers.",
-                    (false, true) => "Deep thinking off. Web search is on again.",
-                    (false, false) => "Deep thinking off.",
+                    (false, _) => "Deep thinking off. `/browse` turns DeepSeek's web search on.",
+                });
+                continue;
+            }
+            "/browse" => {
+                browse = !browse;
+                let was_thinking = thinking;
+                thinking = thinking && !browse;
+                conversation.set_thinking(thinking, browse);
+                terminal.set_think(thinking);
+                terminal.set_browse(browse);
+                saver.save_modes(thinking, browse);
+                terminal.info(match (browse, was_thinking) {
+                    (true, true) => "Browse on: DeepSeek searches the web and reads pages on its side. Deep thinking is off: the two do not work together.",
+                    (true, false) => "Browse on: DeepSeek searches the web and reads pages on its side.",
+                    (false, _) => "Browse off: web pages are fetched from this machine when a task needs them.",
                 });
                 continue;
             }
@@ -313,7 +340,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 };
                 api = chosen;
                 terminal.set_model(api == Api::Mock);
-                conversation = new_model(paths, settings, run, api, thinking)?;
+                conversation = new_model(paths, settings, run, api, thinking, browse)?;
                 first = true;
                 current = None;
                 terminal.show_output("");
@@ -351,7 +378,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                     .and_then(|index| listed.get(index).cloned())
                 {
                     // The messages live at DeepSeek: the next task continues below the last answer.
-                    conversation = new_model(paths, settings, run, api, thinking)?;
+                    conversation = new_model(paths, settings, run, api, thinking, browse)?;
                     conversation.resume(chosen.id.clone(), chosen.parent_message_id);
                     first = false;
                     // The screen as it was when that conversation was left.
@@ -376,7 +403,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 continue;
             }
             "/new" => {
-                conversation = new_model(paths, settings, run, api, thinking)?;
+                conversation = new_model(paths, settings, run, api, thinking, browse)?;
                 first = true;
                 current = None;
                 // A new conversation starts on a clean screen; the old one is saved with its session.
@@ -391,8 +418,8 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 terminal.error(&format!("unknown command `{command}`; see `/help`"));
                 continue;
             }
-            task if first => protocol::first_prompt(task, &cwd(), web_base && !thinking),
-            task => protocol::next_prompt(task, web_base && !thinking),
+            task if first => protocol::first_prompt(task, &cwd(), browse),
+            task => protocol::next_prompt(task, browse),
         };
         let names: Vec<&str> = files.iter().map(|file| file.name.as_str()).collect();
         let prompt = protocol::with_files(prompt, &names);
@@ -540,17 +567,18 @@ fn web_search(settings: &Settings, run: &cli::RunArgs) -> bool {
     (settings.deepseek.search || run.search) && !run.no_search
 }
 
-/// The model for a new conversation, with deep thinking as it stands now.
-/// DeepSeek's web search is off while thinking is on.
+/// The model for a new conversation, with deep thinking and Browse (DeepSeek's
+/// web search) as they stand now; the caller keeps them from being on together.
 fn new_model(
     paths: &Paths,
     settings: &Settings,
     run: &cli::RunArgs,
     api: Api,
     thinking: bool,
+    browse: bool,
 ) -> Result<Model> {
     let mut model = model(paths, settings, run, api)?;
-    model.set_thinking(thinking, web_search(settings, run) && !thinking);
+    model.set_thinking(thinking, browse);
     Ok(model)
 }
 

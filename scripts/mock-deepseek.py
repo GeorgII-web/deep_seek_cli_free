@@ -26,7 +26,8 @@ A token that starts with "dead" gets the "invalid token" answer on every call.
 What the model "answers" depends on the task (the text after "Task: " in the prompt):
   !<command>        asks to run the shell command; after its result sends the done block
   run <command>     asks to run it; after the result answers with a sentence
-  browse <url>      reads the page on the model's side and answers (nothing runs locally)
+  browse <url>      with search_enabled (Browse): reads the page on the model's side and answers
+                    (nothing runs locally); without it: asks to fetch the page with curl, like `curl`
   curl <url>        the local way: asks to fetch the page with curl, then answers
   read <path>       asks to read the file          write <path>   asks to write "mock\\n" to it
   think <text>      reasoning first, then an answer
@@ -113,8 +114,9 @@ def block(action):
     return f'{FENCE}dsc\n{json.dumps(action)}\n{FENCE}'
 
 
-def plan(prompt, session):
-    """Returns (thinking, answer, seconds between chunks) for a prompt."""
+def plan(prompt, session, search=True):
+    """Returns (thinking, answer, seconds between chunks) for a prompt. `search` = the
+    request's search_enabled (Browse): without it `browse` fetches the page locally."""
     if prompt.startswith(RESULT_STARTS):
         after = session.pop('after', 'Mock: finished.')
         return '', after, DELAY
@@ -130,6 +132,12 @@ def plan(prompt, session):
     if task.startswith('run '):
         session['after'] = 'Mock: the command finished.'
         return '', 'I will run it.\n\n' + block({'tool': 'shell', 'cmd': task[4:], 'why': 'mock: run then tell'}), DELAY
+    if (task == 'browse' or task.startswith('browse ')) and not search:
+        url = task[len('browse'):].strip() or 'https://example.org'
+        session['after'] = f'Mock: Browse is off, so that is the page at {url} as fetched from your machine.'
+        quoted = "'" + url.replace("'", "'\\''") + "'"
+        command = f'curl -sSL --max-time 20 {quoted} | head -n 40'
+        return '', 'Browse is off: I will fetch the page from your machine.\n\n' + block({'tool': 'shell', 'cmd': command, 'why': 'mock: no web search'}), DELAY
     if task == 'browse' or task.startswith('browse '):
         url = task[len('browse'):].strip() or 'https://example.org'
         return '', (f'Mock: I opened {url} with the browser on my side (nothing ran on your machine).\n\n'
@@ -276,7 +284,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json({'code': 40003, 'msg': 'INVALID_TOKEN', 'data': None})
         if task == '429':
             return self.send_json({'error': 'too many requests'}, 429, {'Retry-After': '1'})
-        thinking, answer, delay = plan(prompt, session)
+        thinking, answer, delay = plan(prompt, session, bool(body.get('search_enabled')))
         if refs:
             seen = ', '.join(f"{files[i]['name']} ({files[i]['size']} bytes, first line: {files[i]['first']!r})" for i in refs)
             answer = f'Mock read {len(refs)} attached file(s): {seen}.\n\n{answer}'
