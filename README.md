@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.4.6 · DeepSeek web · default
+  ✻ dsc 0.4.7 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -161,7 +161,7 @@ key.
 | Right click (nothing selected), or Ctrl-V | paste the clipboard into the input box, also text copied in other windows |
 | Up / Down | move in the text, then through earlier inputs |
 | Ctrl-A, Ctrl-E, Ctrl-W, Ctrl-U, Ctrl-K | start, end, delete word, delete to start, delete to end |
-| Shift+Tab | switch the mode: `ask` ⇄ `allow all`, also while a task runs |
+| Shift+Tab | switch the mode: `ask` ⇄ `allow`, also while a task runs |
 | Esc | clear the box; while a task runs: stop the task |
 | Ctrl-C | with text selected: copies it. Otherwise clears the box and asks to press it again; twice within two seconds quits, also while a task runs |
 | Ctrl-D | quit (empty box) |
@@ -236,7 +236,7 @@ it on, the model reads web pages on its side; with it off, a task that needs a p
 
 DeepSeek does not do both at once: turning one on turns the other off. Both can be off. The bottom line shows
 them: `✦ Think` and `◉ Browse` are pink while on and gray while off. A click on either (or on the mode, `⏵ ask` /
-`⏵⏵ allow all`) switches it like its command; while a task runs only the mode switches. The choice is saved (`deepseek.thinking`,
+`⏵⏵ allow`) switches it like its command; while a task runs only the mode switches. The choice is saved (`deepseek.thinking`,
 `deepseek.search`) and used on the next start.
 
 ### Sessions
@@ -264,7 +264,7 @@ lists only its own conversations.
 
 | Flag | Meaning |
 |---|---|
-| `-y`, `--yes` | start in the mode `allow all`: actions run without asking (the deny list still applies) |
+| `-y`, `--yes` | start in the mode `allow`: actions run without asking (the deny list still applies) |
 | `--think` | deep thinking for this run; the reasoning is shown dimmed. In the chat, `/think` switches it |
 | `--no-search` | switch DeepSeek's own web search off for this run (pages are then fetched from this machine) |
 | `--expert` | the "expert" model instead of the fast one (not tested yet) |
@@ -282,18 +282,18 @@ lists only its own conversations.
 | Mode | Shown as | Meaning |
 |---|---|---|
 | ask (default) | `⏵ ask` | actions outside the allow list need your yes |
-| allow all | `⏵⏵ allow all` | every action runs without a question; only the deny list stops one |
+| allow | `⏵⏵ allow` | every action runs without a question; only the deny list stops one |
 
-The mode is shown under the input box and on the progress line (`ask` green, `allow all` orange). Shift+Tab or
+The mode is shown under the input box and on the progress line (`ask` green, `allow` orange). Shift+Tab or
 `/permissions` switches it at any time, also in the middle of a task. The mode you chose is saved in `config.toml`
-(`policy.mode`) and used on the next start; `--yes` starts in allow all for that run only.
+(`policy.mode`) and used on the next start; `--yes` starts in allow for that run only.
 
 ### Approvals
 
 The model can ask for three actions: run a shell command, read a file, write a file. Before each one `dsc` decides:
 
 1. It matches `policy.deny` → never runs, also with `--yes`.
-2. The mode is `allow all`, or the command is on `policy.allow` → runs.
+2. The mode is `allow`, or the command is on `policy.allow` → runs.
 3. Otherwise you are asked:
 
 ```console
@@ -315,7 +315,7 @@ stops the task.
   not print file content (`ls`, `df`, `stat`, `git status`, ...). Think before you approve `cat` on a private file.
 - The deny list is a plain substring check on the command or path. It stops obvious mistakes (`rm -rf /`, SSH
   keys, the token file); it is **not a sandbox**.
-- The mode `allow all` (`--yes`, Shift+Tab, `/permissions`) lets a free chat model run anything not on the deny list. Use it only for tasks and folders where that
+- The mode `allow` (`--yes`, Shift+Tab, `/permissions`) lets a free chat model run anything not on the deny list. Use it only for tasks and folders where that
   is acceptable, ideally in a container or VM.
 - The model sees only what you send: the task, the working directory, the results of approved actions and the files
   you drop on the chat box (files that look private need a yes first).

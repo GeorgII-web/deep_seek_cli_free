@@ -111,7 +111,7 @@ const COMMANDS: &[editor::Command] = &[
     ),
     (
         "/permissions",
-        "switch between ask and allow all (also Shift+Tab)",
+        "switch between ask and allow (also Shift+Tab)",
     ),
     (
         "/model",
@@ -321,7 +321,7 @@ pub struct Terminal {
     think: Arc<AtomicBool>,
     /// Browse (DeepSeek's web search) is on: shown next to Think
     browse: Arc<AtomicBool>,
-    /// The approval mode: true = allow all (run without asking), false = ask.
+    /// The approval mode: true = allow (run without asking), false = ask.
     /// Shared with the box, the progress line, the key watcher and the agent loop.
     allow_all: Arc<AtomicBool>,
 }
@@ -442,12 +442,12 @@ impl Terminal {
         self.allow_all.clone()
     }
 
-    /// Switches between ask and allow all (`/permissions`; Shift+Tab does the same in the
+    /// Switches between ask and allow (`/permissions`; Shift+Tab does the same in the
     /// box and while a task runs) and says what is on now.
     pub fn toggle_mode(&mut self) {
         let allow_all = !self.allow_all.fetch_xor(true, Ordering::Relaxed);
         let text = match allow_all {
-            true => "Mode `allow all`: actions run without asking; the deny list still applies.",
+            true => "Mode `allow`: actions run without asking; the deny list still applies.",
             false => "Mode `ask`: actions outside the allow list need your yes.",
         };
         self.info(text);
@@ -1212,7 +1212,7 @@ impl Terminal {
             heading("Anywhere"),
             row(
                 "Shift+Tab",
-                "mode: ask (confirm actions) or allow all (run without asking)",
+                "mode: ask (confirm actions) or allow (run without asking)",
             ),
             row("Ctrl-C twice", "quit"),
             row("Ctrl-D", "quit (empty box)"),

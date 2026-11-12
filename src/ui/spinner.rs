@@ -79,7 +79,7 @@ pub struct Spinner {
     docked: bool,
     /// Key hint after the clock: key and what it does, e.g. ("Esc", "interrupt")
     hint: Option<(&'static str, &'static str)>,
-    /// The approval mode shown at the end of the line (true = allow all)
+    /// The approval mode shown at the end of the line (true = allow)
     mode: Option<Arc<AtomicBool>>,
     /// Who answers, shown after the mode (true = the mock)
     model: Option<Arc<AtomicBool>>,
@@ -276,7 +276,7 @@ impl Spinner {
                         label_columns += 3;
                     }
                     labels.push_str(&style.mode_label(allow_all));
-                    label_columns += if allow_all { 12 } else { 5 };
+                    label_columns += if allow_all { 8 } else { 5 };
                     // The key that switches the mode works while a task runs too.
                     if docked {
                         labels.push_str(&format!("{dot}{}", style.hint(MODE_KEY, "")));

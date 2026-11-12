@@ -346,7 +346,7 @@ pub struct Editor {
     cursor_line: u16,
     /// Set while the box is docked at the bottom (chat)
     dock: Option<Dock>,
-    /// The approval mode (true = allow all): shown in the hint line, Shift+Tab switches it
+    /// The approval mode (true = allow): shown in the hint line, Shift+Tab switches it
     mode: Option<Arc<AtomicBool>>,
     /// Who answers (true = the mock): shown in the hint line next to the mode
     model: Option<Arc<AtomicBool>>,
@@ -638,7 +638,7 @@ impl Editor {
             let allow_all = mode.load(Ordering::Relaxed);
             labels.push((
                 s.mode_label(allow_all),
-                if allow_all { 12 } else { 5 },
+                if allow_all { 8 } else { 5 },
                 Some(Toggle::Mode),
             ));
             if with_key {

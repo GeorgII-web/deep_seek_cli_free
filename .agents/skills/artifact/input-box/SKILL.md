@@ -25,7 +25,7 @@ at the box width (wide characters count two columns); a box taller than the scre
 | Left, Right, Home, End, Ctrl-A, Ctrl-E | move |
 | Backspace, Delete, Ctrl-W or Alt+Backspace (word), Ctrl-U, Ctrl-K | delete; Backspace in an empty chat box drops the last attached file |
 | `/` as the first character | command menu, described after this table |
-| Shift+Tab | switch the mode (ask ⇄ allow all) |
+| Shift+Tab | switch the mode (ask ⇄ allow) |
 | click on `✦ Think`, `◉ Browse`, the mode label (bottom row) | the same as `/think`, `/browse`, `/permissions`; the text and files stay in the box. While a task runs: the mode switches at once, Think and Browse show "Not while a task runs" (`Busy::Later`) |
 | Esc | clear the box (text and attached files) |
 | Ctrl-C | with text selected in the output: copy it; else clear the box and show "Press Ctrl-C again to exit" for `AGAIN` (2 s); a second one in that time quits |

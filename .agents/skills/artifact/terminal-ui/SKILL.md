@@ -121,7 +121,7 @@ of its own (inverse) meanwhile. The real one is back for the input box, an appro
 
 `Terminal::allow_all` (`Arc<AtomicBool>`, false = ask) is shared with the box, the progress thread, the key
 watcher and the agent loop (`Terminal::mode`). With a terminal it is shown as `Style::mode_label`: `⏵ ask` in green
-(`Style::ok`), `⏵⏵ allow all` in the action color (orange).
+(`Style::ok`), `⏵⏵ allow` in the action color (orange).
 
 | Line | Content |
 |---|---|
