@@ -79,6 +79,13 @@ and 60 per hour got it blocked at about 25 requests in an hour (2026-11-11). The
 `Settings::slow_down` replaces a config that still holds exactly one of those earlier sets
 (`Throttle::earlier_defaults`) with the current defaults; values the user changed are kept.
 
+## Counting requests
+
+`client::requests()` = how many calls this process has sent (`Client::post` counts every one: challenge, session
+create, completion). `chat()` and the single task take the difference around a task and give it to
+`Terminal::finish`, which shows it on the finish line: what the task cost the account. A plain answer is 2 calls
+(3 in a new conversation), each further answer of the task 2 more. The built-in mock sends none.
+
 ## Another server (`DSC_API_BASE`)
 
 `client::base()` = the environment variable `DSC_API_BASE`, else `https://chat.deepseek.com`, and an error where

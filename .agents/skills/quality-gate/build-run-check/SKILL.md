@@ -77,9 +77,14 @@ Only on the user's word for that one run (`DSC_LIVE=1 scripts/pty-drive.py …`,
 | `.github/workflows/ci.yml` | by hand only (`workflow_dispatch`) | `cargo fmt --check`, clippy `-D warnings`, `cargo test` on `ubuntu-24.04` |
 | `.github/workflows/release.yml` | pushed tag `v*` | checks the tag equals `version` in `Cargo.toml`, the gates, `cargo build --release --locked` on `ubuntu-22.04` (the binary then needs glibc 2.35+), packs `dsc-x86_64-linux.tar.gz` (`dsc`, `README.md`, `LICENSE`) with a `.sha256`, publishes a release with generated notes |
 
+Version: `.githooks/pre-commit` (enabled per clone with `git config core.hooksPath .githooks`) raises the patch
+number in `Cargo.toml`, `Cargo.lock` and the README sample in every commit that changes a file under `src/`, and
+stages them; a commit that already changes the `version` line is left alone (minor or major bumps are made by
+hand). So a release needs no version edit: tag what `Cargo.toml` says.
+
 A push starts no workflow: every push used to run `ci`, and the runs piled up in GitHub's queue (2026-11-11).
-Run the gates locally before a push. Release steps: bump `version` in `Cargo.toml` (and `Cargo.lock` by a
-build), run the gates locally, commit, push, then `git tag v<version> && git push origin v<version>`; the
+Run the gates locally before a push. Release steps: run the gates locally, push, then tag the version of `Cargo.toml`:
+`v=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1); git tag v$v && git push origin v$v`; the
 release workflow runs the gates itself before it publishes. The asset name is fixed, because the README
 download command uses `releases/latest/download/dsc-x86_64-linux.tar.gz`. A tag is published work: only on the
 user's word. Run state without a login: `https://api.github.com/repos/GeorgII-web/deep_seek_cli_free/actions/runs`.

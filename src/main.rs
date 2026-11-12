@@ -78,6 +78,7 @@ async fn main() -> Result<()> {
             let mut interrupts = terminal.interrupts();
             let mut always = HashSet::new();
             terminal.begin();
+            let requests_before = deepseek::client::requests();
             let result = agent::run::run(
                 &mut conversation,
                 &mut terminal,
@@ -88,7 +89,7 @@ async fn main() -> Result<()> {
                 &mut interrupts,
             )
             .await;
-            terminal.finish(&result);
+            terminal.finish(&result, deepseek::client::requests() - requests_before);
             saver.sync();
             // The finish line already showed the error; the terminal must be restored before the exit.
             drop(terminal);
@@ -391,6 +392,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         // token opens the login window and, with a new token, the task runs again.
         loop {
             terminal.begin();
+            let requests_before = deepseek::client::requests();
             let result = agent::run::run(
                 &mut conversation,
                 &mut terminal,
@@ -401,7 +403,7 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 &mut interrupts,
             )
             .await;
-            terminal.finish(&result);
+            terminal.finish(&result, deepseek::client::requests() - requests_before);
             saver.sync();
             let error = result.as_ref().err();
             if matches!(

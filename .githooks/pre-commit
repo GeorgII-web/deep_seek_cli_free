@@ -1,0 +1,34 @@
+#!/bin/sh
+# Bumps the patch version when a commit changes code (anything under src/), so
+# every build that differs in behaviour has its own version. Cargo.toml,
+# Cargo.lock and the version shown in the README sample move together.
+# A commit that already changes the version (a minor or major bump by hand) is left alone.
+# Enable once per clone:  git config core.hooksPath .githooks
+set -e
+
+git diff --cached --name-only | grep -q '^src/' || exit 0
+if git diff --cached -U0 -- Cargo.toml | grep -q '^+version = '; then
+    exit 0
+fi
+
+old=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+major=${old%%.*}
+rest=${old#*.}
+minor=${rest%%.*}
+patch=${rest#*.}
+case "$major$minor$patch" in
+    *[!0-9]* | "") echo "pre-commit: cannot read the version \"$old\" in Cargo.toml" >&2; exit 1 ;;
+esac
+new="$major.$minor.$((patch + 1))"
+
+# The first `version = ` line of Cargo.toml is the package's own.
+sed -i "0,/^version = \"$old\"\$/s//version = \"$new\"/" Cargo.toml
+# In Cargo.lock: the version line right after this package's name.
+awk -v new="$new" '
+    /^name = "deep_seek_cli_free"$/ { print; getline; sub(/"[^"]*"/, "\"" new "\""); print; next }
+    { print }
+' Cargo.lock > Cargo.lock.tmp && mv Cargo.lock.tmp Cargo.lock
+sed -i "s/✻ dsc $old · /✻ dsc $new · /" README.md
+
+git add Cargo.toml Cargo.lock README.md
+echo "pre-commit: version $old -> $new"

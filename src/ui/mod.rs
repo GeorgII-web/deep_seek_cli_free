@@ -810,8 +810,9 @@ impl Terminal {
         self.watch_start();
     }
 
-    /// End of a task: one line with the time it took.
-    pub fn finish(&mut self, result: &anyhow::Result<()>) {
+    /// End of a task: one line with the time it took, the answers, the actions
+    /// and the requests sent to the DeepSeek API.
+    pub fn finish(&mut self, result: &anyhow::Result<()>, requests: u64) {
         self.close_output();
         // A step that failed or was stopped left its status line up.
         self.end_status();
@@ -821,10 +822,12 @@ impl Terminal {
         let s = self.style;
         let secs = self.started.elapsed().as_secs_f32();
         let plural = |n: u32, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+        // `requests` = calls to the DeepSeek API this task made: what it cost the account.
         let stats = format!(
-            "{secs:.1}s · {} · {}",
+            "{secs:.1}s · {} · {} · {}",
             plural(self.answers, "answer"),
-            plural(self.actions, "action")
+            plural(self.actions, "action"),
+            plural(requests.min(u32::MAX as u64) as u32, "request")
         );
         let (mark, color, text) = match result {
             Ok(()) => ("✓", s.ok(), stats),

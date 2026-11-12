@@ -4,6 +4,7 @@ use anyhow::{Context, Result, anyhow};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use serde::Deserialize;
 use serde_json::{Value, json};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 pub const BASE: &str = "https://chat.deepseek.com";
@@ -51,6 +52,15 @@ fn choose_base(
         ));
     }
     Ok(BASE.into())
+}
+
+/// Requests sent to the API by this process (every call: challenge, session, completion).
+static REQUESTS: AtomicU64 = AtomicU64::new(0);
+
+/// How many requests this process has sent to the API so far. The difference
+/// around a task is what the task cost the account.
+pub fn requests() -> u64 {
+    REQUESTS.load(Ordering::Relaxed)
 }
 
 pub const COMPLETION_PATH: &str = "/api/v0/chat/completion";
@@ -152,6 +162,7 @@ impl Client {
 
     /// POST with a JSON body; returns the response after the HTTP status check.
     async fn post(&self, path: &str, body: &Value, pow: Option<&str>) -> Result<reqwest::Response> {
+        REQUESTS.fetch_add(1, Ordering::Relaxed);
         let mut request = self.http.post(format!("{}{path}", self.base)).json(body);
         if let Some(pow) = pow {
             request = request.header("x-ds-pow-response", pow);

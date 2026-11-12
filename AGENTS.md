@@ -18,7 +18,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/cli.rs` | clap: `Cli` = optional `Command` (`chat`, `login --import/--token`, `logout`, `doctor`) or `RunArgs` (task words, `--yes`, `--think`, `--search` / `--no-search`, `--expert`, `--session`) |
 | `src/config.rs` | `Paths` (`$DSC_HOME`, else `~/.config/deep_seek_cli_free`; `config()`, `auth()`, `cache()`), `migrate` (one-time move of the old folder `~/.config/dsc`), `Settings` = `[deepseek]`, `[throttle]`, `[agent]`, `[policy]` (with `mode`) with defaults, unknown keys fail; `load_or_create` writes the defaults when the file is missing, `save` rewrites the file |
 | `src/auth.rs` | `Auth` (`token`, `cookie`, `wasm_url`): `load`, `require`, `import` (FreeDeepseekAPI file), `new`, `save` (0600), `remove`; browser login over CDP `[ ]` |
-| `src/deepseek/client.rs` | `Client`: headers, `create_session`, `create_challenge`, `completion` (returns the SSE response), `fetch_wasm`; `ApiError` (`TokenDead`, `RateLimited`), envelope check `biz_data`; `base()` = `DSC_API_BASE` or DeepSeek |
+| `src/deepseek/client.rs` | `Client`: headers, `create_session`, `create_challenge`, `completion` (returns the SSE response), `fetch_wasm`; `ApiError` (`TokenDead`, `RateLimited`), envelope check `biz_data`; `base()` = `DSC_API_BASE` or DeepSeek; `requests()` = calls sent so far |
 | `src/deepseek/pow.rs` | `solve(wasm, challenge)` in `wasmi`, `header()` = `X-DS-PoW-Response` value |
 | `src/deepseek/session.rs` | `Conversation`: session id, `parent_message_id`, wasm cache, `pow_header()`, `send()` with throttle and 429 retries, `impl Backend` (`ask` = send + parse + keep the answer id as next parent), `state` / `resume` (continue an earlier conversation), `set_client`; built with the `TurnOpts` of the run |
 | `src/deepseek/throttle.rs` | `delay_ms` (gap, per-minute and per-hour caps), `acquire` (wait + record in `<home>/cache/throttle.json`), `cooldown` (pause after a 429, kept across runs) |
@@ -37,6 +37,7 @@ The repo is public: no personal paths, names or data in any tracked file.
 | `src/ui/render.rs` | `Markdown`: hides the `dsc` block, trims blank lines, styles inline code, code blocks (bar instead of fences), bold, headings, links |
 | `src/ui/spinner.rs`, `style.rs` | progress line with a clock, key hint and mode; every color code, two grays for hints (`key`, `faint`) |
 | `.github/workflows/ci.yml`, `release.yml` | `ci`: the checks, by hand only; `release`: on a tag `v<version>` the checks, the Linux binary and the GitHub release. A push starts nothing |
+| `.githooks/pre-commit` | raises the patch version when a commit changes `src/` |
 | `scripts/mock-deepseek.py` | local HTTP stand-in for the DeepSeek web API (challenge, session, SSE completion; tasks like `src/mock.rs`) |
 | `scripts/pty-drive.py` | drives the chat in a pseudo-terminal with scripted keys against that mock (starts it itself) and prints scrollback, screen and cursor; the real API only with `DSC_LIVE=1` |
 
@@ -56,6 +57,9 @@ The repo is public: no personal paths, names or data in any tracked file.
 
 ## Rules
 
+- The version moves with the code: `.githooks/pre-commit` raises the patch number in `Cargo.toml`, `Cargo.lock`
+  and the README sample whenever a commit changes `src/` (run `git config core.hooksPath .githooks` once in a
+  clone). Do not bump the patch by hand; change minor or major by hand in the same commit when it is deserved.
 - Every code piece is described in a skill. A code change updates its skill, this file and `README.md` in the same
   commit, pushed right away; a new module gets a row here and a skill (or a section in one).
 - DeepSeek specifics (URLs, headers, wasm URL, model types) live only in `src/deepseek/`; the agent talks to the

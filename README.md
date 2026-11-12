@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.2.0 · DeepSeek web · default
+  ✻ dsc 0.2.1 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -25,13 +25,16 @@ $ dsc
 
 There is 809G free on / (out of 1007G, 16% used).
 
- ✓ 8.1s · 2 answers · 1 action
+ ✓ 8.1s · 2 answers · 1 action · 4 requests
 
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ > which command did you run for that?                                        │
 ╰──────────────────────────────────────────────────────────────────────────────╯
   ◆ DeepSeek · ✦ Think · ⏵ ask · Shift + Tab        Ctrl + C twice quit · ↑↓ history
 ```
+
+The last line of a task shows what it took: the time, the model's answers, the actions that ran, and the number
+of requests sent to DeepSeek (what the task cost your account's allowance).
 
 The chat runs on its own screen: the input box stays at the bottom, the results scroll above it, a command's
 output folds to one line, and `/` lists the commands. Every input is a task in the same conversation.
@@ -361,6 +364,10 @@ cli → agent loop → Backend trait → DeepSeek web client (HTTP, proof of wor
 Details: [architecture](.agents/skills/general/architecture/SKILL.md).
 
 ## Development
+
+The version grows by itself: a commit that changes code under `src/` raises the patch number (a git hook in
+`.githooks/`; enable it once in a clone with `git config core.hooksPath .githooks`). Raise the minor or major
+number by hand in `Cargo.toml` when a change deserves it.
 
 Pushing does not start anything on GitHub. The checks, the build and the publishing all run in the release
 workflow: set `version` in `Cargo.toml`, push it, then push the tag `v<version>`
