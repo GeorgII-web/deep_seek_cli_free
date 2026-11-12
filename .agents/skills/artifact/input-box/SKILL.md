@@ -68,11 +68,13 @@ starts. An edited shell command (`remember = false`) gets a `Typing` of its own.
 
 `Queue = Arc<Mutex<VecDeque<Queued>>>`, at most `QUEUE_MAX` (5), shared by the box and `Terminal` (`queue`).
 
-- Shown above the box (`queue_lines`, the dock grows by one row each): ` N  <first line of the text, line ends
-  as ⏎, cut with …>  📎 <files> ✕ ` on `Style::queue_bg`. `View::set_above_border` tells the output how many
-  rows come before the top border, where its scroll mark sits.
+- Shown above the box (`queue_lines`), only while it is not empty: an empty row (apart from the output), the
+  title ` Queued prompts:` with the keys `Alt + 1…5 drops one · click ✕` at the right (left out when too narrow),
+  then one row per prompt: ` N  <first line of the text, line ends as ⏎, cut with …>  📎 <files> ✕ ` on
+  `Style::queue_bg`. The dock grows by `QUEUE_HEAD_ROWS` (2) plus one row per prompt. `View::set_above_border`
+  tells the output how many rows come before the top border, where its scroll mark sits.
 - Drop: Alt+N or Ctrl+N (where the terminal reports Ctrl with a digit) in `handle`, or a left click on the ✕
-  (`queue_click`: the last five columns of a queue row); `drop_queued(index)`.
+  (`queue_click`: the last five columns of a prompt row, below the two head rows); `drop_queued(index)`.
 - `Terminal::input` takes the oldest queued prompt before it reads the box (`redraw_idle` shows the shorter queue),
   then `submitted` treats it like a typed one: echo, files confirmed, commands run. So a prompt is echoed when it
   runs, in order with the output. Esc stops only the running task; Ctrl-C twice quits and drops the queue.

@@ -241,6 +241,8 @@ pub struct Queued {
 pub type Queue = Arc<Mutex<VecDeque<Queued>>>;
 /// Most prompts the queue holds.
 pub const QUEUE_MAX: usize = 5;
+/// Rows above the queued prompts: an empty one (apart from the output), the title.
+const QUEUE_HEAD_ROWS: usize = 2;
 
 /// What an event while a task runs did (`Editor::busy_event`).
 #[derive(Debug, PartialEq)]
@@ -705,7 +707,10 @@ impl Editor {
             return;
         };
         let columns = terminal::size().map_or(80, |(columns, _)| columns as usize);
-        let queued = self.queue.lock().unwrap_or_else(|p| p.into_inner()).len();
+        let queued = match self.queue.lock().unwrap_or_else(|p| p.into_inner()).len() {
+            0 => 0,
+            n => QUEUE_HEAD_ROWS + n,
+        };
         let mut view = view.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         view.set_above_border(queued);
         if view.resize(columns, dock.height as usize - dock.area) {
@@ -1178,19 +1183,45 @@ impl Editor {
         }
         let dock = self.dock.as_ref()?;
         let count = self.queue_items().len();
-        let top = dock.height as usize - dock.area + 1;
+        // The prompts start below the empty row and the title.
+        let top = dock.height as usize - dock.area + 1 + QUEUE_HEAD_ROWS;
         let row = mouse.row as usize + 1;
         let total = Self::inner_width() + FRAME_COLS;
         // The ✕ sits in the last columns of the row.
         (row >= top && row < top + count && mouse.column as usize + 5 >= total).then(|| row - top)
     }
 
-    /// One row per queued prompt, above the box: its number, the first line of
-    /// its text, the files it carries and the ✕ that drops it, on a bar of its own color.
+    /// The queue above the box: an empty row that keeps it apart from the output,
+    /// the title `Queued prompts:` with the keys that drop one, then one row per
+    /// prompt: its number, the first line of its text, the files it carries and the
+    /// ✕ that drops it, on a bar of its own color. Nothing when the queue is empty.
     fn queue_lines(&self, total: usize) -> Vec<String> {
         let s = self.style;
         let columns = |text: &str| text.chars().map(width_of).sum::<usize>();
-        self.queue_items()
+        let items = self.queue_items();
+        if items.is_empty() {
+            return Vec::new();
+        }
+        let title = " Queued prompts:";
+        let keys = format!(
+            "{} · {} ",
+            s.hint("Alt + 1…5", "drops one"),
+            s.hint("click ✕", "")
+        );
+        let keys_columns = columns("Alt + 1…5 drops one · click ✕ ");
+        let gap = total.saturating_sub(columns(title) + keys_columns);
+        let title_row = match gap {
+            0 => format!("{}{}{title}{}", s.bold(), s.accent(), s.reset()),
+            gap => format!(
+                "{}{}{title}{}{}{keys}",
+                s.bold(),
+                s.accent(),
+                s.reset(),
+                " ".repeat(gap)
+            ),
+        };
+        let mut lines = vec![String::new(), title_row];
+        lines.extend(items
             .iter()
             .enumerate()
             .map(|(i, item)| {
@@ -1224,8 +1255,9 @@ impl Editor {
                     reset = s.reset(),
                     pad = " ".repeat(room.saturating_sub(used)),
                 )
-            })
-            .collect()
+            }),
+        );
+        lines
     }
 
     fn remember(&mut self, text: &str) {
@@ -1397,13 +1429,25 @@ mod tests {
                 }],
             },
         ]);
-        let rows = editor.queue_lines(40);
+        let rows = editor.queue_lines(50);
         let columns = |text: &str| text.chars().map(width_of).sum::<usize>();
-        assert!(rows[0].starts_with(" 1  short "));
-        assert!(rows[0].ends_with(" ✕  "));
-        assert!(rows[1].starts_with(" 2  a very long prompt ⏎ with"));
-        assert!(rows[1].contains("…  📎 1 ✕"));
-        assert_eq!(columns(&rows[0]), columns(&rows[1]));
+        // An empty row apart from the output, the title with the keys, then the prompts.
+        assert_eq!(rows[0], "");
+        assert!(rows[1].starts_with(" Queued prompts: "));
+        assert!(rows[1].ends_with("Alt + 1…5 drops one · click ✕ "));
+        assert_eq!(columns(&rows[1]), 50);
+        // Too narrow for the keys: the title alone.
+        assert_eq!(editor.queue_lines(40)[1], " Queued prompts:");
+        assert!(rows[2].starts_with(" 1  short "));
+        assert!(rows[2].ends_with(" ✕  "));
+        assert!(rows[3].starts_with(" 2  a very long prompt ⏎ with"));
+        assert!(rows[3].contains("…  📎 1 ✕"));
+        assert_eq!(columns(&rows[2]), columns(&rows[3]));
+        assert!(
+            Editor::new(Style::new(false), None)
+                .queue_lines(40)
+                .is_empty()
+        );
     }
 
     #[test]
