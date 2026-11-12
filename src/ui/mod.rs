@@ -370,7 +370,10 @@ impl Terminal {
                 TabState::Working => "⏳",
                 TabState::Asking => "❓",
             };
-            screen_write(&format!("\x1b]0;{icon} {}\x07", self.title));
+            // Both forms: OSC 0 (icon name and title) and OSC 2 (title only). Some
+            // terminal setups act on one of them only.
+            let title = format!("{icon} {}", self.title);
+            screen_write(&format!("\x1b]0;{title}\x07\x1b]2;{title}\x07"));
         }
     }
 

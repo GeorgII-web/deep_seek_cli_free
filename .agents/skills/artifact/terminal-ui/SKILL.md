@@ -46,7 +46,7 @@ Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_i
 - Growing the dock: when `out` would be covered, line feeds at the old region bottom push the output up first.
   Shrinking and resizing clear the freed rows; a new terminal height starts the layout over.
 - The spinner writes the last row between save and restore cursor (`ESC7`, `ESC8`), under `screen_lock`.
-- Tab title: `open_chat` saves the terminal's title (`ESC[22;0t`), `write_title` writes `ESC]0;<icon> <title>BEL`,
+- Tab title: `open_chat` saves the terminal's title (`ESC[22;0t`), `write_title` writes `ESC]0;<icon> <title>BEL` and the same as `ESC]2;…BEL`,
   `drop` restores it (`ESC[23;0t`). `set_title` sets the text (`dsc`, or `dsc · <conversation>` from the first
   task on); `set_tab_state` sets the icon: `⏳` from `begin` to `finish` (`TabState::Working`), `❓` during an
   approval question (`Asking`), `✻` otherwise (`Idle`), so the state is visible from another tab.
