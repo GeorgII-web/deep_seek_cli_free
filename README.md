@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.2.1 · DeepSeek web · default
+  ✻ dsc 0.2.2 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -25,7 +25,7 @@ $ dsc
 
 There is 809G free on / (out of 1007G, 16% used).
 
- ✓ 8.1s · 2 answers · 1 action · 4 requests
+ ✓ 8.1s · 2 answers · 1 action · 2 requests
 
 ╭──────────────────────────────────────────────────────────────────────────────╮
 │ > which command did you run for that?                                        │
@@ -34,7 +34,7 @@ There is 809G free on / (out of 1007G, 16% used).
 ```
 
 The last line of a task shows what it took: the time, the model's answers, the actions that ran, and the number
-of requests sent to DeepSeek (what the task cost your account's allowance).
+of requests sent to DeepSeek: one per answer the model had to give, which is what the throttle limits count.
 
 The chat runs on its own screen: the input box stays at the bottom, the results scroll above it, a command's
 output folds to one line, and `/` lists the commands. Every input is a task in the same conversation.

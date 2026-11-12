@@ -54,11 +54,14 @@ fn choose_base(
     Ok(BASE.into())
 }
 
-/// Requests sent to the API by this process (every call: challenge, session, completion).
+/// Prompts sent to the model by this process: one per answer asked for.
 static REQUESTS: AtomicU64 = AtomicU64::new(0);
 
-/// How many requests this process has sent to the API so far. The difference
-/// around a task is what the task cost the account.
+/// How many prompts this process has sent to the model so far: one request and
+/// one answer each, which is what the user sees and what the throttle counts.
+/// The difference around a task is what the task cost the account. The helper
+/// calls behind a prompt (the proof-of-work challenge before each one, the
+/// session at the start of a conversation) are not counted.
 pub fn requests() -> u64 {
     REQUESTS.load(Ordering::Relaxed)
 }
@@ -162,7 +165,6 @@ impl Client {
 
     /// POST with a JSON body; returns the response after the HTTP status check.
     async fn post(&self, path: &str, body: &Value, pow: Option<&str>) -> Result<reqwest::Response> {
-        REQUESTS.fetch_add(1, Ordering::Relaxed);
         let mut request = self.http.post(format!("{}{path}", self.base)).json(body);
         if let Some(pow) = pow {
             request = request.header("x-ds-pow-response", pow);
@@ -236,6 +238,7 @@ impl Client {
             "thinking_enabled": opts.thinking,
             "search_enabled": opts.search,
         });
+        REQUESTS.fetch_add(1, Ordering::Relaxed);
         let response = self.post(COMPLETION_PATH, &body, Some(pow_header)).await?;
         let is_json = response
             .headers()

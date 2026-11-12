@@ -81,10 +81,11 @@ and 60 per hour got it blocked at about 25 requests in an hour (2026-11-11). The
 
 ## Counting requests
 
-`client::requests()` = how many calls this process has sent (`Client::post` counts every one: challenge, session
-create, completion). `chat()` and the single task take the difference around a task and give it to
-`Terminal::finish`, which shows it on the finish line: what the task cost the account. A plain answer is 2 calls
-(3 in a new conversation), each further answer of the task 2 more. The built-in mock sends none.
+`client::requests()` = how many prompts this process has sent to the model: `Client::completion` counts one per
+call, so one request is one prompt and its answer, the same unit the throttle limits. The helper calls behind a
+prompt (the challenge before each one, the session create of a new conversation) are not counted; the HTTP
+traffic is about twice the number. `chat()` and the single task take the difference around a task and give it to
+`Terminal::finish` for the finish line. The built-in mock sends none.
 
 ## Another server (`DSC_API_BASE`)
 
