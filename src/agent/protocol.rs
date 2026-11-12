@@ -67,7 +67,7 @@ pub fn first_prompt(task: &str, cwd: &str, web: bool) -> String {
     // Where web content comes from: the model's own search, or the user's machine.
     let web_rule = match web {
         true => {
-            "- You have web search and a browser on your side, and they are on. For anything on the web (open a site, read a page, look something up) use them and answer in text: do not run curl, wget or a browser on the user's machine. Fetch from the user's machine only when the user asks for exactly that (\"locally\", \"with curl\"), or when the address is only reachable from there (localhost, a private network)."
+            "- You have web search and a browser on your side, and they are on. Anything on the web or anything current (the weather, news, prices, exchange rates, sports results, opening hours, a fact you are not sure of, a site to open, a page to read) you look up on your side and answer in plain text, without an action block. Never fetch from the internet on the user's machine: no curl, wget, wttr.in, web APIs or scripts that download. Fetch from the user's machine only when the user asks for exactly that (\"locally\", \"with curl\"), or when the address is only reachable from there (localhost, a private network)."
         }
         false => {
             "- You have no web access on your side in this conversation. To read a web page, fetch it from the user's machine (for example with curl) as an action."
@@ -108,7 +108,9 @@ Task: {task}"#
 pub fn next_prompt(task: &str, web: bool) -> String {
     // The user can switch the web search between tasks (deep thinking turns it off).
     let web = match web {
-        true => "Web search on your side is on for this task.",
+        true => {
+            "Web search on your side is on for this task: anything on the web or current (the weather, news, prices, a page) you look up on your side and answer in plain text; do not fetch from the internet on the user's machine (no curl, wget, web APIs) unless the task asks for exactly that. This holds even if earlier tasks of this conversation fetched pages from the machine."
+        }
         false => {
             "Web search on your side is off for this task: fetch web pages from the user's machine when the task needs them."
         }
@@ -132,6 +134,129 @@ pub fn with_files(prompt: String, names: &[&str]) -> String {
         Some(at) => format!("{}{note}{}", &prompt[..at], &prompt[at..]),
         None => format!("{note}{prompt}"),
     }
+}
+
+/// Sent to the model instead of running a command that fetches a public web page
+/// while its own web search is on (`fetches_public_web`): it is told to search instead.
+pub const USE_YOUR_SEARCH: &str = "Not run: your web search is on in this conversation, so pages from the internet are not fetched on the user's machine. Look it up now with your own web search and browser and answer in plain text, without an action block.";
+
+/// Whether the task itself asks for fetching on the user's machine ("with curl",
+/// "locally"): then a fetch is what the user wants, the model's search or not.
+pub fn asks_local_fetch(task: &str) -> bool {
+    let task = task.to_lowercase();
+    [
+        "curl",
+        "wget",
+        "locally",
+        "local machine",
+        "my machine",
+        "this machine",
+        "from here",
+        "localhost",
+        "127.0.0.1",
+    ]
+    .iter()
+    .any(|word| task.contains(word))
+}
+
+/// Whether a shell command fetches from a public web address: an `http(s)://` URL
+/// with a public host, or a bare host given to a download program (`curl wttr.in`).
+/// Local addresses (localhost, private networks, `.local`, one-word hosts) do not count.
+pub fn fetches_public_web(cmd: &str) -> bool {
+    // The host of `user@host:port/path`; an IPv6 address keeps its brackets.
+    let host_of = |text: &str| -> String {
+        let authority = text
+            .split(['/', '?', '#', '\'', '"', ')', ' '])
+            .next()
+            .unwrap_or_default();
+        let host = authority.rsplit('@').next().unwrap_or_default();
+        let host = match host.strip_prefix('[') {
+            Some(v6) => v6.split(']').next().unwrap_or_default(),
+            None => host.split(':').next().unwrap_or_default(),
+        };
+        host.to_lowercase()
+    };
+    for scheme in ["http://", "https://"] {
+        for (at, _) in cmd.match_indices(scheme) {
+            if is_public_host(&host_of(&cmd[at + scheme.len()..])) {
+                return true;
+            }
+        }
+    }
+    const FETCHERS: [&str; 9] = [
+        "curl", "wget", "http", "xh", "aria2c", "lynx", "w3m", "links", "elinks",
+    ];
+    let words: Vec<&str> = cmd
+        .split(|c: char| c.is_whitespace() || matches!(c, ';' | '|' | '&' | '(' | ')'))
+        .filter(|word| !word.is_empty())
+        .collect();
+    for (i, word) in words.iter().enumerate() {
+        let program = word.rsplit('/').next().unwrap_or(word);
+        if !FETCHERS.contains(&program) {
+            continue;
+        }
+        // The arguments up to the next option-free word that is no host: `curl -s wttr.in/x`.
+        for arg in words[i + 1..].iter().take(8) {
+            let arg = arg.trim_matches(['\'', '"']);
+            if arg.starts_with('-') || arg.contains("://") {
+                continue;
+            }
+            let host = host_of(arg);
+            if looks_like_domain(&host) && is_public_host(&host) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+/// `wttr.in`, `api.example.com`; not a file name like `out.json`.
+fn looks_like_domain(host: &str) -> bool {
+    const FILES: [&str; 16] = [
+        "json", "txt", "html", "htm", "xml", "csv", "tar", "gz", "zip", "sh", "py", "log", "md",
+        "yaml", "yml", "conf",
+    ];
+    let labels: Vec<&str> = host.split('.').collect();
+    labels.len() >= 2
+        && labels.iter().all(|label| {
+            !label.is_empty() && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
+        && labels
+            .last()
+            .is_some_and(|tld| tld.chars().all(|c| c.is_ascii_alphabetic()) && !FILES.contains(tld))
+}
+
+/// A host on the internet: not localhost, a private or link-local network, `.local`
+/// or `.internal`, and not a one-word name of the local network.
+fn is_public_host(host: &str) -> bool {
+    let host = host.trim_matches(['[', ']']);
+    if host.is_empty() || !host.contains('.') || host == "::1" {
+        return false;
+    }
+    if [
+        "localhost",
+        ".localhost",
+        ".local",
+        ".internal",
+        ".lan",
+        ".home.arpa",
+    ]
+    .iter()
+    .any(|end| host == end.trim_start_matches('.') || host.ends_with(end))
+    {
+        return false;
+    }
+    let octets: Vec<u8> = host
+        .split('.')
+        .filter_map(|part| part.parse().ok())
+        .collect();
+    if octets.len() == 4 {
+        return !matches!(
+            (octets[0], octets[1]),
+            (127, _) | (10, _) | (0, _) | (192, 168) | (169, 254) | (172, 16..=31)
+        );
+    }
+    true
 }
 
 /// What the model gets when it ends a task with the done block before any
@@ -289,7 +414,7 @@ mod tests {
         );
         let prompt = first_prompt("t", "/w", true);
         assert!(prompt.contains("web search and a browser on your side"));
-        assert!(prompt.contains("do not run curl"));
+        assert!(prompt.contains("Never fetch from the internet on the user's machine"));
         assert!(first_prompt("t", "/w", false).contains("no web access on your side"));
         assert!(prompt.contains(r#"{"tool":"done"}"#));
         assert!(prompt.contains("do not repeat"));
@@ -297,8 +422,44 @@ mod tests {
         assert!(next_prompt("t", true).contains("only after the result of an action of this task"));
         assert!(next_prompt("t", true).contains("search on your side is on"));
         assert!(next_prompt("t", false).contains("search on your side is off"));
+        assert!(next_prompt("t", true).contains("do not fetch from the internet"));
+        assert!(first_prompt("t", "/w", true).contains("weather"));
         let attached = with_files(next_prompt("t", true), &["a.pdf", "b.png"]);
         assert!(attached.ends_with("a.pdf, b.png\n\nTask: t"));
         assert_eq!(with_files("x".into(), &[]), "x");
+    }
+
+    #[test]
+    fn public_web_fetches_are_recognized() {
+        for cmd in [
+            "curl -s 'https://wttr.in/Heidelberg?format=3'",
+            "curl -sSL --max-time 20 https://example.org | head -n 40",
+            "curl wttr.in/Heidelberg",
+            "wget -qO- example.com",
+            "python3 -c \"import urllib.request; print(urllib.request.urlopen('https://api.github.com').read())\"",
+            "/usr/bin/curl -s http://1.1.1.1/",
+        ] {
+            assert!(fetches_public_web(cmd), "{cmd}");
+        }
+        for cmd in [
+            "curl -s http://localhost:8080/health",
+            "curl http://127.0.0.1:3000/",
+            "curl -o out.json http://192.168.1.10/api",
+            "wget http://printer.local/status",
+            "curl http://myserver/",
+            "ls -la /etc",
+            "cat notes.md",
+            "git remote -v",
+            "curl -o result.json -s http://10.0.0.5/x",
+        ] {
+            assert!(!fetches_public_web(cmd), "{cmd}");
+        }
+    }
+
+    #[test]
+    fn a_task_can_ask_for_a_local_fetch() {
+        assert!(asks_local_fetch("curl https://example.org"));
+        assert!(asks_local_fetch("fetch the weather locally"));
+        assert!(!asks_local_fetch("weather in Heidelberg"));
     }
 }

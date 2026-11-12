@@ -29,6 +29,8 @@ What the model "answers" depends on the task (the text after "Task: " in the pro
   browse <url>      with search_enabled (Browse): reads the page on the model's side and answers
                     (nothing runs locally); without it: asks to fetch the page with curl, like `curl`
   curl <url>        the local way: asks to fetch the page with curl, then answers
+  weather <place>   asks to curl wttr.in even with search on (like the real model); after dsc's
+                    "Not run: your web search ..." it answers from its search
   read <path>       asks to read the file          write <path>   asks to write "mock\\n" to it
   think <text>      reasoning first, then an answer
   slow              a long answer, one word every 0.3 s (to try Esc and scrolling)
@@ -122,6 +124,9 @@ def plan(prompt, session, search=True):
         return '', after, DELAY
     if prompt.startswith('You sent the done block'):
         return '', 'Mock: a real answer after the early done.', DELAY
+    # dsc sent it back to its own search (protocol::USE_YOUR_SEARCH).
+    if prompt.startswith('Not run: your web search'):
+        return '', session.pop('searched', 'Mock: I looked it up with my web search.'), DELAY
     task = prompt.rsplit('Task: ', 1)[-1].strip()
     done = block({'tool': 'done'})
     if task == 'early':
@@ -148,6 +153,13 @@ def plan(prompt, session, search=True):
         quoted = "'" + url.replace("'", "'\\''") + "'"
         command = f'curl -sSL --max-time 20 {quoted} | head -n 40'
         return '', 'I will fetch the page from your machine.\n\n' + block({'tool': 'shell', 'cmd': command, 'why': 'mock: the task asked for it'}), DELAY
+    if task.startswith('weather '):
+        # Like the real model: curl even with its own search on; dsc sends it back.
+        place = task[len('weather '):].strip().removeprefix('in ').strip()
+        session['searched'] = f'Mock: I looked it up with my web search: {place}, 8 °C, overcast.'
+        session['after'] = f'Mock: that is the weather in {place}, fetched from your machine.'
+        url = f"https://wttr.in/{place.replace(' ', '+')}?format=3"
+        return '', block({'tool': 'shell', 'cmd': f"curl -s '{url}'", 'why': 'mock: the weather'}), DELAY
     if task.startswith('read '):
         session['after'] = done
         return '', block({'tool': 'read_file', 'path': task[5:], 'why': 'mock: read'}), DELAY

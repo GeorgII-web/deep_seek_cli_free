@@ -91,7 +91,10 @@ async fn main() -> Result<()> {
             let result = agent::run::run(
                 &mut conversation,
                 &mut terminal,
-                prompt,
+                agent::run::Task {
+                    prompt,
+                    own_search: web && !protocol::asks_local_fetch(&task),
+                },
                 &settings,
                 &mode,
                 &mut always,
@@ -439,7 +442,10 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             let result = agent::run::run(
                 &mut conversation,
                 &mut terminal,
-                prompt.clone(),
+                agent::run::Task {
+                    prompt: prompt.clone(),
+                    own_search: browse && !protocol::asks_local_fetch(&line),
+                },
                 settings,
                 &mode,
                 &mut always,

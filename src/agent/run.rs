@@ -44,21 +44,37 @@ pub trait Ui {
     fn note(&mut self, text: &str);
 }
 
-/// Runs one task: `prompt` is `protocol::first_prompt` or `next_prompt`. `always`
+/// What one task sends first, and how web fetches are treated in it.
+pub struct Task {
+    /// `protocol::first_prompt` or `next_prompt`
+    pub prompt: String,
+    /// The model's web search is on and the task did not ask for a local fetch: a
+    /// command that fetches a public web page is not run; the model is told once per
+    /// task to search on its side instead (`protocol::USE_YOUR_SEARCH`)
+    pub own_search: bool,
+}
+
+/// Runs one task (`Task`). `always`
 /// holds what the user allowed for the rest of the session. `yes` = run without
 /// asking; it is read before every action, so the mode can change mid-task.
 pub async fn run<B: Backend, U: Ui>(
     backend: &mut B,
     ui: &mut U,
-    mut prompt: String,
+    task: Task,
     settings: &Settings,
     yes: &AtomicBool,
     always: &mut HashSet<String>,
     interrupts: &mut Interrupts,
 ) -> Result<()> {
     interrupts.clear();
+    let Task {
+        mut prompt,
+        own_search,
+    } = task;
     // Whether an action of this task put its output on the user's screen.
     let mut shown = false;
+    // The model was sent back to its own search once in this task.
+    let mut redirected = false;
     for _ in 0..settings.agent.max_steps {
         let answer = {
             let mut sink = |event: &Event| ui.event(event);
@@ -83,6 +99,15 @@ pub async fn run<B: Backend, U: Ui>(
             Parsed::Invalid(message) => {
                 ui.note("the model sent a broken action block; asking it to repeat");
                 message
+            }
+            Parsed::Action { action, .. }
+                if own_search
+                    && !redirected
+                    && matches!(&action, Action::Shell { cmd, .. } if protocol::fetches_public_web(cmd)) =>
+            {
+                redirected = true;
+                ui.note("Browse is on: no web fetch here, the model was sent to its own search");
+                protocol::USE_YOUR_SEARCH.to_string()
             }
             Parsed::Action { action, extra } => {
                 let mut result = act(action, ui, settings, yes, always, interrupts).await?;
@@ -278,7 +303,10 @@ mod tests {
         run(
             backend,
             ui,
-            prompt,
+            Task {
+                prompt,
+                own_search: false,
+            },
             settings,
             &AtomicBool::new(yes),
             &mut HashSet::new(),
@@ -417,7 +445,10 @@ mod tests {
         let err = run(
             &mut backend,
             &mut FakeUi::default(),
-            prompt,
+            Task {
+                prompt,
+                own_search: false,
+            },
             &cfg,
             &AtomicBool::new(false),
             &mut HashSet::new(),
@@ -473,6 +504,80 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn with_its_own_search_on_a_web_fetch_goes_back_to_the_model_once() {
+        let curl =
+            block(r#"{"tool":"shell","cmd":"curl -s 'https://wttr.in/Heidelberg?format=3'"}"#);
+        let mut backend = Script::new(&[&curl, "Heidelberg: 8 °C, overcast."]);
+        let mut ui = FakeUi::default();
+        let cfg = settings();
+        run(
+            &mut backend,
+            &mut ui,
+            Task {
+                prompt: protocol::first_prompt("weather in Heidelberg", "/work", true),
+                own_search: true,
+            },
+            &cfg,
+            &AtomicBool::new(false),
+            &mut HashSet::new(),
+            &mut Interrupts::signal(),
+        )
+        .await
+        .unwrap();
+        // Not run, not asked: the model was told to search on its side.
+        assert_eq!(backend.prompts[1], protocol::USE_YOUR_SEARCH);
+        assert!(ui.asked.is_empty());
+        assert!(ui.notes[0].starts_with("Browse is on: no web fetch here"));
+        // A second try in the same task goes the normal way: the user is asked.
+        let mut backend = Script::new(&[&curl, &curl, "fetched"]);
+        let mut ui = FakeUi {
+            decisions: [Decision::No].into(),
+            ..Default::default()
+        };
+        run(
+            &mut backend,
+            &mut ui,
+            Task {
+                prompt: protocol::first_prompt("weather in Heidelberg", "/work", true),
+                own_search: true,
+            },
+            &cfg,
+            &AtomicBool::new(false),
+            &mut HashSet::new(),
+            &mut Interrupts::signal(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(ui.asked.len(), 1);
+        // Without its own search the fetch is an ordinary action.
+        let mut backend = Script::new(&[&curl, "fetched"]);
+        let mut ui = FakeUi {
+            decisions: [Decision::No].into(),
+            ..Default::default()
+        };
+        run(
+            &mut backend,
+            &mut ui,
+            Task {
+                prompt: protocol::first_prompt("weather in Heidelberg", "/work", false),
+                own_search: false,
+            },
+            &cfg,
+            &AtomicBool::new(false),
+            &mut HashSet::new(),
+            &mut Interrupts::signal(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(ui.asked.len(), 1);
+        assert!(
+            !backend
+                .prompts
+                .contains(&protocol::USE_YOUR_SEARCH.to_string())
+        );
+    }
+
+    #[tokio::test]
     async fn always_and_the_conversation_carry_over_to_the_next_task() {
         let first = block(r#"{"tool":"shell","cmd":"true one"}"#);
         let second = block(r#"{"tool":"shell","cmd":"true two"}"#);
@@ -486,7 +591,10 @@ mod tests {
         run(
             &mut backend,
             &mut ui,
-            protocol::first_prompt("a", "/work", true),
+            Task {
+                prompt: protocol::first_prompt("a", "/work", true),
+                own_search: false,
+            },
             &cfg,
             &AtomicBool::new(false),
             &mut always,
@@ -497,7 +605,10 @@ mod tests {
         run(
             &mut backend,
             &mut ui,
-            protocol::next_prompt("b", true),
+            Task {
+                prompt: protocol::next_prompt("b", true),
+                own_search: false,
+            },
             &cfg,
             &AtomicBool::new(false),
             &mut always,

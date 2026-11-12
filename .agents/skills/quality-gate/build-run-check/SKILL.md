@@ -53,7 +53,7 @@ unshare -rn sh -c 'ip link set lo up; scripts/pty-drive.py "[(\"\", 1), (\"long\
 
 Both mocks understand the same tasks (`mock::TASKS`): `!<cmd>`, `run <cmd>`, `browse <url>` (answers as if read on the model's side),
 `curl <url>` (the local fetch: approving it does fetch that site, not DeepSeek), `read`, `write`, `think`, `slow`,
-`long`, `code`, `broken`, `two`, `early` (done at once), `dead`, `429`; anything else is echoed.
+`long`, `code`, `broken`, `two`, `early` (done at once), `dead`, `429`, `weather <place>` (curls wttr.in like the real model; with Browse on the app sends it back to its search); anything else is echoed.
 
 ```bash
 scripts/pty-drive.py '[("", 1), ("!echo hi\r", 2), ("y", 2)]' 24 100        # a task, the question, yes

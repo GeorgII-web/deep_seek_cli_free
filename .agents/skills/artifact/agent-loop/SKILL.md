@@ -5,7 +5,7 @@ description: The agent in `src/agent/` — the text protocol that emulates tool 
 
 # Agent loop
 
-Entry `agent::run::run(backend, ui, prompt, settings, yes, always, interrupts)` = one task; called from `src/main.rs` once for
+Entry `agent::run::run(backend, ui, Task { prompt, own_search }, settings, yes, always, interrupts)` = one task; called from `src/main.rs` once for
 `dsc "<task>"` and once per line in the chat. `always` (what the user allowed for the session) belongs to the caller; `yes` is the mode flag (`&AtomicBool`,
 see `../approval-policy/SKILL.md`).
 
@@ -35,10 +35,14 @@ directory, the task. The model answers either plain text (final answer, the loop
 | `write_file` | `path`, `content` (whole file), `why` | `Written: <path> (N bytes)` |
 | `done` | none | nothing is run: the task ends without a text answer (`Parsed::Done`) |
 
-- Web: `first_prompt(task, cwd, web)`. With `web` (DeepSeek's search on, the default) the rules say the model has
-  search and a browser on its side and must use them for anything on the web; `curl` or `wget` on the user's
-  machine only when the user asks for a local fetch or the address is only reachable from there. Without it the
+- Web: `first_prompt(task, cwd, web)`. With `web` (Browse, DeepSeek's search, on) the rules say the model has
+  search and a browser on its side and must use them for anything on the web or current (weather, news, prices,
+  a page), answering in text; nothing from the internet is fetched on the user's machine (no curl, wget, wttr.in,
+  web APIs) unless the user asks for a local fetch or the address is only reachable from there. `next_prompt`
+  repeats that for every task while Browse is on (a conversation may have started without it). Without it the
   rules say there is no web access and pages are fetched as an action.
+- The rules alone do not hold: the real model curls `wttr.in` for "weather in Heidelberg" with search on
+  (seen 2026-11-12). So the loop enforces it, see `own_search` in the loop steps.
 - No repeated output: the user sees every result, so the prompt tells the model to send `{"tool":"done"}` as its
   whole answer when the output already is what was asked, and to write text only when it adds something (a
   conclusion, a computed number, an explanation, the reason for a failure). `parse` checks for `done` before the
@@ -70,10 +74,15 @@ directory, the task. The model answers either plain text (final answer, the loop
    `protocol::DONE_TOO_EARLY` and must act or answer (a model that sends `done` at once would leave the user
    with nothing); `Invalid` → its text is the next
    prompt; `Action` → `act`.
-4. `act`: `Ui::action` (what the model asked for), `policy::check` (see `../approval-policy/SKILL.md`), maybe
+4. With `Task::own_search` (Browse on and `protocol::asks_local_fetch(task)` false: the task says no "curl",
+   "locally", ...), a shell action for which `protocol::fetches_public_web(cmd)` holds (an `http(s)://` URL with
+   a public host, or a bare host after curl, wget, xh, aria2c, lynx, w3m, ...; localhost, private networks,
+   `.local`, one-word hosts and file names do not count) is not shown, asked or run: `Ui::note` says so and
+   `protocol::USE_YOUR_SEARCH` is the next prompt. Once per task; a second try goes the normal way (step 5).
+5. `act`: `Ui::action` (what the model asked for), `policy::check` (see `../approval-policy/SKILL.md`), maybe
    `Ui::approve`, then `Ui::running` and `execute`; the result text is shown with `Ui::result` and becomes the
    next prompt. After an edit `Ui::action` shows the new command.
-5. After `agent.max_steps` answers: `Ui::note` and return.
+6. After `agent.max_steps` answers: `Ui::note` and return.
 
 ## `Ui` trait
 
