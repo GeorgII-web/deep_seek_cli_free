@@ -808,6 +808,10 @@ impl Terminal {
                 reset = s.reset(),
             ));
         }
+        // An empty row of the bar between the text and the files.
+        if s.on() && !text.is_empty() && !files.is_empty() {
+            self.line(&pad);
+        }
         for (i, file) in files.iter().enumerate() {
             let mark = if i == 0 && text.is_empty() { ">" } else { " " };
             let (icon, color) = match file.warning {

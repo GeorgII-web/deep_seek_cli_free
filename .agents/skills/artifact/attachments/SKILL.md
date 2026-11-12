@@ -32,7 +32,7 @@ A warning never blocks: the user decides (below).
 - Backspace in an empty box drops the last file (hint `Backspace drops a file`); Esc and the first Ctrl-C clear
   text and files; Enter sends files without text too.
 - `Terminal::input` takes the files (`Editor::take_files`) on submit. A slash command takes no files: they are
-  dropped with a note. The echo shows one row per file on the prompt bar (`📎` / `⚠ name · size`).
+  dropped with a note. The echo shows one row per file on the prompt bar (`📎` / `⚠ name · size`), after an empty bar row when there is text.
 - `Terminal::confirm_files`: with a flagged file, each warning is printed (`⚠ <name> looks private: <why>`) and
   `Send to DeepSeek? y yes · s skip the flagged · n cancel` asks (`s` only when unflagged files are there too);
   `n` or Esc cancels the whole prompt (`input` returns an empty line, nothing is sent).
