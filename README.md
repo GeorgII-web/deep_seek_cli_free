@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.4.4 · DeepSeek web · default
+  ✻ dsc 0.4.5 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -235,7 +235,8 @@ it on, the model reads web pages on its side; with it off, a task that needs a p
 (you approve the `curl`).
 
 DeepSeek does not do both at once: turning one on turns the other off. Both can be off. The bottom line shows
-them: `✦ Think` and `◉ Browse` are pink while on and gray while off. The choice is saved (`deepseek.thinking`,
+them: `✦ Think` and `◉ Browse` are pink while on and gray while off. A click on either (or on the mode, `⏵ ask` /
+`⏵⏵ allow all`) switches it like its command; while a task runs only the mode switches. The choice is saved (`deepseek.thinking`,
 `deepseek.search`) and used on the next start.
 
 ### Sessions

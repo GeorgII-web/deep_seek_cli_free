@@ -10,7 +10,8 @@ use crate::attach::{self, Attachment, MAX_FILES};
 use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    KeyboardEnhancementFlags, MouseButton, MouseEventKind, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::terminal::{self, Clear, ClearType};
 use crossterm::{execute, queue};
@@ -251,6 +252,8 @@ pub enum Busy {
     Queued,
     /// Enter, but the queue is full: the text stays in the box
     Full,
+    /// A click on Think or Browse: they switch between tasks only
+    Later,
 }
 
 /// The state of one reading of the box: the text, the place in the history,
@@ -284,10 +287,31 @@ impl Typing {
     }
 }
 
+/// A label of the bottom row that switches something when clicked, like its command.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Toggle {
+    Think,
+    Browse,
+    Mode,
+}
+
+impl Toggle {
+    /// The chat command that does the same.
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Think => "/think",
+            Self::Browse => "/browse",
+            Self::Mode => "/permissions",
+        }
+    }
+}
+
 /// What an event did to the box.
 enum Step {
     Continue,
     Submit(String),
+    /// A label of the bottom row was clicked
+    Toggle(Toggle),
     Exit,
 }
 
@@ -585,36 +609,77 @@ impl Editor {
     /// The line under the box, `max` columns wide: on the left the mode, the model
     /// and the key that switches the mode, on the right (up to the box edge) as many of the other
     /// `(key, meaning)` hints as fit.
+    /// The labels at the right of the bottom row, left to right: the model, deep
+    /// thinking, Browse, the mode and (`with_key`) the key that switches the mode.
+    /// Text, columns, and what a click on it switches. The progress line of a
+    /// running task shows the same labels at the same place (`Spinner`).
+    fn right_labels(&self, with_key: bool) -> Vec<(String, usize, Option<Toggle>)> {
+        let s = self.style;
+        let mut labels = Vec::new();
+        if let Some(model) = &self.model {
+            let mock = model.load(Ordering::Relaxed);
+            labels.push((s.model_label(mock), if mock { 6 } else { 10 }, None));
+        }
+        if let Some(think) = &self.think {
+            labels.push((
+                s.think_label(think.load(Ordering::Relaxed)),
+                7,
+                Some(Toggle::Think),
+            ));
+        }
+        if let Some(browse) = &self.browse {
+            labels.push((
+                s.browse_label(browse.load(Ordering::Relaxed)),
+                8,
+                Some(Toggle::Browse),
+            ));
+        }
+        if let Some(mode) = &self.mode {
+            let allow_all = mode.load(Ordering::Relaxed);
+            labels.push((
+                s.mode_label(allow_all),
+                if allow_all { 12 } else { 5 },
+                Some(Toggle::Mode),
+            ));
+            if with_key {
+                labels.push((s.hint(MODE_KEY, ""), MODE_KEY.chars().count(), None));
+            }
+        }
+        labels
+    }
+
+    /// The label of the bottom row under a click at `column` (0-based) on that row.
+    /// The right labels end where the box ends: column `2 + max` of the row.
+    fn label_at(&self, column: usize, with_key: bool) -> Option<Toggle> {
+        let labels = self.right_labels(with_key);
+        let max = Self::inner_width() + FRAME_COLS - 2;
+        let total: usize = labels.iter().map(|(_, columns, _)| columns).sum::<usize>()
+            + 3 * labels.len().saturating_sub(1);
+        let mut at = (2 + max).checked_sub(total)?;
+        for (_, columns, toggle) in labels {
+            if column >= at && column < at + columns {
+                return toggle;
+            }
+            at += columns + 3;
+        }
+        None
+    }
+
     fn hint_line(&self, hints: &[(&str, &str)], max: usize) -> String {
         let s = self.style;
         let dot = format!("{} · {}", s.faint(), s.reset());
-        // Right: the model, deep thinking, then the mode with its key right after it
-        // (the key belongs to the mode). Left: the other keys, as many as fit.
-        let (mut right, mut right_columns) = (String::new(), 0);
-        let mut add_right = |text: String, columns: usize| {
+        // Right: the model, deep thinking, Browse, then the mode with its key right
+        // after it (the key belongs to the mode). Left: the other keys, as many as fit.
+        let with_key = self.mode.is_some() && hints.iter().any(|(key, _)| *key == MODE_KEY);
+        let mut right = String::new();
+        let mut right_columns = 0;
+        for (text, columns, _) in self.right_labels(with_key) {
             if !right.is_empty() {
                 right.push_str(&dot);
                 right_columns += 3;
             }
             right.push_str(&text);
             right_columns += columns;
-        };
-        if let Some(model) = &self.model {
-            let mock = model.load(Ordering::Relaxed);
-            add_right(s.model_label(mock), if mock { 6 } else { 10 });
-        }
-        if let Some(think) = &self.think {
-            add_right(s.think_label(think.load(Ordering::Relaxed)), 7);
-        }
-        if let Some(browse) = &self.browse {
-            add_right(s.browse_label(browse.load(Ordering::Relaxed)), 8);
-        }
-        if let Some(mode) = &self.mode {
-            let allow_all = mode.load(Ordering::Relaxed);
-            add_right(s.mode_label(allow_all), if allow_all { 12 } else { 5 });
-            if hints.iter().any(|(key, _)| *key == MODE_KEY) {
-                add_right(s.hint(MODE_KEY, ""), MODE_KEY.chars().count());
-            }
         }
         let (mut left, mut left_columns) = (String::new(), 0);
         for (key, what) in hints {
@@ -901,6 +966,12 @@ impl Editor {
                     }
                     return Ok(Input::Submit(text));
                 }
+                // As if the command was typed; the text and the files stay in the box.
+                Step::Toggle(toggle) => {
+                    self.typing = Some(typing);
+                    self.erase()?;
+                    return Ok(Input::Submit(toggle.command().to_string()));
+                }
                 Step::Exit => {
                     self.erase()?;
                     return Ok(Input::Exit);
@@ -925,7 +996,19 @@ impl Editor {
         let width = Self::inner_width();
         let (items, _, _) = self.parts(&mut typing, &[], true, width);
         let mut outcome = Busy::Nothing;
-        if let Step::Submit(text) = self.handle(&mut typing, event, &items, true, width) {
+        let step = self.handle(&mut typing, event, &items, true, width);
+        // The mode switches at once, like Shift+Tab; the model's switches wait for the task's end.
+        if let Step::Toggle(toggle) = step {
+            match toggle {
+                Toggle::Mode => {
+                    if let Some(mode) = &self.mode {
+                        mode.fetch_xor(true, Ordering::Relaxed);
+                    }
+                }
+                Toggle::Think | Toggle::Browse => outcome = Busy::Later,
+            }
+        }
+        if let Step::Submit(text) = step {
             let mut queue = self.queue.lock().unwrap_or_else(|p| p.into_inner());
             if queue.len() >= QUEUE_MAX {
                 // The text stays in the box until a place is free.
@@ -1020,6 +1103,19 @@ impl Editor {
                 return Step::Continue;
             }
             Event::Mouse(mouse) => {
+                // A click on Think, Browse or the mode in the bottom row. Between tasks the
+                // row shows them unless a note or the Ctrl-C hint stands there instead.
+                let labels_shown =
+                    self.busy || (!armed_now && (self.note.is_none() || !items.is_empty()));
+                if remember
+                    && labels_shown
+                    && matches!(mouse.kind, MouseEventKind::Down(MouseButton::Left))
+                    && terminal::size().is_ok_and(|(_, height)| mouse.row + 1 == height)
+                    && let Some(toggle) =
+                        self.label_at(mouse.column as usize, self.busy || items.is_empty())
+                {
+                    return Step::Toggle(toggle);
+                }
                 // The wheel scrolls the output; the box is drawn again by the caller.
                 if let Some(view) = &self.view
                     && let Some(paste) = super::mouse_event(view, mouse)
@@ -1353,6 +1449,52 @@ mod tests {
             editor.busy_event(key(KeyCode::Char(c), KeyModifiers::NONE));
         }
         editor.busy_event(key(KeyCode::Enter, KeyModifiers::NONE))
+    }
+
+    #[test]
+    fn a_click_on_a_label_of_the_bottom_row_finds_it() {
+        let mut editor = Editor::new(Style::new(false), None);
+        editor.set_model(Arc::new(AtomicBool::new(false)));
+        editor.set_think(Arc::new(AtomicBool::new(false)));
+        editor.set_browse(Arc::new(AtomicBool::new(true)));
+        editor.set_mode(Arc::new(AtomicBool::new(false)));
+        let max = Editor::inner_width() + FRAME_COLS - 2;
+        let hints = [("Ctrl + C twice", "quit"), (MODE_KEY, "")];
+        // The row as drawn: two columns, then the hint line.
+        let row: Vec<char> = format!("  {}", editor.hint_line(&hints, max))
+            .chars()
+            .collect();
+        let column = |label: &str| {
+            let text: String = row.iter().collect();
+            text[..text.find(label).unwrap()]
+                .chars()
+                .map(width_of)
+                .sum::<usize>()
+        };
+        for (label, toggle) in [
+            ("✦ Think", Toggle::Think),
+            ("◉ Browse", Toggle::Browse),
+            ("⏵ ask", Toggle::Mode),
+        ] {
+            let at = column(label);
+            assert_eq!(
+                editor.label_at(at, true),
+                Some(toggle),
+                "{label} first column"
+            );
+            let last = at + label.chars().map(width_of).sum::<usize>() - 1;
+            assert_eq!(
+                editor.label_at(last, true),
+                Some(toggle),
+                "{label} last column"
+            );
+        }
+        // The model, the separators, the key and the left side switch nothing.
+        assert_eq!(editor.label_at(column("◆ DeepSeek"), true), None);
+        assert_eq!(editor.label_at(column("✦ Think") - 2, true), None);
+        assert_eq!(editor.label_at(column("Shift + Tab"), true), None);
+        assert_eq!(editor.label_at(2, true), None);
+        assert_eq!(Toggle::Browse.command(), "/browse");
     }
 
     #[test]

@@ -98,6 +98,8 @@ const INPUT_HINTS: &[(&str, &str)] = &[
     ("↑↓", "history"),
 ];
 const EDIT_HINTS: &[(&str, &str)] = &[("Enter", "run"), ("Ctrl-D", "cancel")];
+/// Shown on the progress line when Think or Browse is clicked while a task runs.
+const SWITCH_LATER: &str = "Not while a task runs";
 /// Shown on the progress line when Enter finds the queue full.
 const QUEUE_FULL: &str = "Queue full · Alt+N drops one";
 /// The slash commands of the chat: offered in the menu when the input starts with `/`.
@@ -515,8 +517,10 @@ impl Terminal {
                     Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => key,
                     Ok(TermEvent::Mouse(mouse)) => {
                         if editor.is_some() {
-                            // The box: a right-click paste, or on to the output.
-                            to_box(TermEvent::Mouse(mouse));
+                            // The box: a label of the bottom row, a right-click paste, or on to the output.
+                            if to_box(TermEvent::Mouse(mouse)) == Busy::Later {
+                                notifier.show(SWITCH_LATER);
+                            }
                         } else if let Some(view) = &view {
                             // Inline there is no box to paste into.
                             let _ = mouse_event(view, mouse);

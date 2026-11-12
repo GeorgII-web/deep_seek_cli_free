@@ -203,17 +203,48 @@ impl Spinner {
                 let secs = state.since.elapsed().as_secs();
                 let dot = format!("{} · {}", style.faint(), style.reset());
                 // What follows the progress text: a notice for a moment, else the key hint.
-                let (after, after_columns) = match (&state.notice, hint) {
-                    (Some((text, at)), _) if at.elapsed() < NOTICE => (
-                        format!("{dot}{}{text}{}", style.action(), style.reset()),
-                        3 + text.chars().count(),
-                    ),
-                    (_, Some((key, what))) => (
-                        format!("{dot}{}", style.hint(key, what)),
-                        3 + key.chars().count() + 1 + what.chars().count(),
-                    ),
-                    _ => (String::new(), 0),
+                // `cut` shortens it to a number of columns (docked: the labels keep their place).
+                let notice = state
+                    .notice
+                    .as_ref()
+                    .filter(|(_, at)| at.elapsed() < NOTICE)
+                    .map(|(text, _)| text.clone());
+                let after_for = |room: usize| -> (String, usize) {
+                    let cut = |text: &str, room: usize| -> String {
+                        match text.chars().count() <= room {
+                            true => text.to_string(),
+                            false => {
+                                let mut short: String =
+                                    text.chars().take(room.saturating_sub(1)).collect();
+                                short.push('…');
+                                short
+                            }
+                        }
+                    };
+                    if room <= 3 {
+                        return (String::new(), 0);
+                    }
+                    match (&notice, hint) {
+                        (Some(text), _) => {
+                            let text = cut(text, room - 3);
+                            let columns = 3 + text.chars().count();
+                            (
+                                format!("{dot}{}{text}{}", style.action(), style.reset()),
+                                columns,
+                            )
+                        }
+                        (None, Some((key, what))) => {
+                            let columns = 3 + key.chars().count() + 1 + what.chars().count();
+                            match columns <= room {
+                                true => (format!("{dot}{}", style.hint(key, what)), columns),
+                                false => (String::new(), 0),
+                            }
+                        }
+                        _ => (String::new(), 0),
+                    }
                 };
+                // Inline the line has no labels at a fixed place: the whole text.
+                let after = after_for(usize::MAX).0;
                 // Model, then mode: the same as under the idle box, with their columns.
                 let mut labels = String::new();
                 let mut label_columns = 0;
@@ -260,10 +291,15 @@ impl Spinner {
                     // at the left, where the keys are when the box is idle. The step and
                     // its seconds are in the output itself.
                     let word = busy_word(state.seed, secs);
-                    let progress_columns = 1 + 1 + word.chars().count() + 1 + after_columns;
                     let columns =
                         crossterm::terminal::size().map_or(80, |(columns, _)| columns as usize);
                     let room = columns.saturating_sub(3);
+                    // The labels end at the box edge and never move (a click on one switches
+                    // it, `Editor::label_at`): the notice or hint gets what is left.
+                    let word_columns = 1 + 1 + word.chars().count() + 1;
+                    let (after, after_columns) =
+                        after_for(room.saturating_sub(label_columns + 2 + word_columns));
+                    let progress_columns = word_columns + after_columns;
                     let gap =
                         " ".repeat(room.saturating_sub(label_columns + progress_columns).max(2));
                     let line = format!(
