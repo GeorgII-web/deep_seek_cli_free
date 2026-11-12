@@ -288,9 +288,9 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 terminal.set_browse(browse);
                 saver.save_modes(thinking, browse);
                 terminal.info(match (thinking, was_browsing) {
-                    (true, true) => "Think `on`: the model reasons before it answers. Browse is off: the two do not work together.",
-                    (true, false) => "Think `on`: the model reasons before it answers.",
-                    (false, _) => "Think `off`: the model answers at once. `/browse` turns DeepSeek's web search on.",
+                    (true, true) => "`Think on`: the model reasons before it answers. `Browse` is off: the two do not work together.",
+                    (true, false) => "`Think on`: the model reasons before it answers.",
+                    (false, _) => "`Think off`: the model answers at once. `/browse` turns DeepSeek's web search on.",
                 });
                 continue;
             }
@@ -303,9 +303,9 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 terminal.set_browse(browse);
                 saver.save_modes(thinking, browse);
                 terminal.info(match (browse, was_thinking) {
-                    (true, true) => "Browse `on`: DeepSeek searches the web and reads pages on its side. Think is off: the two do not work together.",
-                    (true, false) => "Browse `on`: DeepSeek searches the web and reads pages on its side.",
-                    (false, _) => "Browse `off`: web pages are fetched from this machine when a task needs them.",
+                    (true, true) => "`Browse on`: DeepSeek searches the web and reads pages on its side. `Think` is off: the two do not work together.",
+                    (true, false) => "`Browse on`: DeepSeek searches the web and reads pages on its side.",
+                    (false, _) => "`Browse off`: web pages are fetched from this machine when a task needs them.",
                 });
                 continue;
             }
