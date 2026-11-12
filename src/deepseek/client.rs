@@ -67,6 +67,10 @@ pub fn requests() -> u64 {
 }
 
 pub const COMPLETION_PATH: &str = "/api/v0/chat/completion";
+/// Upload of an attached file; it needs a proof of work of its own, made for this path.
+pub const UPLOAD_PATH: &str = "/api/v0/file/upload_file";
+/// Status of uploaded files: DeepSeek reads (parses) a file before a prompt can use it.
+pub const FETCH_FILES_PATH: &str = "/api/v0/file/fetch_files";
 /// Used when the login source did not give a wasm URL.
 pub const DEFAULT_WASM_URL: &str =
     "https://fe-static.deepseek.com/chat/static/sha3_wasm_bg.7b9ca65ddd.wasm";
@@ -102,6 +106,26 @@ pub struct Challenge {
     pub difficulty: u64,
     pub expire_at: u64,
     pub signature: String,
+}
+
+/// An uploaded file as DeepSeek reports it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RemoteFile {
+    pub id: String,
+    /// Upper case: `PENDING`, `PARSING`, `SUCCESS`, or a failure (`PARSE_FAILED`, `FAILED`, …)
+    pub status: String,
+    /// Error code or reason DeepSeek gave, when any
+    pub error: Option<String>,
+}
+
+impl RemoteFile {
+    pub fn ready(&self) -> bool {
+        self.status == "SUCCESS"
+    }
+
+    pub fn failed(&self) -> bool {
+        self.status.contains("FAIL") || self.status.contains("ERROR")
+    }
 }
 
 /// Flags of one completion call.
@@ -173,28 +197,20 @@ impl Client {
             .send()
             .await
             .with_context(|| format!("POST {path}"))?;
-        let status = response.status().as_u16();
-        match status {
-            200..=299 => Ok(response),
-            401 | 403 => Err(ApiError::TokenDead(format!("HTTP {status}")).into()),
-            429 => {
-                let secs = response
-                    .headers()
-                    .get("retry-after")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.parse().ok());
-                Err(ApiError::RateLimited(secs).into())
-            }
-            _ => Err(anyhow!("POST {path}: HTTP {status}")),
-        }
+        checked("POST", path, response)
+    }
+
+    /// The JSON envelope of a response, unwrapped.
+    async fn biz(path: &str, response: reqwest::Response) -> Result<Value> {
+        let text = response.text().await?;
+        let envelope: Value = serde_json::from_str(&text)
+            .map_err(|_| anyhow!("{path}: the answer is not JSON (captcha or block page?)"))?;
+        biz_data(path, envelope)
     }
 
     /// POST that answers with the JSON envelope `{code, msg, data: {biz_code, biz_msg, biz_data}}`.
     async fn post_biz(&self, path: &str, body: &Value) -> Result<Value> {
-        let text = self.post(path, body, None).await?.text().await?;
-        let envelope: Value = serde_json::from_str(&text)
-            .map_err(|_| anyhow!("POST {path}: the answer is not JSON (captcha or block page?)"))?;
-        biz_data(path, envelope)
+        Self::biz(path, self.post(path, body, None).await?).await
     }
 
     pub async fn create_session(&self) -> Result<String> {
@@ -208,8 +224,9 @@ impl Client {
             .context("session create: no session id in the answer")
     }
 
-    pub async fn create_challenge(&self) -> Result<Challenge> {
-        let body = json!({ "target_path": COMPLETION_PATH });
+    /// A proof-of-work challenge for the call to `target_path` (`COMPLETION_PATH`, `UPLOAD_PATH`).
+    pub async fn create_challenge(&self, target_path: &str) -> Result<Challenge> {
+        let body = json!({ "target_path": target_path });
         let data = self
             .post_biz("/api/v0/chat/create_pow_challenge", &body)
             .await?;
@@ -226,6 +243,7 @@ impl Client {
         session_id: &str,
         parent_message_id: Option<u64>,
         prompt: &str,
+        ref_file_ids: &[String],
         opts: &TurnOpts,
         pow_header: &str,
     ) -> Result<reqwest::Response> {
@@ -234,7 +252,7 @@ impl Client {
             "parent_message_id": parent_message_id,
             "model_type": opts.model_type,
             "prompt": prompt,
-            "ref_file_ids": [],
+            "ref_file_ids": ref_file_ids,
             "thinking_enabled": opts.thinking,
             "search_enabled": opts.search,
         });
@@ -257,6 +275,52 @@ impl Client {
         Ok(response)
     }
 
+    /// Uploads one file (multipart field `file`); `pow_header` is solved for `UPLOAD_PATH`.
+    /// Returns the file id; DeepSeek still has to read the file (`fetch_files`).
+    pub async fn upload_file(
+        &self,
+        name: &str,
+        bytes: Vec<u8>,
+        mime: &str,
+        pow_header: &str,
+    ) -> Result<String> {
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(name.to_string())
+            .mime_str(mime)?;
+        let form = reqwest::multipart::Form::new().part("file", part);
+        let response = self
+            .http
+            .post(format!("{}{UPLOAD_PATH}", self.base))
+            .header("x-ds-pow-response", pow_header)
+            .multipart(form)
+            .send()
+            .await
+            .with_context(|| format!("upload {name}"))?;
+        let data = Self::biz(UPLOAD_PATH, checked("POST", UPLOAD_PATH, response)?).await?;
+        uploaded_id(&data).with_context(|| format!("upload {name}: no file id in the answer"))
+    }
+
+    /// The status of uploaded files; files DeepSeek does not know are left out.
+    pub async fn fetch_files(&self, ids: &[String]) -> Result<Vec<RemoteFile>> {
+        let query: Vec<String> = ids
+            .iter()
+            .map(|id| format!("file_ids={}", url_encode(id)))
+            .collect();
+        let url = format!("{}{FETCH_FILES_PATH}?{}", self.base, query.join("&"));
+        let response = self
+            .http
+            .get(url)
+            .send()
+            .await
+            .with_context(|| format!("GET {FETCH_FILES_PATH}"))?;
+        let data = Self::biz(
+            FETCH_FILES_PATH,
+            checked("GET", FETCH_FILES_PATH, response)?,
+        )
+        .await?;
+        Ok(remote_files(&data))
+    }
+
     pub async fn fetch_wasm(&self) -> Result<Vec<u8>> {
         // A plain client: the static host must not get the token.
         let response = reqwest::Client::builder()
@@ -275,6 +339,73 @@ impl Client {
         }
         Ok(response.bytes().await?.to_vec())
     }
+}
+
+/// The HTTP status check of every call: 401/403 = dead token, 429 = rate limited.
+fn checked(method: &str, path: &str, response: reqwest::Response) -> Result<reqwest::Response> {
+    let status = response.status().as_u16();
+    match status {
+        200..=299 => Ok(response),
+        401 | 403 => Err(ApiError::TokenDead(format!("HTTP {status}")).into()),
+        429 => {
+            let secs = response
+                .headers()
+                .get("retry-after")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse().ok());
+            Err(ApiError::RateLimited(secs).into())
+        }
+        _ => Err(anyhow!("{method} {path}: HTTP {status}")),
+    }
+}
+
+/// The id in the answer to an upload: `id`, `file_id` or `file.id` (the shape has changed before).
+fn uploaded_id(data: &Value) -> Option<String> {
+    data.get("id")
+        .or_else(|| data.get("file_id"))
+        .or_else(|| data.pointer("/file/id"))
+        .and_then(Value::as_str)
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
+}
+
+/// The files in the answer of `fetch_files`: a list under `files`, a bare list, or a map by id.
+fn remote_files(data: &Value) -> Vec<RemoteFile> {
+    let entries: Vec<(Option<String>, &Value)> = match data.get("files").unwrap_or(data) {
+        Value::Array(list) => list.iter().map(|file| (None, file)).collect(),
+        Value::Object(map) => map
+            .iter()
+            .map(|(id, file)| (Some(id.clone()), file))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let text = |file: &Value, key: &str| match file.get(key) {
+        Some(Value::String(text)) if !text.is_empty() => Some(text.clone()),
+        Some(Value::Number(number)) => Some(number.to_string()),
+        _ => None,
+    };
+    entries
+        .into_iter()
+        .filter_map(|(key, file)| {
+            Some(RemoteFile {
+                id: text(file, "id").or(key)?,
+                status: text(file, "status").unwrap_or_default().to_uppercase(),
+                error: text(file, "error_reason").or_else(|| text(file, "error_code")),
+            })
+        })
+        .collect()
+}
+
+/// Percent-encoding for a query value (file ids are plain, but who knows).
+fn url_encode(text: &str) -> String {
+    text.bytes()
+        .map(|b| match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                (b as char).to_string()
+            }
+            b => format!("%{b:02X}"),
+        })
+        .collect()
 }
 
 /// Unwraps the envelope; error codes become `ApiError` or a message.
@@ -333,6 +464,32 @@ mod tests {
                 .to_string()
                 .contains("too fast")
         );
+    }
+
+    #[test]
+    fn upload_answers_in_every_known_shape() {
+        assert_eq!(
+            uploaded_id(&json!({"id":"f1","status":"PENDING"})).as_deref(),
+            Some("f1")
+        );
+        assert_eq!(uploaded_id(&json!({"file_id":"f2"})).as_deref(), Some("f2"));
+        assert_eq!(
+            uploaded_id(&json!({"file":{"id":"f3"}})).as_deref(),
+            Some("f3")
+        );
+        assert_eq!(uploaded_id(&json!({"id":""})), None);
+        let list = remote_files(&json!({"files":[
+            {"id":"a","status":"success"},
+            {"id":"b","status":"PARSE_FAILED","error_code":"PARSE_FAILED"},
+            {"id":"c","status":"PENDING"}
+        ]}));
+        assert!(list[0].ready() && !list[0].failed());
+        assert!(list[1].failed());
+        assert_eq!(list[1].error.as_deref(), Some("PARSE_FAILED"));
+        assert!(!list[2].ready() && !list[2].failed());
+        let map = remote_files(&json!({"x":{"status":"SUCCESS"}}));
+        assert_eq!(map[0].id, "x");
+        assert_eq!(url_encode("a b/c"), "a%20b%2Fc");
     }
 
     #[test]

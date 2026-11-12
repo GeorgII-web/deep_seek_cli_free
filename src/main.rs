@@ -1,4 +1,5 @@
 mod agent;
+mod attach;
 mod auth;
 mod backend;
 mod cli;
@@ -13,6 +14,7 @@ use agent::interrupt::Interrupt;
 use agent::protocol;
 use anyhow::{Result, bail};
 use auth::Auth;
+use backend::Backend as _;
 use clap::Parser;
 use cli::{Cli, Command};
 use config::{Api, Mode, Paths, Settings};
@@ -229,6 +231,12 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         let Some(line) = line else {
             break;
         };
+        // Files dropped on the box go with this task; files alone ask what they are.
+        let files = terminal.take_files();
+        let line = match line.is_empty() && !files.is_empty() {
+            true => FILES_ONLY_TASK.to_string(),
+            false => line,
+        };
         let prompt = match line.as_str() {
             "" => continue,
             "/exit" | "/quit" => break,
@@ -386,6 +394,8 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             task if first => protocol::first_prompt(task, &cwd(), web_base && !thinking),
             task => protocol::next_prompt(task, web_base && !thinking),
         };
+        let names: Vec<&str> = files.iter().map(|file| file.name.as_str()).collect();
+        let prompt = protocol::with_files(prompt, &names);
         first = false;
         // A new conversation gets its name in the tab as soon as its first task starts.
         if current.is_none() {
@@ -396,6 +406,8 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
         // token opens the login window and, with a new token, the task runs again.
         loop {
             terminal.begin();
+            // Again on a rerun after a new login: the upload belongs to the prompt.
+            conversation.attach(files.clone());
             let requests_before = deepseek::client::requests();
             let result = agent::run::run(
                 &mut conversation,
@@ -580,6 +592,8 @@ async fn ensure_login(
 
 /// How long a token that worked is trusted without asking DeepSeek again.
 const TOKEN_TRUST_SECS: u64 = 15 * 60;
+/// The task when files are dropped and sent without any text.
+const FILES_ONLY_TASK: &str = "Look at the attached files and tell me briefly what they contain.";
 
 /// Checks the saved token against DeepSeek before the chat starts: one call
 /// that sends no prompt. It counts as a request for the throttle, and it is
@@ -602,7 +616,10 @@ async fn check_token(
         }
         let client = Client::new(&Auth::require(paths)?, &settings.deepseek)?;
         deepseek::throttle::acquire(paths, &settings.throttle, &mut |_| {}).await;
-        let Err(err) = client.create_challenge().await else {
+        let Err(err) = client
+            .create_challenge(deepseek::client::COMPLETION_PATH)
+            .await
+        else {
             deepseek::throttle::token_ok(paths);
             return Ok(None);
         };
@@ -695,7 +712,11 @@ async fn doctor(paths: &Paths, settings: &Settings) -> Result<()> {
     }
     let mut conversation = conversation(paths, settings, &cli::RunArgs::default())?;
 
-    let challenge = match conversation.client().create_challenge().await {
+    let challenge = match conversation
+        .client()
+        .create_challenge(deepseek::client::COMPLETION_PATH)
+        .await
+    {
         Ok(challenge) => challenge,
         Err(err) => {
             println!("token     FAILED: {err:#}");

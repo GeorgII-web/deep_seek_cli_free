@@ -19,6 +19,7 @@ pub mod style;
 use crate::agent::interrupt::{Interrupt, Interrupts};
 use crate::agent::protocol::Action;
 use crate::agent::run::{Decision, Ui};
+use crate::attach::Attachment;
 use crate::backend::Event;
 use base64::Engine as _;
 use crossterm::event::{
@@ -248,6 +249,8 @@ pub(crate) fn scroll_by_key(view: &Mutex<View>, code: KeyCode, modifiers: KeyMod
 
 pub struct Terminal {
     style: Style,
+    /// Files submitted with the last input (dropped on the box), for `take_files`
+    files: Vec<Attachment>,
     /// Keys can be read one by one: stdin and stderr are a terminal
     interactive: bool,
     /// Screen layout is on: box docked at the bottom
@@ -319,6 +322,7 @@ impl Terminal {
             text_open: false,
             thinking_open: false,
             gap: false,
+            files: Vec::new(),
             started: Instant::now(),
             answers: 0,
             actions: 0,
@@ -677,11 +681,26 @@ impl Terminal {
         }
         match self.editor.read("", INPUT_HINTS, true) {
             Ok(Input::Submit(text)) => {
+                let files = self.editor.take_files();
                 // A command is not part of the conversation: it is not echoed, its effect is shown.
-                if !COMMANDS.iter().any(|(name, _)| *name == text) {
-                    self.echo(&text);
+                if COMMANDS.iter().any(|(name, _)| *name == text) {
+                    if !files.is_empty() {
+                        self.info("The dropped files were not sent: a command takes no files.");
+                    }
+                    return Some(text);
                 }
-                Some(text)
+                self.echo(&text, &files);
+                match self.confirm_files(files) {
+                    Some(files) if text.is_empty() && files.is_empty() => Some(String::new()),
+                    Some(files) => {
+                        self.files = files;
+                        Some(text)
+                    }
+                    None => {
+                        self.info("Cancelled: nothing was sent.");
+                        Some(String::new())
+                    }
+                }
             }
             Ok(Input::Exit) => None,
             Err(err) => {
@@ -711,9 +730,65 @@ impl Terminal {
         }
     }
 
+    /// The files submitted with the last input; empty after the call.
+    pub fn take_files(&mut self) -> Vec<Attachment> {
+        std::mem::take(&mut self.files)
+    }
+
+    /// Files that look private (keys, passwords, tokens) need a yes before they
+    /// leave the machine: `y` sends all, `s` sends the others, Esc or `n` cancels
+    /// the prompt (`None`). Files without a warning pass unasked.
+    fn confirm_files(&mut self, files: Vec<Attachment>) -> Option<Vec<Attachment>> {
+        if files.iter().all(|file| file.warning.is_none()) {
+            return Some(files);
+        }
+        let s = self.style;
+        for file in files.iter().filter(|file| file.warning.is_some()) {
+            self.line(&format!(
+                "{}  ⚠ {} looks private: {}{}",
+                s.action(),
+                file.name,
+                file.warning.as_deref().unwrap_or_default(),
+                s.reset()
+            ));
+        }
+        let others = files.iter().any(|file| file.warning.is_none());
+        let mut keys = String::from("yn");
+        let mut choices = format!("{}y{} yes", s.bold(), s.reset());
+        if others {
+            keys.push('s');
+            choices.push_str(&format!(" · {}s{} skip the flagged", s.bold(), s.reset()));
+        }
+        choices.push_str(&format!(" · {}n{} cancel", s.bold(), s.reset()));
+        self.partial(&format!(
+            "{}  Send to DeepSeek?{} {choices} ",
+            s.accent(),
+            s.reset()
+        ));
+        let choice = editor::read_choice(&keys).ok().flatten();
+        self.erase_partial();
+        match choice {
+            Some('y') => Some(files),
+            Some('s') => {
+                let kept: Vec<Attachment> = files
+                    .into_iter()
+                    .filter(|file| file.warning.is_none())
+                    .collect();
+                self.line(&format!(
+                    "{}  sending without the flagged files{}",
+                    s.gray(),
+                    s.reset()
+                ));
+                Some(kept)
+            }
+            _ => None,
+        }
+    }
+
     /// The submitted input as part of the scrollback: with colors, a bar with its
-    /// own background over the whole width, so a prompt is easy to find.
-    fn echo(&mut self, text: &str) {
+    /// own background over the whole width, so a prompt is easy to find. Dropped
+    /// files follow on the bar, one per row.
+    fn echo(&mut self, text: &str, files: &[Attachment]) {
         let s = self.style;
         self.blank();
         // `ESC[K` fills the rest of the row with the background.
@@ -731,6 +806,20 @@ impl Terminal {
                 bold = s.bold(),
                 accent = s.accent(),
                 reset = s.reset(),
+            ));
+        }
+        for (i, file) in files.iter().enumerate() {
+            let mark = if i == 0 && text.is_empty() { ">" } else { " " };
+            let (icon, color) = match file.warning {
+                Some(_) => ("⚠", s.action()),
+                None => ("📎", s.key()),
+            };
+            self.line(&format!(
+                "{bg}{accent} {mark} {reset}{bg}{color}{icon} {label} {fill}{reset}",
+                bg = s.prompt_bg(),
+                accent = s.accent(),
+                reset = s.reset(),
+                label = file.label(),
             ));
         }
         if s.on() {

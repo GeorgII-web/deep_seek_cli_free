@@ -6,6 +6,7 @@
 use super::scrollback::View;
 use super::style::Style;
 use super::{screen_lock, screen_write};
+use crate::attach::{self, Attachment, MAX_FILES};
 use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -269,6 +270,11 @@ pub struct Editor {
     /// Docked: the scrollable output above the dock; the box tells it the size of
     /// its area and passes it the scroll keys
     view: Option<Arc<Mutex<View>>>,
+    /// Files dropped on the chat box, sent with the next prompt (`take_files`)
+    files: Vec<Attachment>,
+    /// A message about the last drop (a file that could not be attached), shown
+    /// in the hint line until the next key
+    note: Option<String>,
 }
 
 /// A slash command: name with the slash, what it does.
@@ -320,6 +326,82 @@ impl Editor {
             think: None,
             commands: &[],
             view: None,
+            files: Vec::new(),
+            note: None,
+        }
+    }
+
+    /// The files dropped on the box for the input just submitted; the box is empty after.
+    pub fn take_files(&mut self) -> Vec<Attachment> {
+        std::mem::take(&mut self.files)
+    }
+
+    /// Adds dropped files (no file twice, at most `MAX_FILES`); what was left out goes to the note.
+    fn add_files(&mut self, dropped: attach::Dropped) {
+        let mut left_out = dropped.skipped;
+        for file in dropped.files {
+            if self.files.iter().any(|known| known.path == file.path) {
+                continue;
+            }
+            if self.files.len() >= MAX_FILES {
+                left_out.push(format!("{}: more than {MAX_FILES} files", file.name));
+                continue;
+            }
+            self.files.push(file);
+        }
+        self.note =
+            (!left_out.is_empty()).then(|| format!("Not attached: {}", left_out.join("; ")));
+    }
+
+    /// The top border's title: the attached files, flagged ones marked; a summary
+    /// when they do not fit in `max` columns. Text and its width.
+    fn files_title(&self, max: usize) -> (String, usize) {
+        let s = self.style;
+        if self.files.is_empty() {
+            return (String::new(), 0);
+        }
+        let columns = |text: &str| text.chars().map(width_of).sum::<usize>();
+        let mut text = String::new();
+        let mut used = 0;
+        for (i, file) in self.files.iter().enumerate() {
+            let item = match file.warning {
+                Some(_) => format!("⚠ {}", file.label()),
+                None => format!("📎 {}", file.label()),
+            };
+            let separator = if i == 0 { 0 } else { 2 };
+            used += separator + columns(&item);
+            let color = if file.warning.is_some() {
+                s.action()
+            } else {
+                s.key()
+            };
+            text.push_str(&format!(
+                "{}{color}{item}{}",
+                "  ".repeat(separator / 2),
+                s.reset()
+            ));
+        }
+        if used <= max {
+            return (text, used);
+        }
+        let total: u64 = self.files.iter().map(|file| file.size).sum();
+        let flagged = self
+            .files
+            .iter()
+            .filter(|file| file.warning.is_some())
+            .count();
+        let mut summary = format!(
+            "📎 {} files · {}",
+            self.files.len(),
+            attach::size_label(total)
+        );
+        if flagged > 0 {
+            summary.push_str(&format!(" · ⚠ {flagged} private"));
+        }
+        let used = columns(&summary);
+        match used <= max {
+            true => (format!("{}{summary}{}", s.key(), s.reset()), used),
+            false => (String::new(), 0),
         }
     }
 
@@ -620,7 +702,17 @@ impl Editor {
         let s = self.style;
         let rows = buffer.rows(width);
         let border = "─".repeat(width + FRAME_COLS - 2);
-        let mut lines = vec![format!("{}╭{border}╮{}", s.gray(), s.reset())];
+        // Attached files sit in the top border: `╭─ 📎 a.pdf · 12 KB ───╮`.
+        let (title, used) = self.files_title((width + FRAME_COLS - 2).saturating_sub(4));
+        let top = match used {
+            0 => border.clone(),
+            _ => format!(
+                "─ {title}{} {}",
+                s.gray(),
+                "─".repeat(width + FRAME_COLS - 2 - used - 3)
+            ),
+        };
+        let mut lines = vec![format!("{}╭{top}{}╮{}", s.gray(), s.gray(), s.reset())];
         for (i, &row) in rows.iter().enumerate().skip(first).take(count) {
             let text = buffer.row_text(row);
             let used: usize = text.chars().map(width_of).sum();
@@ -682,10 +774,26 @@ impl Editor {
                 false => Vec::new(),
             };
             selected = selected.min(items.len().saturating_sub(1));
-            let hint = match (armed_now, items.is_empty()) {
-                (true, _) => format!("{}{AGAIN_HINT}{}", self.style.action(), self.style.reset()),
-                (false, false) => self.hint_line(MENU_HINTS, width + FRAME_COLS - 2),
-                (false, true) => self.hint_line(hints, width + FRAME_COLS - 2),
+            // With files in the box and no text, Backspace takes the last one out.
+            let mut file_hints: Vec<(&str, &str)> = Vec::new();
+            if remember && !self.files.is_empty() && buffer.is_empty() {
+                file_hints.push(("Backspace", "drops a file"));
+            }
+            file_hints.extend_from_slice(hints);
+            let hint = match (armed_now, items.is_empty(), &self.note) {
+                (true, _, _) => {
+                    format!("{}{AGAIN_HINT}{}", self.style.action(), self.style.reset())
+                }
+                (false, true, Some(note)) => {
+                    let mut note: String = note.clone();
+                    let max = width + FRAME_COLS - 2;
+                    if note.chars().count() > max {
+                        note = note.chars().take(max.saturating_sub(1)).collect::<String>() + "…";
+                    }
+                    format!("{}{note}{}", self.style.action(), self.style.reset())
+                }
+                (false, false, _) => self.hint_line(MENU_HINTS, width + FRAME_COLS - 2),
+                (false, true, None) => self.hint_line(&file_hints, width + FRAME_COLS - 2),
             };
             let menu = self.menu_lines(&items, selected, width + FRAME_COLS - 2);
             self.draw(&buffer, width, &menu, &hint)?;
@@ -698,8 +806,12 @@ impl Editor {
             }
             let key = match event::read()? {
                 Event::Key(key) if key.kind != KeyEventKind::Release => key,
+                // Files dropped on the terminal arrive as a paste of their paths.
                 Event::Paste(text) => {
-                    buffer.insert_str(&text);
+                    match attach::from_paste(&text).filter(|_| remember) {
+                        Some(dropped) => self.add_files(dropped),
+                        None => buffer.insert_str(&text),
+                    }
                     continue;
                 }
                 // The wheel scrolls the output; the box is drawn again by the loop.
@@ -714,6 +826,7 @@ impl Editor {
                 }
                 _ => continue,
             };
+            self.note = None;
             if let Some(view) = &self.view
                 && super::scroll_by_key(view, key.code, key.modifiers)
             {
@@ -758,7 +871,8 @@ impl Editor {
                 }
                 KeyCode::Enter => {
                     let text = buffer.text().trim().to_string();
-                    if text.is_empty() {
+                    // Files alone are a prompt too.
+                    if text.is_empty() && (self.files.is_empty() || !remember) {
                         continue;
                     }
                     self.erase()?;
@@ -782,6 +896,7 @@ impl Editor {
                 }
                 KeyCode::Char('c') if ctrl && !armed_now => {
                     buffer = Buffer::default();
+                    self.files.clear();
                     armed = Some(Instant::now());
                     continue;
                 }
@@ -789,7 +904,10 @@ impl Editor {
                     self.erase()?;
                     return Ok(Input::Exit);
                 }
-                KeyCode::Esc => buffer = Buffer::default(),
+                KeyCode::Esc => {
+                    buffer = Buffer::default();
+                    self.files.clear();
+                }
                 KeyCode::Char('d') if ctrl && buffer.is_empty() => {
                     self.erase()?;
                     return Ok(Input::Exit);
@@ -801,6 +919,9 @@ impl Editor {
                 KeyCode::Char('k') if ctrl => buffer.kill_to_end(),
                 KeyCode::Char('w') if ctrl => buffer.delete_word(),
                 KeyCode::Backspace if alt || ctrl => buffer.delete_word(),
+                KeyCode::Backspace if buffer.is_empty() && remember => {
+                    self.files.pop();
+                }
                 KeyCode::Backspace => buffer.backspace(),
                 KeyCode::Delete => buffer.delete(),
                 KeyCode::Left => buffer.left(),
@@ -937,6 +1058,33 @@ pub fn read_choice(keys: &str) -> io::Result<Option<char>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dropped_files_sit_in_the_top_border() {
+        let mut editor = Editor::new(Style::new(false), None);
+        let file = |name: &str, size: u64, warning: bool| Attachment {
+            path: PathBuf::from(format!("/x/{name}")),
+            name: name.into(),
+            size,
+            warning: warning.then(|| "private".to_string()),
+        };
+        editor.files = vec![
+            file("my report.txt", 24, false),
+            file("id_ed25519", 40, true),
+        ];
+        let width = 60;
+        let lines = editor.box_lines(&Buffer::default(), width, 0, 1);
+        let columns = |text: &str| text.chars().map(width_of).sum::<usize>();
+        assert!(lines[0].starts_with("╭─ 📎 my report.txt · 24 B  ⚠ id_ed25519 · 40 B ──"));
+        assert_eq!(columns(&lines[0]), columns(&lines[2]));
+        // Too many to list: a summary.
+        editor.files = (0..9)
+            .map(|i| file(&format!("file-{i}.txt"), 1024, i == 3))
+            .collect();
+        let lines = editor.box_lines(&Buffer::default(), width, 0, 1);
+        assert!(lines[0].starts_with("╭─ 📎 9 files · 9 KB · ⚠ 1 private ─"));
+        assert_eq!(columns(&lines[0]), columns(&lines[2]));
+    }
 
     fn at(text: &str, cursor: usize) -> Buffer {
         let mut buffer = Buffer::new(text);

@@ -11,7 +11,7 @@ see `../approval-policy/SKILL.md`).
 
 | File | Content |
 |---|---|
-| `src/agent/protocol.rs` | `Action`, `FENCE`, `first_prompt`, `next_prompt`, `parse` → `Parsed`, `shell_result` |
+| `src/agent/protocol.rs` | `Action`, `FENCE`, `first_prompt`, `next_prompt`, `with_files` (the note `Attached files (…): a, b` before the `Task:` line), `parse` → `Parsed`, `shell_result` |
 | `src/agent/interrupt.rs` | `Interrupt`, `Interrupts` (`signal`, `channel`, `clear`, `next`) |
 | `src/agent/tools.rs` | `shell` → `ShellOutput`, `cap`, `read_file`, `write_file`; constants `KEEP_BYTES`, `DRAIN` |
 | `src/agent/run.rs` | `run`, `act` (policy, question, edit), `execute`; `Ui`, `Decision`; tests with `Script` and `FakeUi` |

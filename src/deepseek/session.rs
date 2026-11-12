@@ -1,14 +1,19 @@
 //! One conversation with DeepSeek: session id, message chain, proof of work per turn.
 
-use super::client::{ApiError, Client, NO_POW, TurnOpts};
+use super::client::{ApiError, COMPLETION_PATH, Client, NO_POW, TurnOpts, UPLOAD_PATH};
 use super::stream::Parser;
 use super::{pow, throttle};
+use crate::attach::{self, Attachment};
 use crate::backend::{Backend, Event};
 use crate::config::{Paths, Throttle};
 use anyhow::{Context, Result};
 use futures_util::StreamExt;
 use std::fs;
-use std::time::Duration;
+use std::time::{Duration, Instant};
+
+/// Between two status questions while DeepSeek reads uploaded files, and how long to wait in all.
+const POLL_EVERY: Duration = Duration::from_secs(2);
+const READ_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub struct Conversation {
     client: Client,
@@ -19,6 +24,8 @@ pub struct Conversation {
     session_id: Option<String>,
     /// Id of the last answer; the next prompt hangs below it
     parent_message_id: Option<u64>,
+    /// Files for the next prompt (`Backend::attach`), uploaded when it is sent
+    pending: Vec<Attachment>,
 }
 
 impl Conversation {
@@ -31,6 +38,7 @@ impl Conversation {
             wasm: None,
             session_id: None,
             parent_message_id: None,
+            pending: Vec::new(),
         }
     }
 
@@ -87,19 +95,91 @@ impl Conversation {
         Ok(self.wasm.as_deref().unwrap())
     }
 
-    /// Fetches and solves a challenge; returns the `X-DS-PoW-Response` value.
-    pub async fn pow_header(&mut self) -> Result<String> {
-        let challenge = self.client.create_challenge().await?;
+    /// Fetches and solves a challenge for the call to `target_path`; returns the
+    /// `X-DS-PoW-Response` value. Each answer is good for one call.
+    pub async fn pow_header(&mut self, target_path: &str) -> Result<String> {
+        let challenge = self.client.create_challenge(target_path).await?;
         if challenge.algorithm == NO_POW {
             // The local mock: nothing to solve, nothing to download.
-            return Ok(pow::header(&challenge, 0));
+            return Ok(pow::header(&challenge, 0, target_path));
         }
         let wasm = self.wasm().await?.to_vec();
         let solved = challenge.clone();
         let answer = tokio::task::spawn_blocking(move || pow::solve(&wasm, &solved))
             .await
             .context("proof-of-work task")??;
-        Ok(pow::header(&challenge, answer))
+        Ok(pow::header(&challenge, answer, target_path))
+    }
+
+    /// Uploads the pending files and waits until DeepSeek has read them; returns
+    /// their ids for `ref_file_ids`. One proof of work per file. Uploads are not
+    /// prompts: they do not take a place in the throttle, but a 429 pauses
+    /// everything like one on a prompt.
+    async fn upload_pending(&mut self, sink: &mut dyn FnMut(&Event)) -> Result<Vec<String>> {
+        let files = std::mem::take(&mut self.pending);
+        let mut ids = Vec::new();
+        for file in &files {
+            let bytes = tokio::fs::read(&file.path)
+                .await
+                .with_context(|| format!("read {}", file.path.display()))?;
+            sink(&Event::Status(format!("Uploading {}", file.label())));
+            let pow = self.pow_header(UPLOAD_PATH).await?;
+            let id = self
+                .client
+                .upload_file(&file.name, bytes, attach::mime(&file.name), &pow)
+                .await
+                .inspect_err(|err| self.pause_on_429(err))?;
+            ids.push(id);
+        }
+        if ids.is_empty() {
+            return Ok(ids);
+        }
+        let names = |pick: &dyn Fn(&str) -> bool| -> String {
+            files
+                .iter()
+                .zip(&ids)
+                .filter(|(_, id)| pick(id))
+                .map(|(file, _)| file.name.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        };
+        let started = Instant::now();
+        loop {
+            let remote = self
+                .client
+                .fetch_files(&ids)
+                .await
+                .inspect_err(|err| self.pause_on_429(err))?;
+            let status = |id: &str| remote.iter().find(|file| file.id == id);
+            if let Some(failed) = remote.iter().find(|file| file.failed()) {
+                let name = names(&|id| id == failed.id);
+                let why = failed.error.as_deref().unwrap_or(&failed.status);
+                anyhow::bail!("DeepSeek could not read {name} ({why})");
+            }
+            if ids
+                .iter()
+                .all(|id| status(id).is_some_and(|file| file.ready()))
+            {
+                return Ok(ids);
+            }
+            if started.elapsed() > READ_TIMEOUT {
+                let waiting = names(&|id| !status(id).is_some_and(|file| file.ready()));
+                anyhow::bail!(
+                    "DeepSeek did not finish reading {waiting} in {} s",
+                    READ_TIMEOUT.as_secs()
+                );
+            }
+            let waiting = names(&|id| !status(id).is_some_and(|file| file.ready()));
+            sink(&Event::Status(format!("DeepSeek is reading {waiting}")));
+            tokio::time::sleep(POLL_EVERY).await;
+        }
+    }
+
+    /// A 429 on a helper call: the same pause as after one on a prompt.
+    fn pause_on_429(&self, err: &anyhow::Error) {
+        if let Some(ApiError::RateLimited(after)) = err.downcast_ref::<ApiError>() {
+            throttle::cooldown(&self.paths, after.unwrap_or(self.throttle.wait_on_429_secs));
+        }
     }
 
     /// Sends `prompt` as the next message; the response body is the SSE stream.
@@ -107,6 +187,7 @@ impl Conversation {
     async fn send(
         &mut self,
         prompt: &str,
+        files: &[String],
         sink: &mut dyn FnMut(&Event),
     ) -> Result<reqwest::Response> {
         let mut retries = self.throttle.retries_on_429;
@@ -120,7 +201,7 @@ impl Conversation {
                 }
             };
             throttle::acquire(&self.paths, &self.throttle, &mut on_wait).await;
-            match self.send_once(prompt, sink).await {
+            match self.send_once(prompt, files, sink).await {
                 Err(err) => match err.downcast_ref::<ApiError>() {
                     Some(ApiError::RateLimited(after)) => {
                         // Each further "too many requests" doubles the pause. It is also
@@ -148,6 +229,7 @@ impl Conversation {
     async fn send_once(
         &mut self,
         prompt: &str,
+        files: &[String],
         sink: &mut dyn FnMut(&Event),
     ) -> Result<reqwest::Response> {
         let session_id = match &self.session_id {
@@ -160,13 +242,14 @@ impl Conversation {
             }
         };
         sink(&Event::Status("Solving proof of work".into()));
-        let pow = self.pow_header().await?;
+        let pow = self.pow_header(COMPLETION_PATH).await?;
         sink(&Event::Status("Waiting for DeepSeek".into()));
         self.client
             .completion(
                 &session_id,
                 self.parent_message_id,
                 prompt,
+                files,
                 &self.opts,
                 &pow,
             )
@@ -175,8 +258,13 @@ impl Conversation {
 }
 
 impl Backend for Conversation {
+    fn attach(&mut self, files: Vec<Attachment>) {
+        self.pending = files;
+    }
+
     async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
-        let mut body = self.send(prompt, sink).await?.bytes_stream();
+        let files = self.upload_pending(sink).await?;
+        let mut body = self.send(prompt, &files, sink).await?.bytes_stream();
         let mut parser = Parser::new();
         let mut answer = String::new();
         while let Some(chunk) = body.next().await {

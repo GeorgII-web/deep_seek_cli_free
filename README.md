@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.2.5 · DeepSeek web · default
+  ✻ dsc 0.3.0 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -178,6 +178,26 @@ blue and real terminal links: the terminal underlines one under the mouse and op
 Windows Terminal and most others). Colors switch off with
 `NO_COLOR=1` or when the output is not a terminal.
 
+### Attach files
+
+Drop files from your file manager onto the chat box (or paste their full paths). They are not typed into the box:
+they appear in its top border (`📎 report.pdf · 120 KB`) and go with your next message. Files alone are a
+message too (the model is asked what they contain). Backspace in an empty box drops the last file, Esc drops all.
+Up to 50 files, 100 MB each.
+
+dsc uploads them to DeepSeek the way the web page does (each file gets its own proof of work), waits until
+DeepSeek has read them, and sends their ids with the prompt. What DeepSeek can read (PDF, Office files, text,
+images) is up to DeepSeek. Uploads do not use up the request budget of the throttle.
+
+Files that look private get a warning before anything leaves your machine: SSH keys and anything in `~/.ssh`,
+`~/.aws`, `~/.gnupg`, `.env` files, `.pem` / `.key` / `.kdbx` files, names with `password`, `secret` or `token`,
+and text with a private key block, a known token shape or a `password = …` line. You choose: `y` sends them,
+`s` sends only the other files, `n` cancels the message. The check is a heuristic: a file it misses is sent
+without a question.
+
+In Windows Terminal with a WSL profile a drop pastes the Linux path (`/mnt/c/...`); Windows paths (`C:\...`) and
+`file://` links are understood too.
+
 ### Models: the real account or the mock
 
 `/model` opens a choice of who answers:
@@ -194,7 +214,8 @@ work: two seconds of "waiting", then word by word (`[mock]` in the config sets t
 on the mock, it lists the tasks it understands: `!<command>` asks to run the
 command, `browse <url>` answers as if it had read the page on its side, `curl <url>` asks to fetch it with curl on your
 machine, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
-scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back.
+scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back. Dropped files
+are "uploaded" and "read" without any network (`reject` or `unreadable` in a file name shows the failures).
 
 ### Deep thinking
 
@@ -281,7 +302,8 @@ stops the task.
   keys, the token file); it is **not a sandbox**.
 - The mode `allow all` (`--yes`, Shift+Tab, `/permissions`) lets a free chat model run anything not on the deny list. Use it only for tasks and folders where that
   is acceptable, ideally in a container or VM.
-- The model sees only what you send: the task, the working directory and the results of approved actions.
+- The model sees only what you send: the task, the working directory, the results of approved actions and the files
+  you drop on the chat box (files that look private need a yes first).
 
 ## Configuration
 

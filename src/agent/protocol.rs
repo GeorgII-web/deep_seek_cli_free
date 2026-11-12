@@ -118,6 +118,22 @@ pub fn next_prompt(task: &str, web: bool) -> String {
     )
 }
 
+/// The prompt with a note on the files attached to it, right before the task:
+/// their content comes with the message, they are not on the machine to look for.
+pub fn with_files(prompt: String, names: &[&str]) -> String {
+    if names.is_empty() {
+        return prompt;
+    }
+    let note = format!(
+        "Attached files (their content comes with this message; do not look for them on the machine): {}\n\n",
+        names.join(", ")
+    );
+    match prompt.rfind("Task: ") {
+        Some(at) => format!("{}{note}{}", &prompt[..at], &prompt[at..]),
+        None => format!("{note}{prompt}"),
+    }
+}
+
 /// What the model gets when it ends a task with the done block before any
 /// action ran: nothing would be on the user's screen.
 pub const DONE_TOO_EARLY: &str = "You sent the done block, but no action ran in this task, so the user sees nothing. Run the action the task needs now, or answer in plain text.";
@@ -281,5 +297,8 @@ mod tests {
         assert!(next_prompt("t", true).contains("only after the result of an action of this task"));
         assert!(next_prompt("t", true).contains("search on your side is on"));
         assert!(next_prompt("t", false).contains("search on your side is off"));
+        let attached = with_files(next_prompt("t", true), &["a.pdf", "b.png"]);
+        assert!(attached.ends_with("a.pdf, b.png\n\nTask: t"));
+        assert_eq!(with_files("x".into(), &[]), "x");
     }
 }

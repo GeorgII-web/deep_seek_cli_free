@@ -3,6 +3,7 @@
 //! `scripts/mock-deepseek.py` plays the same parts over HTTP for the client code.
 
 use crate::agent::protocol::FENCE;
+use crate::attach::Attachment;
 use crate::backend::{Backend, Event};
 use crate::config::MockSpeed;
 use crate::deepseek::client::ApiError;
@@ -33,7 +34,9 @@ pub const TASKS: &str = "\
 `broken`          an action block that is not JSON; `two` = two action blocks
 `early`           the done block at once (the app asks again), then a sentence
 `dead`            the \"token dead\" error; `429` = the \"too many requests\" error
-anything else     `Mock answer to: <task>`";
+anything else     `Mock answer to: <task>`
+dropped files     \"uploaded\" and \"read\": the answer starts with their names, sizes and first lines;
+                  `reject` in a file name = refused at upload, `unreadable` = cannot be read";
 
 /// `Mock::default()` answers without any pause (the unit tests); the app uses `Mock::new`.
 #[derive(Default)]
@@ -50,6 +53,8 @@ pub struct Mock {
     wait: Duration,
     /// Pause between two pieces of an answer
     delay: Duration,
+    /// Files for the next prompt
+    files: Vec<Attachment>,
 }
 
 fn block(json: &str) -> String {
@@ -208,11 +213,62 @@ fn pieces(text: &str) -> Vec<&str> {
     text.split_inclusive([' ', '\n']).collect()
 }
 
+impl Mock {
+    /// "Uploads" and "reads" the attached files like DeepSeek would (progress lines,
+    /// the same failures by name); returns the line the answer starts with.
+    async fn read_files(&mut self, sink: &mut dyn FnMut(&Event)) -> Result<String> {
+        let files = std::mem::take(&mut self.files);
+        if files.is_empty() {
+            return Ok(String::new());
+        }
+        let mut seen = Vec::new();
+        for file in &files {
+            sink(&Event::Status(format!("Uploading {}", file.label())));
+            tokio::time::sleep(self.wait).await;
+            if file.name.contains("reject") {
+                anyhow::bail!("upload {}: mock: unsupported file type", file.name);
+            }
+            let first = std::fs::read(&file.path)
+                .map(|bytes| {
+                    let line = bytes.split(|&b| b == b'\n').next().unwrap_or_default();
+                    String::from_utf8_lossy(&line[..line.len().min(60)])
+                        .trim()
+                        .to_string()
+                })
+                .unwrap_or_default();
+            seen.push(format!(
+                "{} ({} bytes, first line: {first:?})",
+                file.name, file.size
+            ));
+        }
+        let names: Vec<&str> = files.iter().map(|file| file.name.as_str()).collect();
+        sink(&Event::Status(format!(
+            "The mock is reading {}",
+            names.join(", ")
+        )));
+        tokio::time::sleep(self.wait).await;
+        if let Some(file) = files.iter().find(|file| file.name.contains("unreadable")) {
+            anyhow::bail!("DeepSeek could not read {} (PARSE_FAILED)", file.name);
+        }
+        Ok(format!(
+            "Mock read {} attached file(s): {}.\n\n",
+            files.len(),
+            seen.join(", ")
+        ))
+    }
+}
+
 impl Backend for Mock {
+    fn attach(&mut self, files: Vec<Attachment>) {
+        self.files = files;
+    }
+
     async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
+        let read = self.read_files(sink).await?;
         sink(&Event::Status("Waiting for the mock".into()));
         tokio::time::sleep(self.wait).await;
         let mut plan = self.plan(prompt)?;
+        plan.answer.insert_str(0, &read);
         if self.thinking && plan.thinking.is_empty() {
             plan.thinking =
                 "Mock reasoning: the user asks something. I look at it from two sides and decide."
@@ -379,5 +435,39 @@ mod tests {
             limited.downcast_ref(),
             Some(ApiError::RateLimited(Some(1)))
         ));
+    }
+
+    #[tokio::test]
+    async fn attached_files_are_read_once() {
+        let dir = std::env::temp_dir().join(format!("dsc-mock-files-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let (good, bad) = (dir.join("notes.txt"), dir.join("unreadable.pdf"));
+        std::fs::write(&good, "first line\nsecond\n").unwrap();
+        std::fs::write(&bad, "%PDF").unwrap();
+        let mut mock = Mock::default();
+        mock.attach(vec![crate::attach::load(&good).unwrap()]);
+        let mut statuses = Vec::new();
+        let answer = mock
+            .ask("Task: hello", &mut |event| {
+                if let Event::Status(status) = event {
+                    statuses.push(status.clone())
+                }
+            })
+            .await
+            .unwrap();
+        assert!(answer.starts_with(
+            "Mock read 1 attached file(s): notes.txt (18 bytes, first line: \"first line\")"
+        ));
+        assert!(answer.ends_with("Mock answer to: hello"));
+        assert!(statuses[0].starts_with("Uploading notes.txt"));
+        // The files go with one prompt only.
+        assert_eq!(
+            ask(&mut mock, "Task: again").await.0,
+            "Mock answer to: again"
+        );
+        mock.attach(vec![crate::attach::load(&bad).unwrap()]);
+        let err = mock.ask("Task: x", &mut |_| {}).await.unwrap_err();
+        assert!(err.to_string().contains("could not read unreadable.pdf"));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

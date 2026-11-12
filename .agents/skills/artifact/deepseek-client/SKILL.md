@@ -29,8 +29,9 @@ Base `https://chat.deepseek.com`. Headers on every call: `Authorization: Bearer 
 | 1 | `POST /api/v0/chat_session/create` `{}` | once per conversation → session id |
 | 2 | `POST /api/v0/chat/create_pow_challenge` `{"target_path":"/api/v0/chat/completion"}` | per turn → `algorithm, challenge, salt, difficulty, expire_at, signature` |
 | 3 | solve (`pow::solve`: own thread with a 64 MB stack; `wasmi` with feature `portable-dispatch`, because its default tail-call dispatch overflows the stack in debug builds; worst case 1.8 s release, 3.6 s debug with dependencies at `opt-level = 3`) | wasm export `wasm_solve(sp, challenge, len, prefix, len, difficulty)`, prefix = `<salt>_<expire_at>_`; answer = f64 at `sp+8` |
-| 4 | `POST /api/v0/chat/completion` + header `X-DS-PoW-Response` = base64 of JSON `{algorithm, challenge, salt, answer, signature, target_path}` | body: `chat_session_id, parent_message_id, model_type, prompt, ref_file_ids: [], thinking_enabled, search_enabled` |
+| 4 | `POST /api/v0/chat/completion` + header `X-DS-PoW-Response` = base64 of JSON `{algorithm, challenge, salt, answer, signature, target_path}` | body: `chat_session_id, parent_message_id, model_type, prompt, ref_file_ids` (ids of attached files, else `[]`)`, thinking_enabled, search_enabled` |
 | 5 | SSE, see below | the `ready` event carries `response_message_id` = the next `parent_message_id` |
+| files | before step 2 of a prompt with attached files: per file a challenge for `/api/v0/file/upload_file`, `POST /api/v0/file/upload_file` (multipart `file`), then `GET /api/v0/file/fetch_files` until `SUCCESS`; the ids go into `ref_file_ids` | `Conversation::upload_pending`; details in `../attachments/SKILL.md` |
 
 SSE (`stream::Parser`, recorded samples in `src/deepseek/fixtures/`): `event: <name>` applies to the next
 `data:` line; events `ready`, `update_session`, `title`, `close`; data lines without an event are patches to one

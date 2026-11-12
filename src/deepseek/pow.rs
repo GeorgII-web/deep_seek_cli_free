@@ -1,6 +1,6 @@
 //! Proof of work: the site's own wasm module is run in an embedded interpreter.
 
-use super::client::{COMPLETION_PATH, Challenge};
+use super::client::Challenge;
 use anyhow::{Context, Result, anyhow, bail};
 use base64::Engine as _;
 use serde_json::json;
@@ -90,15 +90,15 @@ fn put(instance: &Instance, store: &mut Ctx, bytes: &[u8]) -> Result<(i32, i32)>
     Ok((ptr, len))
 }
 
-/// Value of the `X-DS-PoW-Response` header.
-pub fn header(challenge: &Challenge, answer: u64) -> String {
+/// Value of the `X-DS-PoW-Response` header for the call to `target_path`.
+pub fn header(challenge: &Challenge, answer: u64, target_path: &str) -> String {
     let body = json!({
         "algorithm": challenge.algorithm,
         "challenge": challenge.challenge,
         "salt": challenge.salt,
         "answer": answer,
         "signature": challenge.signature,
-        "target_path": COMPLETION_PATH,
+        "target_path": target_path,
     });
     base64::engine::general_purpose::STANDARD.encode(body.to_string())
 }
@@ -106,6 +106,7 @@ pub fn header(challenge: &Challenge, answer: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::deepseek::client::COMPLETION_PATH;
 
     fn challenge() -> Challenge {
         Challenge {
@@ -134,7 +135,7 @@ mod tests {
     #[test]
     fn header_is_base64_json_with_the_answer() {
         let text = base64::engine::general_purpose::STANDARD
-            .decode(header(&challenge(), 42))
+            .decode(header(&challenge(), 42, COMPLETION_PATH))
             .unwrap();
         let value: serde_json::Value = serde_json::from_slice(&text).unwrap();
         assert_eq!(value["answer"], 42);

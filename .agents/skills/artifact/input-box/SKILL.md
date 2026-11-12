@@ -17,20 +17,20 @@ at the box width (wide characters count two columns); a box taller than the scre
 
 | Key | Effect |
 |---|---|
-| Enter | send (empty input is ignored); after a `\` at the cursor: new line |
+| Enter | send (empty input is ignored unless files are attached); after a `\` at the cursor: new line |
 | Shift+Enter (where the terminal reports it: `RawMode` asks for the keyboard flags), Alt+Enter, Ctrl-J | new line |
 | PgUp, PgDn, Ctrl+Home, Ctrl+End, mouse wheel | scroll the output (`scroll_by_key`, `mouse_event`) |
 | Ctrl-O, click on a block header | fold or unfold the output of an action |
 | Up, Down | move a row; at the first or last row go through the history (the draft is kept) |
 | Left, Right, Home, End, Ctrl-A, Ctrl-E | move |
-| Backspace, Delete, Ctrl-W or Alt+Backspace (word), Ctrl-U, Ctrl-K | delete |
+| Backspace, Delete, Ctrl-W or Alt+Backspace (word), Ctrl-U, Ctrl-K | delete; Backspace in an empty chat box drops the last attached file |
 | `/` as the first character | command menu, described after this table |
 | Shift+Tab | switch the mode (ask ⇄ allow all) |
-| Esc | clear the box |
+| Esc | clear the box (text and attached files) |
 | Ctrl-C | with text selected in the output: copy it; else clear the box and show "Press Ctrl-C again to exit" for `AGAIN` (2 s); a second one in that time quits |
 | Ctrl-V, right click with nothing selected | paste the copied text into the box |
 | Ctrl-D | quit on an empty box, else delete |
-| paste | bracketed paste keeps line ends; tabs become spaces, control characters are dropped |
+| paste | bracketed paste keeps line ends; tabs become spaces, control characters are dropped. In the chat box a paste of existing absolute file paths (a drop) attaches the files instead: `../attachments/SKILL.md` |
 
 Command menu (chat prompt only, `remember = true`): while the input is one word starting with `/`,
 `command_matches(COMMANDS, text)` gives the commands that start with it and `menu_lines` draws them between the box

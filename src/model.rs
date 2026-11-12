@@ -48,6 +48,13 @@ impl Model {
 }
 
 impl Backend for Model {
+    fn attach(&mut self, files: Vec<crate::attach::Attachment>) {
+        match self {
+            Self::Deepseek(conversation) => conversation.attach(files),
+            Self::Mock(mock) => mock.attach(files),
+        }
+    }
+
     async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
         match self {
             Self::Deepseek(conversation) => conversation.ask(prompt, sink).await,
