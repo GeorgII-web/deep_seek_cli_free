@@ -144,6 +144,17 @@ pub(crate) fn screen_write(text: &str) {
     let _ = out.flush();
 }
 
+/// What the icon in the tab title says.
+#[derive(Clone, Copy, PartialEq)]
+enum TabState {
+    /// Nothing runs; the default icon
+    Idle,
+    /// A task is in progress
+    Working,
+    /// The task waits for the user: an approval question
+    Asking,
+}
+
 /// Reads keys while a task runs: Esc stops the task, Ctrl-C twice leaves the app.
 /// The terminal is in raw mode for that time, so lines end with `\r\n`.
 struct Watch {
@@ -259,6 +270,9 @@ pub struct Terminal {
     view: Option<Arc<Mutex<View>>>,
     /// Screen layout: the mouse wheel scrolls the output (the terminal reports the mouse to the app)
     mouse: bool,
+    /// The title of the terminal tab, without its icon
+    title: String,
+    tab_state: TabState,
     /// The status line of the answer in progress is up (screen layout)
     status_on: bool,
     /// Output of the running command not yet ended by a line end
@@ -312,6 +326,8 @@ impl Terminal {
             watch: None,
             view: None,
             mouse: true,
+            title: String::from("dsc"),
+            tab_state: TabState::Idle,
             status_on: false,
             live: String::new(),
             live_lines: 0,
@@ -332,11 +348,29 @@ impl Terminal {
     }
 
     /// Sets the title of the terminal tab (screen layout only): `dsc`, or the
-    /// name of the conversation.
-    pub fn set_title(&self, title: &str) {
+    /// name of the conversation. An icon in front shows what the app is doing.
+    pub fn set_title(&mut self, title: &str) {
+        self.title = title.chars().filter(|c| !c.is_control()).take(80).collect();
+        self.write_title();
+    }
+
+    /// The tab shows the state at a glance, also when another tab is in front:
+    /// working on a task, waiting for the user's yes or no, or idle.
+    fn set_tab_state(&mut self, state: TabState) {
+        if self.tab_state != state {
+            self.tab_state = state;
+            self.write_title();
+        }
+    }
+
+    fn write_title(&self) {
         if self.screen {
-            let title: String = title.chars().filter(|c| !c.is_control()).take(80).collect();
-            screen_write(&format!("\x1b]0;{title}\x07"));
+            let icon = match self.tab_state {
+                TabState::Idle => "✻",
+                TabState::Working => "⏳",
+                TabState::Asking => "❓",
+            };
+            screen_write(&format!("\x1b]0;{icon} {}\x07", self.title));
         }
     }
 
@@ -807,6 +841,7 @@ impl Terminal {
         self.started = Instant::now();
         self.answers = 0;
         self.actions = 0;
+        self.set_tab_state(TabState::Working);
         self.watch_start();
     }
 
@@ -816,6 +851,7 @@ impl Terminal {
         self.close_output();
         // A step that failed or was stopped left its status line up.
         self.end_status();
+        self.set_tab_state(TabState::Idle);
         self.spinner.stop();
         self.watch_stop();
         self.blank();
@@ -1138,7 +1174,9 @@ impl Ui for Terminal {
     fn approve(&mut self, action: &Action, can_always: bool) -> Decision {
         // The question reads keys itself: the task's key watcher pauses.
         self.watch_stop();
+        self.set_tab_state(TabState::Asking);
         let decision = self.question(action, can_always);
+        self.set_tab_state(TabState::Working);
         self.watch_start();
         decision
     }

@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.2.2 · DeepSeek web · default
+  ✻ dsc 0.2.3 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -217,7 +217,8 @@ Continue this conversation:
 ```
 
 The terminal tab is named after the conversation (`dsc · <first task>`), so several chats are easy to tell
-apart. `sessions.json` holds only the session id, the place to continue at and the title, and `sessions/<id>.log` the
+apart, and an icon in front shows the state: `⏳` while a task is in progress, `❓` while it waits for your yes or
+no, `✻` when nothing runs. Your own tab title is put back when you quit. `sessions.json` holds only the session id, the place to continue at and the title, and `sessions/<id>.log` the
 screen output. `/new` starts a conversation on a clean screen. The list contains the
 conversations started with `dsc`, the last 50; chats from the DeepSeek website are not in it, since they lack the
 agent rules. The mock has sessions of its own, so `/sessions` can be tried without the real account: each model

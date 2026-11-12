@@ -387,6 +387,10 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
             task => protocol::next_prompt(task, web_base && !thinking),
         };
         first = false;
+        // A new conversation gets its name in the tab as soon as its first task starts.
+        if current.is_none() {
+            terminal.set_title(&format!("dsc · {}", sessions::title(&line)));
+        }
         let mut quit = false;
         // A failed or stopped task does not end the chat; Ctrl-C twice does. A dead
         // token opens the login window and, with a new token, the task runs again.

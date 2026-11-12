@@ -72,7 +72,7 @@ working folds (`Terminal::show_output`). `/new` and
 `first = false`); a single task continues it with `next_prompt`; an unknown code is an error line (chat) or an
 error exit (single task). When the chat ends with a conversation in use, it prints
 `dsc --session=<id>` after the terminal is restored. The tab title (`Terminal::set_title`) is `dsc`, or
-`dsc · <title>` once the conversation has a session. A session
+`dsc · <title>` from the start of a conversation's first task (the state icon in front: `../terminal-ui/SKILL.md`). A session
 deleted on the website fails at the next task with DeepSeek's error.
 
 No local transcript (`TASKS.md`). Inputs are kept in `<home>/history.json` (`Paths::history`).
