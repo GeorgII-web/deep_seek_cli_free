@@ -26,7 +26,7 @@ Base `https://chat.deepseek.com`. Headers on every call: `Authorization: Bearer 
 
 | Step | Call | Notes |
 |---|---|---|
-| 1 | `POST /api/v0/chat_session/create` `{}` | once per conversation → session id |
+| 1 | `POST /api/v0/chat_session/create` `{}` | once per conversation, when its first prompt is sent (`send_once`; never at the app start, at `/new` or on a model switch) → session id; the search chat likewise at its first search |
 | 2 | `POST /api/v0/chat/create_pow_challenge` `{"target_path":"/api/v0/chat/completion"}` | per turn → `algorithm, challenge, salt, difficulty, expire_at, signature` |
 | 3 | solve (`pow::solve`: own thread with a 64 MB stack; `wasmi` with feature `portable-dispatch`, because its default tail-call dispatch overflows the stack in debug builds; worst case 1.8 s release, 3.6 s debug with dependencies at `opt-level = 3`) | wasm export `wasm_solve(sp, challenge, len, prefix, len, difficulty)`, prefix = `<salt>_<expire_at>_`; answer = f64 at `sp+8` |
 | 4 | `POST /api/v0/chat/completion` + header `X-DS-PoW-Response` = base64 of JSON `{algorithm, challenge, salt, answer, signature, target_path}` | body: `chat_session_id, parent_message_id, model_type, prompt, ref_file_ids` (ids of attached files, else `[]`)`, thinking_enabled, search_enabled` |
@@ -60,7 +60,9 @@ as this envelope instead of a stream. The static wasm host is called without the
 
 ## Throttle (`throttle.rs`, config `[throttle]`)
 
-Every completion call goes through `throttle::acquire` (in `Conversation::send`); `doctor` calls are not counted.
+Only completion calls (prompts) go through `throttle::acquire` (in `Conversation::send`, before the session
+create and the challenge of that prompt, so the challenge is fresh). Nothing else waits or counts: not the
+challenge, not the session create, not the token check at the chat start, not uploads and file polls, not `doctor`.
 
 | Key | Default | Meaning |
 |---|---|---|

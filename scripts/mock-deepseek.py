@@ -11,7 +11,7 @@ It answers the calls dsc makes, in the real shapes:
   POST /api/v0/chat/completion             an answer as the SSE patch stream
   POST /api/v0/file/upload_file            multipart field "file": a file id, status PENDING
   GET  /api/v0/file/fetch_files?file_ids=  the files with their status: PENDING twice, then SUCCESS
-  GET  /_stats                             {"requests": N, "completions": N, "uploads": N, "polls": N,
+  GET  /_stats                             {"requests": N, "sessions": N, "completions": N, "uploads": N, "polls": N,
                                             "last": {thinking_enabled, search_enabled, ref_file_ids}}
 
 The proof of work is checked for its target: the header of a completion must name the completion
@@ -62,7 +62,7 @@ RESULT_STARTS = ('Result:', '--- ', 'Written:', 'Denied', 'Error:', 'Your tool c
 COMPLETION_PATH = '/api/v0/chat/completion'
 UPLOAD_PATH = '/api/v0/file/upload_file'
 
-stats = {'requests': 0, 'completions': 0, 'uploads': 0, 'polls': 0}
+stats = {'requests': 0, 'sessions': 0, 'completions': 0, 'uploads': 0, 'polls': 0}
 # Per session: the next message id and what to say after a tool result.
 sessions = {}
 # Uploaded files by id: name, size, first line, how often the status was asked, the polls before SUCCESS.
@@ -295,6 +295,7 @@ class Handler(BaseHTTPRequestHandler):
             return self.send_json(envelope({'challenge': challenge}))
         if self.path == '/api/v0/chat_session/create':
             session_id = f'mock-{len(sessions) + 1}'
+            stats['sessions'] += 1
             sessions[session_id] = {'next': 1}
             return self.send_json(envelope({'id': session_id}))
         if self.path == '/api/v0/chat/completion':

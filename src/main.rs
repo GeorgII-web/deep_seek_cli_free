@@ -632,7 +632,7 @@ const TOKEN_TRUST_SECS: u64 = 15 * 60;
 const FILES_ONLY_TASK: &str = "Look at the attached files and tell me briefly what they contain.";
 
 /// Checks the saved token against DeepSeek before the chat starts: one call
-/// that sends no prompt. It counts as a request for the throttle, and it is
+/// that sends no prompt. It takes no place in the throttle (only prompts do), and it is
 /// skipped when the token worked in the last `TOKEN_TRUST_SECS` (starting the
 /// app often must not hammer DeepSeek) or with `DSC_SKIP_TOKEN_CHECK` set
 /// (driving the UI in tests). A dead token opens the login window until a token
@@ -651,7 +651,6 @@ async fn check_token(
             return Ok(None);
         }
         let client = Client::new(&Auth::require(paths)?, &settings.deepseek)?;
-        deepseek::throttle::acquire(paths, &settings.throttle, &mut |_| {}).await;
         let Err(err) = client
             .create_challenge(deepseek::client::COMPLETION_PATH)
             .await

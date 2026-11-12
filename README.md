@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.4.16 · DeepSeek web · default
+  ✻ dsc 0.4.17 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
