@@ -1,6 +1,6 @@
 [package]
 name = "deep_seek_cli_free"
-version = "0.4.9"
+version = "0.4.10"
 edition = "2024"
 description = "CLI agent that runs commands on this machine, driven by the free DeepSeek web account"
 license = "MIT"
