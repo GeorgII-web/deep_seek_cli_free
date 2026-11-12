@@ -241,6 +241,8 @@ pub struct Queued {
 pub type Queue = Arc<Mutex<VecDeque<Queued>>>;
 /// Most prompts the queue holds.
 pub const QUEUE_MAX: usize = 5;
+/// Empty columns after the last label of the bottom row (`Shift + Tab`).
+pub const LABELS_MARGIN: usize = 1;
 /// Rows above the queued prompts: an empty one (apart from the output), the title.
 const QUEUE_HEAD_ROWS: usize = 2;
 
@@ -655,7 +657,7 @@ impl Editor {
         let max = Self::inner_width() + FRAME_COLS - 2;
         let total: usize = labels.iter().map(|(_, columns, _)| columns).sum::<usize>()
             + 3 * labels.len().saturating_sub(1);
-        let mut at = (2 + max).checked_sub(total)?;
+        let mut at = (2 + max).checked_sub(total + LABELS_MARGIN)?;
         for (_, columns, toggle) in labels {
             if column >= at && column < at + columns {
                 return toggle;
@@ -667,6 +669,8 @@ impl Editor {
 
     fn hint_line(&self, hints: &[(&str, &str)], max: usize) -> String {
         let s = self.style;
+        // The right labels stop `LABELS_MARGIN` columns before the box edge.
+        let max = max.saturating_sub(LABELS_MARGIN);
         let dot = format!("{} · {}", s.faint(), s.reset());
         // Right: the model, deep thinking, Browse, then the mode with its key right
         // after it (the key belongs to the mode). Left: the other keys, as many as fit.
