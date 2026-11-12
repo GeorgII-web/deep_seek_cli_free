@@ -270,8 +270,11 @@ pub struct Editor {
     /// Docked: the scrollable output above the dock; the box tells it the size of
     /// its area and passes it the scroll keys
     view: Option<Arc<Mutex<View>>>,
-    /// Files dropped on the chat box, sent with the next prompt (`take_files`)
+    /// Files dropped on the chat box, sent with the next prompt
     files: Vec<Attachment>,
+    /// The files of the input just submitted: out of the box before it is drawn
+    /// empty, until `take_files`
+    sent: Vec<Attachment>,
     /// A message about the last drop (a file that could not be attached), shown
     /// in the hint line until the next key
     note: Option<String>,
@@ -327,13 +330,14 @@ impl Editor {
             commands: &[],
             view: None,
             files: Vec::new(),
+            sent: Vec::new(),
             note: None,
         }
     }
 
     /// The files dropped on the box for the input just submitted; the box is empty after.
     pub fn take_files(&mut self) -> Vec<Attachment> {
-        std::mem::take(&mut self.files)
+        std::mem::take(&mut self.sent)
     }
 
     /// Adds dropped files (no file twice, at most `MAX_FILES`); what was left out goes to the note.
@@ -848,6 +852,7 @@ impl Editor {
                     }
                     // Enter runs the chosen command at once; Tab only completes it in the box.
                     KeyCode::Enter if !alt && !shift => {
+                        self.sent = std::mem::take(&mut self.files);
                         self.erase()?;
                         return Ok(Input::Submit(items[selected].0.to_string()));
                     }
@@ -875,6 +880,8 @@ impl Editor {
                     if text.is_empty() && (self.files.is_empty() || !remember) {
                         continue;
                     }
+                    // The empty box drawn by `erase` shows no files any more.
+                    self.sent = std::mem::take(&mut self.files);
                     self.erase()?;
                     if remember {
                         self.remember(&text);
