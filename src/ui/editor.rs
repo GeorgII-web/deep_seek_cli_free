@@ -243,6 +243,15 @@ pub type Queue = Arc<Mutex<VecDeque<Queued>>>;
 pub const QUEUE_MAX: usize = 5;
 /// Empty columns after the last label of the bottom row (`Shift + Tab`).
 pub const LABELS_MARGIN: usize = 1;
+/// What the bottom row starts with: one column, so it stands as far inside the box's
+/// left edge as its labels end before the right edge (`LABELS_MARGIN`).
+pub const HINT_INDENT: &str = " ";
+
+/// Columns of the bottom row after `HINT_INDENT`, for a box `width` columns wide inside:
+/// the row ends where the box ends.
+fn hint_columns(width: usize) -> usize {
+    width + FRAME_COLS - HINT_INDENT.len()
+}
 /// Rows above the queued prompts: an empty one (apart from the output), the title.
 const QUEUE_HEAD_ROWS: usize = 2;
 
@@ -654,10 +663,10 @@ impl Editor {
     /// The right labels end where the box ends: column `2 + max` of the row.
     fn label_at(&self, column: usize, with_key: bool) -> Option<Toggle> {
         let labels = self.right_labels(with_key);
-        let max = Self::inner_width() + FRAME_COLS - 2;
+        let max = hint_columns(Self::inner_width());
         let total: usize = labels.iter().map(|(_, columns, _)| columns).sum::<usize>()
             + 3 * labels.len().saturating_sub(1);
-        let mut at = (2 + max).checked_sub(total + LABELS_MARGIN)?;
+        let mut at = (HINT_INDENT.len() + max).checked_sub(total + LABELS_MARGIN)?;
         for (_, columns, toggle) in labels {
             if column >= at && column < at + columns {
                 return toggle;
@@ -854,7 +863,7 @@ impl Editor {
         }
         match hint {
             Some(hint) => {
-                frame.push_str(&format!("\x1b[{height};1H  {hint}"));
+                frame.push_str(&format!("\x1b[{height};1H{HINT_INDENT}{hint}"));
                 frame.push_str(&format!(
                     "\x1b[{};{}H",
                     top + queue.len() + 1 + cursor_row - first,
@@ -1067,7 +1076,7 @@ impl Editor {
             more_hints.push(("Alt + 1…5", "drops a queued prompt"));
         }
         more_hints.extend_from_slice(hints);
-        let max = width + FRAME_COLS - 2;
+        let max = hint_columns(width);
         let hint = match (armed_now, items.is_empty(), &self.note) {
             (true, _, _) => format!("{}{AGAIN_HINT}{}", self.style.action(), self.style.reset()),
             (false, true, Some(note)) => {
@@ -1080,7 +1089,7 @@ impl Editor {
             (false, false, _) => self.hint_line(MENU_HINTS, max),
             (false, true, None) => self.hint_line(&more_hints, max),
         };
-        let menu = self.menu_lines(&items, typing.selected, max);
+        let menu = self.menu_lines(&items, typing.selected, width + FRAME_COLS - 2);
         (items, menu, hint)
     }
 
@@ -1403,7 +1412,7 @@ impl Editor {
         for line in menu {
             frame.push_str(&format!("\r\n{line}"));
         }
-        frame.push_str(&format!("\r\n  {hint}"));
+        frame.push_str(&format!("\r\n{HINT_INDENT}{hint}"));
 
         let _screen = screen_lock();
         let mut out = io::stderr().lock();
@@ -1462,10 +1471,10 @@ mod tests {
         editor.set_think(Arc::new(AtomicBool::new(false)));
         editor.set_browse(Arc::new(AtomicBool::new(true)));
         editor.set_mode(Arc::new(AtomicBool::new(false)));
-        let max = Editor::inner_width() + FRAME_COLS - 2;
+        let max = hint_columns(Editor::inner_width());
         let hints = [("Ctrl + C twice", "quit"), (MODE_KEY, "")];
         // The row as drawn: two columns, then the hint line.
-        let row: Vec<char> = format!("  {}", editor.hint_line(&hints, max))
+        let row: Vec<char> = format!("{HINT_INDENT}{}", editor.hint_line(&hints, max))
             .chars()
             .collect();
         let column = |label: &str| {

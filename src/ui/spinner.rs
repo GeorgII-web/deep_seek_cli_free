@@ -1,6 +1,6 @@
 //! One status line that shows what is being waited for and for how long.
 
-use super::editor::LABELS_MARGIN;
+use super::editor::{HINT_INDENT, LABELS_MARGIN};
 use super::scrollback::View;
 use super::style::Style;
 use super::{screen_lock, screen_write};
@@ -294,7 +294,8 @@ impl Spinner {
                     let word = busy_word(state.seed, secs);
                     let columns =
                         crossterm::terminal::size().map_or(80, |(columns, _)| columns as usize);
-                    let room = columns.saturating_sub(3 + LABELS_MARGIN);
+                    // The row ends where the box ends (one column before the screen edge).
+                    let room = columns.saturating_sub(1 + HINT_INDENT.len() + LABELS_MARGIN);
                     // The labels end `LABELS_MARGIN` columns before the box edge and never move (a click on one switches
                     // it, `Editor::label_at`): the notice or hint gets what is left.
                     let word_columns = 1 + 1 + word.chars().count() + 1;
@@ -309,7 +310,10 @@ impl Spinner {
                         style.reset()
                     );
                     // Save cursor, write the last row, restore: the output is not touched.
-                    screen_write(&format!("\x1b7\x1b[{};1H\x1b[2K  {line}\x1b8", last_row()));
+                    screen_write(&format!(
+                        "\x1b7\x1b[{};1H\x1b[2K{HINT_INDENT}{line}\x1b8",
+                        last_row()
+                    ));
                 } else {
                     // Inline it is the only progress line: the real step and its clock.
                     let labels = if labels.is_empty() {
