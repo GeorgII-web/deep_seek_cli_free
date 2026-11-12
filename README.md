@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.4.13 · DeepSeek web · default
+  ✻ dsc 0.4.14 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -141,7 +141,7 @@ to five lines stay open, and so does an output that is itself the answer to your
 
 While `dsc` works, the line under the box shows what it waits for and for how long
 (model and mode stay at the left as when idle; at the right edge the icon with a short word that changes now and
-then and `Esc interrupt`; the step itself and its seconds are shown in the output). The last line of a task shows the seconds it took on a colored bar (green when it worked, red when it failed or was stopped);
+then and `Esc interrupt`; the step itself and its seconds are shown in the output). The last line of a task shows the seconds it took, in green when it worked, on a red bar when it failed or was stopped;
 your prompts stand out on a bar of their own. The box grows
 with your text, up to ten rows. A single task (`dsc "<task>"`) does not clear the screen: it prints below your
 shell prompt.

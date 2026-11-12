@@ -81,7 +81,7 @@ Screen layout mechanics (`Editor::open_dock`, `set_area`, `draw_docked`, `dock_i
     Filesystem  Size ...
 
 There is 810G free.                         the answer, markdown styled
- ✓ 8.1s · 2 answers · 1 action               Terminal::finish (on a background bar); ✗ <error> on a failure
+ ✓ 8.1s · 2 answers · 1 action               Terminal::finish (green text); ✗ <error> on a red bar on a failure
 ```
 
 | Piece | Code | Detail |
@@ -92,7 +92,7 @@ There is 810G free.                         the answer, markdown styled
 | question | `approve` | `read_choice`; Esc, Ctrl-C, Ctrl-D = no; `e` opens the box with the command (`remember = false`); the question line is erased after the key |
 | output of an action | `running`, `output`, `result` | a block: header `⎿ ⠧ running… 2s` (the progress thread calls `View::animate` with its frame every tick, so the step in progress is marked in the output itself; the seconds count from the block's start), the body lines as they arrive (`output` → `clean_output` → `body_line`; a result without live output, like a file read, gives its lines in `result`), then the header becomes `⎿ ✓ <outcome> · N lines ▸ show`, or red `⎿ ✗ <outcome> …` when `outcome_failed` (an `Error…` of the tool, an exit code other than 0, a timeout, a kill), and the body folds when it has more than `FOLD_OPEN_LINES` (5) lines, else `▾ hide` and open; `result_is_answer` (the model's `done`) unfolds it; a text starting with `Denied` is not repeated. Inline there is no folding: the lines, then `⎿ <outcome> · N lines` |
 | prompt | `echo` | the submitted input on a bar with its own background (`Style::prompt_bg`, filled to the row end with `ESC[K`), one empty row of the bar above and below the text; attached files one row each on the bar after an empty bar row (`📎` / `⚠ name · size`, `../attachments/SKILL.md`); plain `> text` without colors |
-| finish | `finish` | a bar with a background filled to the row end (`ESC[K`), like the prompt: dark green `✓ 6.4s · 2 answers · 1 action · 4 requests` (`Style::done_bg`; the last number is the prompts sent to DeepSeek for this task, one per answer of the model, given to `finish` by the caller), dark red `✗ <error> · …` (`failed_bg`) after a failure or an interrupt; the text is cut to one row; without colors just the text |
+| finish | `finish` | done: green text without a background, `✓ 6.4s · 2 answers · 1 action · 4 requests` (`Style::ok`; the last number is the prompts sent to DeepSeek for this task, one per answer of the model, given to `finish` by the caller); a failure or an interrupt: a bar with a background filled to the row end (`ESC[K`), like the prompt, dark red `✗ <error> · …` (`failed_bg`), the text cut to one row; without colors just the text |
 | spacing | `blank()` | one empty line between the echo, each action block, the answer, the finish line and the next input |
 | chrome text | `info`, `error`, `note`, the `why` line, the banner | `code` spans colored through `Style::inline`; `help` prints commands and keys in columns |
 

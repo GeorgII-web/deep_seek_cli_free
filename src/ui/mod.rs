@@ -1081,10 +1081,17 @@ impl Terminal {
             Ok(()) => ("✓", s.ok(), stats),
             Err(err) => ("✗", s.err(), format!("{err:#} · {stats}")),
         };
-        if s.on() {
-            // A bar with its own background, like the prompt: the end of a task is
-            // easy to find. The terminal fills the row (`ESC[K`), so nothing has to
-            // be as long as the screen and nothing wraps on a narrow one.
+        if s.on() && result.is_ok() {
+            // Done: green text, no bar.
+            self.line(&format!(
+                "{color}{bold}{mark}{reset}{color} {text}{reset}",
+                reset = s.reset(),
+                bold = s.bold(),
+            ));
+        } else if s.on() {
+            // A failure on a bar with its own background, like the prompt: easy to find.
+            // The terminal fills the row (`ESC[K`), so nothing has to be as long as
+            // the screen and nothing wraps on a narrow one.
             let columns = crossterm::terminal::size().map_or(80, |(columns, _)| columns as usize);
             // A long error is cut so the line stays one row.
             let room = columns.saturating_sub(6);
@@ -1097,11 +1104,7 @@ impl Terminal {
                 ),
                 false => text,
             };
-            let bg = if result.is_ok() {
-                s.done_bg()
-            } else {
-                s.failed_bg()
-            };
+            let bg = s.failed_bg();
             self.line(&format!(
                 "{bg} {color}{bold}{mark}{reset}{bg} {key}{text} \x1b[K{reset}",
                 reset = s.reset(),
