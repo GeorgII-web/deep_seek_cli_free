@@ -716,10 +716,15 @@ impl Terminal {
     fn echo(&mut self, text: &str) {
         let s = self.style;
         self.blank();
+        // `ESC[K` fills the rest of the row with the background.
+        let fill = if s.on() { "\x1b[K" } else { "" };
+        // With colors an empty row of the bar above and below the text.
+        let pad = format!("{}{fill}{}", s.prompt_bg(), s.reset());
+        if s.on() {
+            self.line(&pad);
+        }
         for (i, line) in text.lines().enumerate() {
             let mark = if i == 0 { ">" } else { " " };
-            // `ESC[K` fills the rest of the row with the background.
-            let fill = if s.on() { "\x1b[K" } else { "" };
             self.line(&format!(
                 "{bg}{bold}{accent} {mark} {reset}{bg}{bold}{line} {fill}{reset}",
                 bg = s.prompt_bg(),
@@ -727,6 +732,9 @@ impl Terminal {
                 accent = s.accent(),
                 reset = s.reset(),
             ));
+        }
+        if s.on() {
+            self.line(&pad);
         }
         self.gap = false;
         self.blank();
