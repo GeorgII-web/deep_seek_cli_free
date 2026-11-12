@@ -29,8 +29,12 @@ What the model "answers" depends on the task (the text after "Task: " in the pro
   browse <url>      with search_enabled (Browse): reads the page on the model's side and answers
                     (nothing runs locally); without it: asks to fetch the page with curl, like `curl`
   curl <url>        the local way: asks to fetch the page with curl, then answers
-  weather <place>   asks to curl wttr.in even with search on (like the real model); after dsc's
-                    "Not run: your web search ..." it answers from its search
+  weather <place>   asks to curl wttr.in even with search on (like the real model); dsc then
+                    runs a web search instead and the mock answers from its result
+  site <host>       asks to curl the site in DSML, DeepSeek's own tool-call markup (like the real model)
+  web <query>       asks for the web tool
+A prompt without "Task: " and with search_enabled is a web search of dsc (a chat without the agent
+rules): it is answered with three made-up pages and counted in /_stats as "searches".
   read <path>       asks to read the file          write <path>   asks to write "mock\\n" to it
   think <text>      reasoning first, then an answer
   slow              a long answer, one word every 0.3 s (to try Esc and scrolling)
@@ -124,9 +128,12 @@ def plan(prompt, session, search=True):
         return '', after, DELAY
     if prompt.startswith('You sent the done block'):
         return '', 'Mock: a real answer after the early done.', DELAY
-    # dsc sent it back to its own search (protocol::USE_YOUR_SEARCH).
-    if prompt.startswith('Not run: your web search'):
-        return '', session.pop('searched', 'Mock: I looked it up with my web search.'), DELAY
+    # A web search of dsc: a plain question in a chat without the agent rules, search on.
+    if search and 'Task: ' not in prompt:
+        stats['searches'] = stats.get('searches', 0) + 1
+        return '', (f'Mock web search for "{prompt.strip()}": found 3 web pages.\n'
+                    '1. Example Domain: this is what the first page says.\n'
+                    '2. Example News: what the second one says.\n3. Example Wiki: and the third.'), DELAY
     task = prompt.rsplit('Task: ', 1)[-1].strip()
     done = block({'tool': 'done'})
     if task == 'early':
@@ -154,12 +161,22 @@ def plan(prompt, session, search=True):
         command = f'curl -sSL --max-time 20 {quoted} | head -n 40'
         return '', 'I will fetch the page from your machine.\n\n' + block({'tool': 'shell', 'cmd': command, 'why': 'mock: the task asked for it'}), DELAY
     if task.startswith('weather '):
-        # Like the real model: curl even with its own search on; dsc sends it back.
+        # Like the real model: curl even with its own search on; dsc searches instead.
         place = task[len('weather '):].strip().removeprefix('in ').strip()
-        session['searched'] = f'Mock: I looked it up with my web search: {place}, 8 °C, overcast.'
-        session['after'] = f'Mock: that is the weather in {place}, fetched from your machine.'
+        session['after'] = f'Mock: that is the weather in {place}.'
         url = f"https://wttr.in/{place.replace(' ', '+')}?format=3"
         return '', block({'tool': 'shell', 'cmd': f"curl -s '{url}'", 'why': 'mock: the weather'}), DELAY
+    if task.startswith('site '):
+        # Like the real model on "check ya.ru": a curl in DeepSeek's own tool-call markup (DSML).
+        site = task[len('site '):].strip()
+        session['after'] = f'Mock: that is what is on {site}.'
+        return '', ('<｜DSML｜function_calls>\n<｜DSML｜invoke name="shell">\n'
+                    f'<｜DSML｜parameter name="cmd" string="true">curl -sL \'https://{site}\' | head -c 2000</｜DSML｜parameter>\n'
+                    f'<｜DSML｜parameter name="why" string="true">fetch {site}</｜DSML｜parameter>\n'
+                    '</｜DSML｜invoke>\n</｜DSML｜function_calls>'), DELAY
+    if task.startswith('web '):
+        session['after'] = 'Mock: that is what the web search found.'
+        return '', block({'tool': 'web', 'query': task[len('web '):].strip(), 'why': 'mock: look it up'}), DELAY
     if task.startswith('read '):
         session['after'] = done
         return '', block({'tool': 'read_file', 'path': task[5:], 'why': 'mock: read'}), DELAY

@@ -93,7 +93,8 @@ async fn main() -> Result<()> {
                 &mut terminal,
                 agent::run::Task {
                     prompt,
-                    own_search: web && !protocol::asks_local_fetch(&task),
+                    text: task.clone(),
+                    browse: web,
                 },
                 &settings,
                 &mode,
@@ -444,7 +445,8 @@ async fn chat(paths: &Paths, settings: &Settings, run: &cli::RunArgs) -> Result<
                 &mut terminal,
                 agent::run::Task {
                     prompt: prompt.clone(),
-                    own_search: browse && !protocol::asks_local_fetch(&line),
+                    text: line.clone(),
+                    browse,
                 },
                 settings,
                 &mode,

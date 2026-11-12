@@ -48,10 +48,45 @@ pub trait Ui {
 pub struct Task {
     /// `protocol::first_prompt` or `next_prompt`
     pub prompt: String,
-    /// The model's web search is on and the task did not ask for a local fetch: a
-    /// command that fetches a public web page is not run; the model is told once per
-    /// task to search on its side instead (`protocol::USE_YOUR_SEARCH`)
-    pub own_search: bool,
+    /// The task as the user wrote it: the query of a web search that replaces a fetch
+    pub text: String,
+    /// Browse (the model's web search) is on: the `web` tool works, and unless the
+    /// task asks for a local fetch, a command that fetches a public web page is
+    /// replaced once per task by a web search for `text`
+    pub browse: bool,
+}
+
+/// Runs a web search (`Backend::search`), shown like an action: the header, the
+/// answer as its output; the caller shows the outcome. A failure ends the task like
+/// a failed answer, with the block closed first.
+async fn web_search<B: Backend, U: Ui>(
+    backend: &mut B,
+    ui: &mut U,
+    action: &Action,
+    interrupts: &mut Interrupts,
+) -> Result<String> {
+    let Action::Web { query, .. } = action else {
+        anyhow::bail!("not a web search");
+    };
+    ui.action(action);
+    ui.running(action);
+    let found = {
+        let mut sink = |event: &Event| {
+            if let Event::Text(text) = event {
+                ui.output(text);
+            }
+        };
+        tokio::select! {
+            found = backend.search(query, &mut sink) => found,
+            why = interrupts.next() => return Err(why.into()),
+        }
+    };
+    found.inspect_err(|err| ui.result(&format!("Error: web search failed: {err:#}\n")))
+}
+
+/// The first line of a command, for a note.
+fn first_line(text: &str) -> &str {
+    text.lines().next().unwrap_or_default()
 }
 
 /// Runs one task (`Task`). `always`
@@ -69,12 +104,14 @@ pub async fn run<B: Backend, U: Ui>(
     interrupts.clear();
     let Task {
         mut prompt,
-        own_search,
+        text,
+        browse,
     } = task;
+    let replace_fetch = browse && !protocol::asks_local_fetch(&text);
     // Whether an action of this task put its output on the user's screen.
     let mut shown = false;
-    // The model was sent back to its own search once in this task.
-    let mut redirected = false;
+    // A web fetch was replaced by a web search once in this task.
+    let mut replaced = false;
     for _ in 0..settings.agent.max_steps {
         let answer = {
             let mut sink = |event: &Event| ui.event(event);
@@ -100,14 +137,42 @@ pub async fn run<B: Backend, U: Ui>(
                 ui.note("the model sent a broken action block; asking it to repeat");
                 message
             }
-            Parsed::Action { action, .. }
-                if own_search
-                    && !redirected
-                    && matches!(&action, Action::Shell { cmd, .. } if protocol::fetches_public_web(cmd)) =>
-            {
-                redirected = true;
-                ui.note("Browse is on: no web fetch here, the model was sent to its own search");
-                protocol::USE_YOUR_SEARCH.to_string()
+            // Browse is on, yet the model fetches a web page here (it does, with the agent
+            // rules in the conversation): the task goes to the web search instead, as typed.
+            Parsed::Action {
+                action: Action::Shell { cmd, .. },
+                ..
+            } if replace_fetch && !replaced && protocol::fetches_public_web(&cmd) => {
+                replaced = true;
+                let search = Action::Web {
+                    query: text.clone(),
+                    why: format!("Browse is on: searched instead of `{}`", first_line(&cmd)),
+                };
+                let found = web_search(backend, ui, &search, interrupts).await?;
+                let result = protocol::searched_instead(&text, &found);
+                ui.result(&result);
+                shown = true;
+                result
+            }
+            Parsed::Action {
+                action: Action::Web { .. },
+                ..
+            } if !browse => {
+                ui.note("the model asked for a web search, but Browse is off");
+                protocol::WEB_OFF.to_string()
+            }
+            Parsed::Action {
+                action: search @ Action::Web { .. },
+                ..
+            } => {
+                let found = web_search(backend, ui, &search, interrupts).await?;
+                let Action::Web { query, .. } = &search else {
+                    unreachable!()
+                };
+                let result = protocol::web_result(query, &found);
+                ui.result(&result);
+                shown = true;
+                result
             }
             Parsed::Action { action, extra } => {
                 let mut result = act(action, ui, settings, yes, always, interrupts).await?;
@@ -223,6 +288,8 @@ async fn execute<U: Ui>(
             Ok(()) => format!("Written: {path} ({} bytes)\n", content.len()),
             Err(err) => format!("Error: {err:#}\n"),
         },
+        // `run` sends a web search to the backend before it gets here.
+        Action::Web { .. } => "Error: a web search is not a local action\n".into(),
     })
 }
 
@@ -235,6 +302,8 @@ mod tests {
     struct Script {
         answers: VecDeque<String>,
         prompts: Vec<String>,
+        /// The web searches asked for
+        searches: Vec<String>,
     }
 
     impl Script {
@@ -242,6 +311,7 @@ mod tests {
             Self {
                 answers: answers.iter().map(|a| a.to_string()).collect(),
                 prompts: Vec::new(),
+                searches: Vec::new(),
             }
         }
     }
@@ -255,6 +325,12 @@ mod tests {
                 .expect("the script ran out of answers");
             sink(&Event::Text(answer.clone()));
             Ok(answer)
+        }
+
+        async fn search(&mut self, query: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
+            self.searches.push(query.to_string());
+            sink(&Event::Text("8 °C, overcast".into()));
+            Ok("8 °C, overcast".into())
         }
     }
 
@@ -305,7 +381,8 @@ mod tests {
             ui,
             Task {
                 prompt,
-                own_search: false,
+                text: "t".into(),
+                browse: false,
             },
             settings,
             &AtomicBool::new(yes),
@@ -447,7 +524,8 @@ mod tests {
             &mut FakeUi::default(),
             Task {
                 prompt,
-                own_search: false,
+                text: "t".into(),
+                browse: false,
             },
             &cfg,
             &AtomicBool::new(false),
@@ -503,78 +581,79 @@ mod tests {
         assert_eq!(ui.answers_by_result, 1);
     }
 
-    #[tokio::test]
-    async fn with_its_own_search_on_a_web_fetch_goes_back_to_the_model_once() {
-        let curl =
-            block(r#"{"tool":"shell","cmd":"curl -s 'https://wttr.in/Heidelberg?format=3'"}"#);
-        let mut backend = Script::new(&[&curl, "Heidelberg: 8 °C, overcast."]);
-        let mut ui = FakeUi::default();
-        let cfg = settings();
+    async fn web_task(backend: &mut Script, ui: &mut FakeUi, text: &str, browse: bool) {
         run(
-            &mut backend,
-            &mut ui,
+            backend,
+            ui,
             Task {
-                prompt: protocol::first_prompt("weather in Heidelberg", "/work", true),
-                own_search: true,
+                prompt: protocol::first_prompt(text, "/work", browse),
+                text: text.into(),
+                browse,
             },
-            &cfg,
+            &settings(),
             &AtomicBool::new(false),
             &mut HashSet::new(),
             &mut Interrupts::signal(),
         )
         .await
         .unwrap();
-        // Not run, not asked: the model was told to search on its side.
-        assert_eq!(backend.prompts[1], protocol::USE_YOUR_SEARCH);
+    }
+
+    #[tokio::test]
+    async fn with_browse_on_a_web_fetch_becomes_a_web_search_for_the_task() {
+        let curl =
+            block(r#"{"tool":"shell","cmd":"curl -s 'https://wttr.in/Heidelberg?format=3'"}"#);
+        let mut backend = Script::new(&[&curl, "Heidelberg: 8 °C, overcast."]);
+        let mut ui = FakeUi::default();
+        web_task(&mut backend, &mut ui, "weather in Heidelberg", true).await;
+        // Not run, not asked: the task went to the web search as typed.
         assert!(ui.asked.is_empty());
-        assert!(ui.notes[0].starts_with("Browse is on: no web fetch here"));
-        // A second try in the same task goes the normal way: the user is asked.
+        assert_eq!(backend.searches, ["weather in Heidelberg"]);
+        assert_eq!(
+            backend.prompts[1],
+            protocol::searched_instead("weather in Heidelberg", "8 °C, overcast")
+        );
+        assert!(ui.live.contains("8 °C, overcast"));
+        // Once per task: a second fetch goes the normal way, the user is asked.
         let mut backend = Script::new(&[&curl, &curl, "fetched"]);
         let mut ui = FakeUi {
             decisions: [Decision::No].into(),
             ..Default::default()
         };
-        run(
-            &mut backend,
-            &mut ui,
-            Task {
-                prompt: protocol::first_prompt("weather in Heidelberg", "/work", true),
-                own_search: true,
-            },
-            &cfg,
-            &AtomicBool::new(false),
-            &mut HashSet::new(),
-            &mut Interrupts::signal(),
-        )
-        .await
-        .unwrap();
+        web_task(&mut backend, &mut ui, "weather in Heidelberg", true).await;
         assert_eq!(ui.asked.len(), 1);
-        // Without its own search the fetch is an ordinary action.
-        let mut backend = Script::new(&[&curl, "fetched"]);
-        let mut ui = FakeUi {
-            decisions: [Decision::No].into(),
-            ..Default::default()
-        };
-        run(
-            &mut backend,
-            &mut ui,
-            Task {
-                prompt: protocol::first_prompt("weather in Heidelberg", "/work", false),
-                own_search: false,
-            },
-            &cfg,
-            &AtomicBool::new(false),
-            &mut HashSet::new(),
-            &mut Interrupts::signal(),
-        )
-        .await
-        .unwrap();
-        assert_eq!(ui.asked.len(), 1);
-        assert!(
-            !backend
-                .prompts
-                .contains(&protocol::USE_YOUR_SEARCH.to_string())
+        // A task that asks for curl, or Browse off: an ordinary action.
+        for (text, browse) in [
+            ("weather in Heidelberg with curl", true),
+            ("weather", false),
+        ] {
+            let mut backend = Script::new(&[&curl, "fetched"]);
+            let mut ui = FakeUi {
+                decisions: [Decision::No].into(),
+                ..Default::default()
+            };
+            web_task(&mut backend, &mut ui, text, browse).await;
+            assert_eq!(ui.asked.len(), 1, "{text}");
+            assert!(backend.searches.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn the_web_tool_searches_with_browse_on_only() {
+        let web = block(r#"{"tool":"web","query":"news today"}"#);
+        let mut backend = Script::new(&[&web, "Here is the news."]);
+        let mut ui = FakeUi::default();
+        web_task(&mut backend, &mut ui, "news", true).await;
+        assert_eq!(backend.searches, ["news today"]);
+        assert_eq!(
+            backend.prompts[1],
+            protocol::web_result("news today", "8 °C, overcast")
         );
+        assert!(ui.asked.is_empty());
+        let mut backend = Script::new(&[&web, "Without it then."]);
+        web_task(&mut backend, &mut FakeUi::default(), "news", false).await;
+        assert!(backend.searches.is_empty());
+        assert_eq!(backend.prompts[1], protocol::WEB_OFF);
     }
 
     #[tokio::test]
@@ -593,7 +672,8 @@ mod tests {
             &mut ui,
             Task {
                 prompt: protocol::first_prompt("a", "/work", true),
-                own_search: false,
+                text: "t".into(),
+                browse: false,
             },
             &cfg,
             &AtomicBool::new(false),
@@ -607,7 +687,8 @@ mod tests {
             &mut ui,
             Task {
                 prompt: protocol::next_prompt("b", true),
-                own_search: false,
+                text: "t".into(),
+                browse: false,
             },
             &cfg,
             &AtomicBool::new(false),

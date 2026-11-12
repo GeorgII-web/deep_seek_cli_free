@@ -1,10 +1,14 @@
-//! Turns the streamed answer into what the user sees: the `dsc` action block is
-//! hidden (the action line shows it), blank lines at the edges are dropped, and
+//! Turns the streamed answer into what the user sees: the `dsc` action block and
+//! DeepSeek's own tool-call markup (DSML) are hidden (the action line shows them), blank lines at the edges are dropped, and
 //! with colors on a little markdown is styled (inline code, code blocks with a
 //! bar instead of the fences, bold, headings).
 
 use super::style::Style;
 use crate::agent::protocol::FENCE;
+
+/// How DeepSeek's own tool-call markup starts a line (`<｜DSML｜function_calls>`, with
+/// one or two fullwidth bars).
+const DSML_START: &str = "<｜";
 
 #[derive(Clone, Copy, PartialEq)]
 enum Look {
@@ -25,6 +29,8 @@ pub struct Markdown {
     pending_newlines: usize,
     emitted: bool,
     in_action: bool,
+    /// Inside DSML tool calls (`<｜DSML｜…`): hidden until their closing `calls>` line
+    in_dsml: bool,
     action_line: String,
     in_code: bool,
     inline_code: bool,
@@ -52,6 +58,7 @@ impl Markdown {
             pending_newlines: 0,
             emitted: false,
             in_action: false,
+            in_dsml: false,
             action_line: String::new(),
             in_code: false,
             inline_code: false,
@@ -81,7 +88,8 @@ impl Markdown {
         let held = std::mem::take(&mut self.held);
         // A fence as the very last line has no line end: with colors it is dropped like the others.
         let fence = held.trim().starts_with("```");
-        if !self.in_action && held.trim() != FENCE && !(fence && self.style.on()) {
+        let dsml = self.in_dsml || held.trim_start().starts_with(DSML_START);
+        if !self.in_action && !dsml && held.trim() != FENCE && !(fence && self.style.on()) {
             for c in held.trim_end().chars() {
                 if fence {
                     self.put(c, Look::Dim, &mut out);
@@ -98,6 +106,18 @@ impl Markdown {
     }
 
     fn push(&mut self, c: char, out: &mut String) {
+        if self.in_dsml {
+            if c == '\n' {
+                let line = std::mem::take(&mut self.action_line);
+                let line = line.trim();
+                if line.starts_with("</") && line.contains("DSML") && line.ends_with("calls>") {
+                    self.in_dsml = false;
+                }
+            } else {
+                self.action_line.push(c);
+            }
+            return;
+        }
         if self.in_action {
             if c == '\n' {
                 if self.action_line.trim() == "```" {
@@ -114,6 +134,13 @@ impl Markdown {
             let fence = held.trim();
             if fence == FENCE {
                 self.in_action = true;
+                return;
+            }
+            // DSML tool calls: hidden from here on (one call on a single line ends at once).
+            if fence.starts_with(DSML_START) {
+                self.in_dsml = !(fence.contains("calls>")
+                    && fence.ends_with("calls>")
+                    && fence.matches("calls>").count() > 1);
                 return;
             }
             if fence.starts_with("```") {
@@ -135,7 +162,12 @@ impl Markdown {
         if self.line_start {
             self.held.push(c);
             let start = self.held.trim_start();
-            if start.is_empty() || FENCE.starts_with(start) || start.starts_with("```") {
+            if start.is_empty()
+                || FENCE.starts_with(start)
+                || start.starts_with("```")
+                || DSML_START.starts_with(start)
+                || start.starts_with(DSML_START)
+            {
                 return;
             }
             // Not a fence: an ordinary line.
@@ -333,6 +365,29 @@ mod tests {
         }
         out.push_str(&markdown.finish());
         out
+    }
+
+    #[test]
+    fn dsml_tool_calls_are_hidden_in_any_chunking() {
+        let answer = "I will fetch it.\n\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"shell\">\n<｜｜DSML｜｜ parameter name=\"cmd\" string=\"true\">curl -sL 'https://ya.ru'</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>\nafter";
+        for chunk in [1, 3, 7, 1000] {
+            assert_eq!(
+                render(answer, false, chunk),
+                "I will fetch it.\n\nafter",
+                "chunk {chunk}"
+            );
+        }
+        // Without its closing line (the stream ended): hidden to the end.
+        assert_eq!(
+            render(
+                "<｜DSML｜function_calls>\n<｜DSML｜invoke name=\"shell\">",
+                false,
+                5
+            ),
+            ""
+        );
+        // Text that only mentions it stays.
+        assert_eq!(render("a <b> tag", false, 2), "a <b> tag");
     }
 
     #[test]

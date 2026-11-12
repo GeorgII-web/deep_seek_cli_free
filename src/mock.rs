@@ -28,8 +28,11 @@ pub const TASKS: &str = "\
 `browse <url>`    with Browse on: reads the page on the model's side (nothing runs here);
                   with Browse off: asks to fetch it with curl here, like `curl <url>`
 `curl <url>`      the local way: asks to fetch the page with curl here, then answers
-`weather <place>` asks to curl wttr.in even with Browse on (as the real model does); sent
-                  back to its search by the app, it answers from there
+`weather <place>` asks to curl wttr.in even with Browse on (as the real model does); with
+                  Browse on the app runs a web search instead and the mock answers from it
+`site <host>`     asks to curl the site in DeepSeek's own tool-call markup (DSML), as the real
+                  model does; with Browse on the app runs a web search instead
+`web <query>`     asks for the web tool: the app runs the (mock) web search
 `read <path>`     asks to read the file; `write <path>` asks to write `mock` to it
 `think <text>`    reasoning first, then an answer
 `slow`            a long answer at a quarter of the speed (try Esc, scrolling)
@@ -54,8 +57,7 @@ pub struct Mock {
     thinking: bool,
     /// Browse (DeepSeek's web search) is on: `browse <url>` is read on the model's side
     search: bool,
-    /// What `weather <place>` answers when it is sent back to its own search
-    searched: Option<String>,
+
     /// Pause before an answer starts
     wait: Duration,
     /// Pause between two pieces of an answer
@@ -133,12 +135,6 @@ impl Mock {
         if prompt.starts_with("You sent the done block") {
             return Ok(say("Mock: a real answer after the early done.".into()));
         }
-        // dsc sent it back to its own search (`protocol::USE_YOUR_SEARCH`).
-        if prompt.starts_with("Not run: your web search") {
-            return Ok(say(self.searched.take().unwrap_or_else(|| {
-                "Mock: I looked it up with my web search.".into()
-            })));
-        }
         let task = prompt.rsplit("Task: ").next().unwrap_or(prompt).trim();
         let done = block(r#"{"tool":"done"}"#);
         let shell = |cmd: &str| {
@@ -178,18 +174,30 @@ impl Mock {
             )));
         }
         // Like the real model: the weather is fetched with curl even when its own search
-        // is on, so the app has to send it back to the search.
+        // is on; the app runs a web search instead and sends that back.
         if let Some(place) = task.strip_prefix("weather ") {
             let place = place.trim().trim_start_matches("in ").trim();
-            self.searched = Some(format!(
-                "Mock: I looked it up with my web search: {place}, 8 °C, overcast."
-            ));
-            self.after = Some(format!(
-                "Mock: that is the weather in {place}, fetched from your machine."
-            ));
+            self.after = Some(format!("Mock: that is the weather in {place}."));
             let url = format!("https://wttr.in/{}?format=3", place.replace(' ', "+"));
             let command = format!("curl -s {}", shell_quote(&url));
             return Ok(say(shell(&command)));
+        }
+        // Like the real model on "check ya.ru": a curl in DeepSeek's own tool-call markup.
+        if let Some(site) = task.strip_prefix("site ") {
+            let site = site.trim();
+            self.after = Some(format!("Mock: that is what is on {site}."));
+            return Ok(say(format!(
+                "<｜DSML｜function_calls>\n<｜DSML｜invoke name=\"shell\">\n<｜DSML｜parameter name=\"cmd\" string=\"true\">curl -sL {} | head -c 2000</｜DSML｜parameter>\n<｜DSML｜parameter name=\"why\" string=\"true\">fetch {site}</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜function_calls>",
+                shell_quote(&format!("https://{site}"))
+            )));
+        }
+        // The web tool, asked for directly.
+        if let Some(query) = task.strip_prefix("web ") {
+            self.after = Some("Mock: that is what the web search found.".into());
+            return Ok(say(block(&format!(
+                r#"{{"tool":"web","query":{},"why":"mock: look it up"}}"#,
+                json_string(query.trim())
+            ))));
         }
         // The local way, when the user asks for it: fetch the page with curl here.
         if task == "curl" || task.starts_with("curl ") {
@@ -303,6 +311,20 @@ impl Mock {
 impl Backend for Mock {
     fn attach(&mut self, files: Vec<Attachment>) {
         self.files = files;
+    }
+
+    /// A made-up web search: the query and three "pages", streamed like an answer.
+    async fn search(&mut self, query: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
+        sink(&Event::Status("Searching the web".into()));
+        tokio::time::sleep(self.wait).await;
+        let answer = format!(
+            "Mock web search for \"{query}\": found 3 web pages.\n1. Example Domain: this is what the first page says.\n2. Example News: what the second one says.\n3. Example Wiki: and the third."
+        );
+        for piece in pieces(&answer) {
+            sink(&Event::Text(piece.to_string()));
+            tokio::time::sleep(self.delay).await;
+        }
+        Ok(answer)
     }
 
     async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
@@ -489,17 +511,35 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn weather_curls_first_and_answers_from_its_search_when_sent_back() {
+    async fn weather_and_site_curl_first_the_search_answers_and_web_asks_for_it() {
         let mut mock = Mock::default();
         let (answer, _) = ask(&mut mock, "Task: weather in Heidelberg").await;
         let Parsed::Action { action, .. } = protocol::parse(&answer) else {
             panic!("{answer}")
         };
         assert!(matches!(&action, Action::Shell { cmd, .. } if protocol::fetches_public_web(cmd)));
-        let (answer, _) = ask(&mut mock, protocol::USE_YOUR_SEARCH).await;
-        assert_eq!(
-            answer,
-            "Mock: I looked it up with my web search: Heidelberg, 8 °C, overcast."
+        let (answer, _) = ask(
+            &mut mock,
+            &protocol::searched_instead("weather in Heidelberg", "8 °C"),
+        )
+        .await;
+        assert_eq!(answer, "Mock: that is the weather in Heidelberg.");
+        let found = mock
+            .search("weather in Heidelberg", &mut |_| {})
+            .await
+            .unwrap();
+        assert!(
+            found.starts_with("Mock web search for \"weather in Heidelberg\": found 3 web pages.")
+        );
+        // The site task speaks DSML, which reads as a curl.
+        let (answer, _) = ask(&mut mock, "Task: site ya.ru").await;
+        assert!(answer.contains("DSML"));
+        assert!(
+            matches!(protocol::parse(&answer), Parsed::Action { action: Action::Shell { cmd, .. }, .. } if protocol::fetches_public_web(&cmd))
+        );
+        let (answer, _) = ask(&mut mock, "Task: web news today").await;
+        assert!(
+            matches!(protocol::parse(&answer), Parsed::Action { action: Action::Web { query, .. }, .. } if query == "news today")
         );
     }
 

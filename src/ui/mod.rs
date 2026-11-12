@@ -1379,6 +1379,7 @@ impl Ui for Terminal {
             Action::WriteFile { path, content, .. } => {
                 ("Write", format!("{path} ({} bytes)", content.len()))
             }
+            Action::Web { query, .. } => ("Web", query.clone()),
         };
         self.blank();
         self.gap = false;

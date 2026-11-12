@@ -47,7 +47,8 @@ main (cli, chat loop)  →  agent::run (loop)  →  Backend trait  →  model::M
 `Backend` (`src/backend.rs`): `async fn ask(&mut self, prompt, sink: &mut dyn FnMut(&Event)) -> Result<String>`;
 `Event` = `Thinking(String) | Text(String) | Status(String)` (progress label). One `Backend` value = one conversation; the returned string is the
 answer without the reasoning. `fn attach(&mut self, files: Vec<Attachment>)` gives files to the next `ask` only
-(default: ignored); `Conversation` uploads them, `Mock` pretends to.
+(default: ignored); `Conversation` uploads them, `Mock` pretends to. `async fn search(&mut self, query, sink)`
+asks the web search in a chat of its own (default: an error); used by the `web` tool.
 
 `Ui` (`src/agent/run.rs`): what the loop shows and asks; `ui::Terminal` is the real one. The loop knows only the
 two traits, so its tests script both.

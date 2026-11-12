@@ -13,7 +13,7 @@ $ dsc
   █  █ █    █    █        █ █    █    █ █   █    █     █   █    █ █  █    █
   ███  ████ ████ █     ███  ████ ████ █  █   ███ ████ ███  █    █  █ ████ ████
 
-  ✻ dsc 0.4.11 · DeepSeek web · default
+  ✻ dsc 0.4.12 · DeepSeek web · default
 
  > how much disk space is free on / ?
 
@@ -221,8 +221,8 @@ keys and approvals without touching your account. It answers slowly on purpose, 
 work: two seconds of "waiting", then word by word (`[mock]` in the config sets the speed). When the chat starts
 on the mock, it lists the tasks it understands: `!<command>` asks to run the
 command, `browse <url>` answers as if it had read the page on its side (with Browse on), `curl <url>` asks to
-fetch it with curl on your machine, `weather <place>` tries curl first like the real model (with Browse on dsc
-sends it to its search), `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
+fetch it with curl on your machine, `weather <place>` and `site <host>` try curl first like the real model (with
+Browse on dsc searches instead), `web <query>` uses the web tool, `run <command>` runs it and then answers, `long` prints 80 lines, `slow` answers slowly (try Esc and
 scrolling), `code` shows formatting, `dead` shows the token window; anything else is echoed back. Dropped files
 are "uploaded" and "read" without any network (`reject` or `unreadable` in a file name shows the failures).
 
@@ -233,9 +233,14 @@ shown dimmed above the answer; answers take longer.
 
 `/browse` switches Browse on and off: DeepSeek's own web search and browser (the Search button of the site). With
 it on, the model reads web pages on its side; with it off, a task that needs a page fetches it from your machine
-(you approve the `curl`). With Browse on, a command that would fetch a public web page here (say `curl wttr.in`
-for "weather in Heidelberg") is not run and not asked: dsc tells the model to use its own search. Write "with
-curl" or "locally" in the task when you do want the fetch on your machine.
+(you approve the `curl`).
+
+With the agent rules in the conversation, DeepSeek does not search on its own: it reaches for `curl` instead. So
+with Browse on dsc asks the search the way the site does: the question as a plain message, in a chat of its own,
+search on. The model has a `web` tool for that, shown as `● Web <query>` with what the search found. A command
+that would fetch a public web page here (say `curl wttr.in` for "weather in Heidelberg") is not run and not
+asked: dsc asks the web search your task as you wrote it and gives the model that. Write "with curl" or
+"locally" in the task when you do want the fetch on your machine. Each search is one more request to DeepSeek.
 
 DeepSeek does not do both at once: turning one on turns the other off. Both can be off. The bottom line shows
 them: `✦ Think` and `◉ Browse` are pink while on and gray while off. A click on either (or on the mode, `⏵ ask` /

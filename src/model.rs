@@ -64,4 +64,11 @@ impl Backend for Model {
             Self::Mock(mock) => mock.ask(prompt, sink).await,
         }
     }
+
+    async fn search(&mut self, query: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
+        match self {
+            Self::Deepseek(conversation) => conversation.search(query, sink).await,
+            Self::Mock(mock) => mock.search(query, sink).await,
+        }
+    }
 }

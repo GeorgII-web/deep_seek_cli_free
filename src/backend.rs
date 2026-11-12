@@ -24,4 +24,11 @@ pub trait Backend {
     /// Sends `prompt`, reports the pieces to `sink` as they arrive and returns the
     /// whole answer text (without the reasoning).
     async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String>;
+
+    /// Asks the model's own web search `query`, the way its website does: in a
+    /// chat of its own, without the agent rules, search on. Returns the answer;
+    /// `sink` gets its pieces. The main conversation is not touched.
+    async fn search(&mut self, _query: &str, _sink: &mut dyn FnMut(&Event)) -> Result<String> {
+        anyhow::bail!("this model has no web search")
+    }
 }

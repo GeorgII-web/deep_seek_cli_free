@@ -26,6 +26,10 @@ pub struct Conversation {
     parent_message_id: Option<u64>,
     /// Files for the next prompt (`Backend::attach`), uploaded when it is sent
     pending: Vec<Attachment>,
+    /// The chat for web searches (`Backend::search`): its session and last answer.
+    /// Separate from the conversation, without the agent rules, as the site asks.
+    search_session: Option<String>,
+    search_parent: Option<u64>,
 }
 
 impl Conversation {
@@ -39,6 +43,8 @@ impl Conversation {
             session_id: None,
             parent_message_id: None,
             pending: Vec::new(),
+            search_session: None,
+            search_parent: None,
         }
     }
 
@@ -188,6 +194,7 @@ impl Conversation {
         &mut self,
         prompt: &str,
         files: &[String],
+        search: bool,
         sink: &mut dyn FnMut(&Event),
     ) -> Result<reqwest::Response> {
         let mut retries = self.throttle.retries_on_429;
@@ -201,7 +208,7 @@ impl Conversation {
                 }
             };
             throttle::acquire(&self.paths, &self.throttle, &mut on_wait).await;
-            match self.send_once(prompt, files, sink).await {
+            match self.send_once(prompt, files, search, sink).await {
                 Err(err) => match err.downcast_ref::<ApiError>() {
                     Some(ApiError::RateLimited(after)) => {
                         // Each further "too many requests" doubles the pause. It is also
@@ -226,33 +233,47 @@ impl Conversation {
         }
     }
 
+    /// One request; `search` = in the search chat (search on, thinking off) instead of
+    /// the conversation.
     async fn send_once(
         &mut self,
         prompt: &str,
         files: &[String],
+        search: bool,
         sink: &mut dyn FnMut(&Event),
     ) -> Result<reqwest::Response> {
-        let session_id = match &self.session_id {
-            Some(id) => id.clone(),
+        let known = match search {
+            true => self.search_session.clone(),
+            false => self.session_id.clone(),
+        };
+        let session_id = match known {
+            Some(id) => id,
             None => {
                 sink(&Event::Status("Opening conversation".into()));
                 let id = self.client.create_session().await?;
-                self.session_id = Some(id.clone());
+                match search {
+                    true => self.search_session = Some(id.clone()),
+                    false => self.session_id = Some(id.clone()),
+                }
                 id
             }
+        };
+        let (parent, opts) = match search {
+            true => (
+                self.search_parent,
+                TurnOpts {
+                    thinking: false,
+                    search: true,
+                    ..self.opts.clone()
+                },
+            ),
+            false => (self.parent_message_id, self.opts.clone()),
         };
         sink(&Event::Status("Solving proof of work".into()));
         let pow = self.pow_header(COMPLETION_PATH).await?;
         sink(&Event::Status("Waiting for DeepSeek".into()));
         self.client
-            .completion(
-                &session_id,
-                self.parent_message_id,
-                prompt,
-                files,
-                &self.opts,
-                &pow,
-            )
+            .completion(&session_id, parent, prompt, files, &opts, &pow)
             .await
     }
 }
@@ -264,7 +285,25 @@ impl Backend for Conversation {
 
     async fn ask(&mut self, prompt: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
         let files = self.upload_pending(sink).await?;
-        let mut body = self.send(prompt, &files, sink).await?.bytes_stream();
+        self.answer(prompt, &files, false, sink).await
+    }
+
+    async fn search(&mut self, query: &str, sink: &mut dyn FnMut(&Event)) -> Result<String> {
+        self.answer(query, &[], true, sink).await
+    }
+}
+
+impl Conversation {
+    /// Sends a prompt and reads the answer stream: in the conversation, or with
+    /// `search` in the search chat. The answer's id becomes that chat's next parent.
+    async fn answer(
+        &mut self,
+        prompt: &str,
+        files: &[String],
+        search: bool,
+        sink: &mut dyn FnMut(&Event),
+    ) -> Result<String> {
+        let mut body = self.send(prompt, files, search, sink).await?.bytes_stream();
         let mut parser = Parser::new();
         let mut answer = String::new();
         while let Some(chunk) = body.next().await {
@@ -277,7 +316,10 @@ impl Backend for Conversation {
         }
         // The id is kept even for a cut answer, so the next prompt follows it.
         if let Some(id) = parser.response_message_id {
-            self.parent_message_id = Some(id);
+            match search {
+                true => self.search_parent = Some(id),
+                false => self.parent_message_id = Some(id),
+            }
         }
         parser.finish()?;
         // An answer proves the token: the next start skips its check.

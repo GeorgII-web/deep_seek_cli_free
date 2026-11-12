@@ -318,7 +318,7 @@ dependencies = [
 
 [[package]]
 name = "deep_seek_cli_free"
-version = "0.4.11"
+version = "0.4.12"
 dependencies = [
  "anyhow",
  "base64",

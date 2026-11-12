@@ -27,6 +27,7 @@ pub fn always_key(action: &Action) -> Option<String> {
         Action::Shell { cmd, .. } => cmd.split_whitespace().next().map(str::to_string),
         Action::ReadFile { .. } => Some("read_file".into()),
         Action::WriteFile { .. } => Some("write_file".into()),
+        Action::Web { .. } => Some("web".into()),
     }
 }
 
@@ -35,6 +36,7 @@ pub fn check(action: &Action, policy: &Policy, yes: bool, always: &HashSet<Strin
     let subject = match action {
         Action::Shell { cmd, .. } => squeeze(cmd),
         Action::ReadFile { path, .. } | Action::WriteFile { path, .. } => path.clone(),
+        Action::Web { query, .. } => query.clone(),
     };
     for pattern in &policy.deny {
         let pattern = squeeze(pattern);

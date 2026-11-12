@@ -1,5 +1,7 @@
 //! The text protocol between the CLI and the model. The web chat has no function
 //! calling, so the model asks for an action with one fenced `dsc` block of JSON.
+//! It sometimes answers in DeepSeek's own tool-call markup (DSML) instead; that is
+//! read as the same action.
 
 use serde::Deserialize;
 
@@ -26,14 +28,22 @@ pub enum Action {
         #[serde(default)]
         why: String,
     },
+    /// A question for DeepSeek's own web search (Browse on): asked in a chat of its
+    /// own, without the agent rules, the way the site asks it; nothing runs here
+    Web {
+        query: String,
+        #[serde(default)]
+        why: String,
+    },
 }
 
 impl Action {
     pub fn why(&self) -> &str {
         match self {
-            Self::Shell { why, .. } | Self::ReadFile { why, .. } | Self::WriteFile { why, .. } => {
-                why
-            }
+            Self::Shell { why, .. }
+            | Self::ReadFile { why, .. }
+            | Self::WriteFile { why, .. }
+            | Self::Web { why, .. } => why,
         }
     }
 
@@ -45,6 +55,7 @@ impl Action {
             Self::WriteFile { path, content, .. } => {
                 format!("write {path} ({} bytes)", content.len())
             }
+            Self::Web { query, .. } => format!("web search: {query}"),
         }
     }
 }
@@ -65,13 +76,15 @@ pub enum Parsed {
 /// The first message of a conversation: the rules, then the task.
 pub fn first_prompt(task: &str, cwd: &str, web: bool) -> String {
     // Where web content comes from: the model's own search, or the user's machine.
-    let web_rule = match web {
-        true => {
-            "- You have web search and a browser on your side, and they are on. Anything on the web or anything current (the weather, news, prices, exchange rates, sports results, opening hours, a fact you are not sure of, a site to open, a page to read) you look up on your side and answer in plain text, without an action block. Never fetch from the internet on the user's machine: no curl, wget, wttr.in, web APIs or scripts that download. Fetch from the user's machine only when the user asks for exactly that (\"locally\", \"with curl\"), or when the address is only reachable from there (localhost, a private network)."
-        }
-        false => {
-            "- You have no web access on your side in this conversation. To read a web page, fetch it from the user's machine (for example with curl) as an action."
-        }
+    let (web_rule, web_tool) = match web {
+        true => (
+            "- Your web search is on. Anything on the web or anything current (the weather, news, prices, exchange rates, sports results, opening hours, a fact you are not sure of, a site to open, a page to read) you get with the web tool, then you answer in plain text. Never fetch from the internet on the user's machine: no curl, wget, wttr.in, web APIs or scripts that download. Fetch from the user's machine only when the user asks for exactly that (\"locally\", \"with curl\"), or when the address is only reachable from there (localhost, a private network).",
+            "\n- {\"tool\":\"web\",\"query\":\"<what to look up, or the address to read>\",\"why\":\"<reason>\"} searches the internet and reads pages on DeepSeek's side; you get what it found",
+        ),
+        false => (
+            "- You have no web access on your side in this conversation. To read a web page, fetch it from the user's machine (for example with curl) as an action.",
+            "",
+        ),
     };
     format!(
         r#"You are a command line agent on the user's Linux machine. You reach the machine only through me: you write one action, I run it and send you the result.
@@ -85,7 +98,7 @@ To act, end your answer with exactly one block like this and then stop:
 Tools (the block holds one JSON object on one line):
 - {{"tool":"shell","cmd":"<bash command>","timeout_s":60,"why":"<reason>"}} runs in bash; timeout_s is optional
 - {{"tool":"read_file","path":"<path>","why":"<reason>"}}
-- {{"tool":"write_file","path":"<path>","content":"<whole file content>","why":"<reason>"}}
+- {{"tool":"write_file","path":"<path>","content":"<whole file content>","why":"<reason>"}}{web_tool}
 - {{"tool":"done"}} ends the task without a text answer; allowed only right after the result of an action you ran for this task
 
 Rules:
@@ -109,7 +122,7 @@ pub fn next_prompt(task: &str, web: bool) -> String {
     // The user can switch the web search between tasks (deep thinking turns it off).
     let web = match web {
         true => {
-            "Web search on your side is on for this task: anything on the web or current (the weather, news, prices, a page) you look up on your side and answer in plain text; do not fetch from the internet on the user's machine (no curl, wget, web APIs) unless the task asks for exactly that. This holds even if earlier tasks of this conversation fetched pages from the machine."
+            "Web search is on for this task: anything on the web or current (the weather, news, prices, a page) you get with the web tool {\"tool\":\"web\",\"query\":\"<what to look up, or the address to read>\"} and then answer in plain text; do not fetch from the internet on the user's machine (no curl, wget, web APIs) unless the task asks for exactly that. This holds even if earlier tasks of this conversation fetched pages from the machine."
         }
         false => {
             "Web search on your side is off for this task: fetch web pages from the user's machine when the task needs them."
@@ -136,9 +149,80 @@ pub fn with_files(prompt: String, names: &[&str]) -> String {
     }
 }
 
-/// Sent to the model instead of running a command that fetches a public web page
-/// while its own web search is on (`fetches_public_web`): it is told to search instead.
-pub const USE_YOUR_SEARCH: &str = "Not run: your web search is on in this conversation, so pages from the internet are not fetched on the user's machine. Look it up now with your own web search and browser and answer in plain text, without an action block.";
+/// The result of a web search for the model: the first line is the outcome the user sees.
+pub fn web_result(query: &str, answer: &str) -> String {
+    format!(
+        "Result: searched the web\nQuery: {query}\n\n{}\n",
+        answer.trim()
+    )
+}
+
+/// The result when a command that would fetch a public web page on the user's machine
+/// was replaced by a web search for the user's task (Browse on).
+pub fn searched_instead(query: &str, answer: &str) -> String {
+    format!(
+        "Result: searched the web\nYour command was not run: web search is on, so nothing from the internet is fetched on the user's machine. DeepSeek's web search was asked instead.\nQuery: {query}\n\n{}\n\nAnswer the task from this in plain text, or use the web tool for more.\n",
+        answer.trim()
+    )
+}
+
+/// Sent when the model asks for the web tool while web search is off.
+pub const WEB_OFF: &str = "Not run: web search is off in this conversation (the user turned Browse off). Fetch the page from the user's machine as an action, or answer without it.";
+
+/// DeepSeek's own tool-call markup, as the JSON objects of the protocol:
+/// `<｜DSML｜invoke name="shell">` with `<｜DSML｜parameter name="cmd" string="true">ls</｜DSML｜parameter>`
+/// becomes `{"tool":"shell","cmd":"ls"}`. A parameter with `string="false"` is JSON
+/// (a number). The bars and the words around the tags vary, so only `invoke name=`,
+/// `parameter name=` and the closing tags are relied on.
+fn dsml_calls(answer: &str) -> Vec<String> {
+    if !answer.contains("DSML") {
+        return Vec::new();
+    }
+    let mut calls = Vec::new();
+    let mut rest = answer;
+    while let Some(at) = rest.find("invoke name=\"") {
+        let after = &rest[at + "invoke name=\"".len()..];
+        let Some(name_end) = after.find('"') else {
+            break;
+        };
+        let name = &after[..name_end];
+        // The call ends at its closing `invoke>` tag (or the end of the answer).
+        let body_end = after.find("invoke>").unwrap_or(after.len());
+        let mut body = &after[name_end..body_end];
+        let mut object = serde_json::Map::new();
+        object.insert("tool".into(), serde_json::Value::String(name.into()));
+        while let Some(at) = body.find("parameter name=\"") {
+            let after = &body[at + "parameter name=\"".len()..];
+            let Some(key_end) = after.find('"') else {
+                break;
+            };
+            let key = &after[..key_end];
+            let Some(open_end) = after[key_end..].find('>') else {
+                break;
+            };
+            let attributes = &after[key_end..key_end + open_end];
+            let value_start = key_end + open_end + 1;
+            // The value runs to the `</` of the closing `parameter>` tag.
+            let close = after[value_start..]
+                .find("parameter>")
+                .map_or(after.len(), |i| value_start + i);
+            let value_end = after[value_start..close]
+                .rfind("</")
+                .map_or(close, |i| value_start + i);
+            let raw = &after[value_start..value_end];
+            let value = match attributes.contains("string=\"false\"") {
+                true => serde_json::from_str(raw.trim())
+                    .unwrap_or_else(|_| serde_json::Value::String(raw.into())),
+                false => serde_json::Value::String(raw.into()),
+            };
+            object.insert(key.into(), value);
+            body = &after[close.min(after.len())..];
+        }
+        calls.push(serde_json::Value::Object(object).to_string());
+        rest = &after[body_end.min(after.len())..];
+    }
+    calls
+}
 
 /// Whether the task itself asks for fetching on the user's machine ("with curl",
 /// "locally"): then a fetch is what the user wants, the model's search or not.
@@ -279,10 +363,14 @@ pub fn parse(answer: &str) -> Parsed {
     // A block the model did not close still counts.
     blocks.extend(current);
 
-    let Some(first) = blocks.first() else {
+    let mut blocks: Vec<String> = blocks.iter().map(|lines| lines.join("\n")).collect();
+    // No block: maybe DeepSeek's own tool-call markup, read as the same JSON.
+    if blocks.is_empty() {
+        blocks = dsml_calls(answer);
+    }
+    let Some(block) = blocks.first().cloned() else {
         return Parsed::Final;
     };
-    let block = first.join("\n");
     let is_done = serde_json::from_str::<serde_json::Value>(block.trim())
         .is_ok_and(|value| value.get("tool").and_then(|tool| tool.as_str()) == Some("done"));
     if is_done {
@@ -413,16 +501,19 @@ mod tests {
             Parsed::Done
         );
         let prompt = first_prompt("t", "/w", true);
-        assert!(prompt.contains("web search and a browser on your side"));
+        assert!(prompt.contains("Your web search is on"));
+        assert!(prompt.contains(r#"{"tool":"web","query":"#));
+        assert!(!first_prompt("t", "/w", false).contains(r#"{"tool":"web""#));
         assert!(prompt.contains("Never fetch from the internet on the user's machine"));
         assert!(first_prompt("t", "/w", false).contains("no web access on your side"));
         assert!(prompt.contains(r#"{"tool":"done"}"#));
         assert!(prompt.contains("do not repeat"));
         assert!(prompt.contains("never the first answer to a task"));
         assert!(next_prompt("t", true).contains("only after the result of an action of this task"));
-        assert!(next_prompt("t", true).contains("search on your side is on"));
+        assert!(next_prompt("t", true).contains("Web search is on for this task"));
         assert!(next_prompt("t", false).contains("search on your side is off"));
         assert!(next_prompt("t", true).contains("do not fetch from the internet"));
+        assert!(next_prompt("t", true).contains(r#"{"tool":"web""#));
         assert!(first_prompt("t", "/w", true).contains("weather"));
         let attached = with_files(next_prompt("t", true), &["a.pdf", "b.png"]);
         assert!(attached.ends_with("a.pdf, b.png\n\nTask: t"));
@@ -461,5 +552,50 @@ mod tests {
         assert!(asks_local_fetch("curl https://example.org"));
         assert!(asks_local_fetch("fetch the weather locally"));
         assert!(!asks_local_fetch("weather in Heidelberg"));
+    }
+
+    #[test]
+    fn dsml_tool_calls_are_read_as_actions() {
+        // As the real model sent it (2026-11-12).
+        let answer = "\n<｜｜DSML｜｜ calls>\n<｜｜DSML｜｜ invoke name=\"shell\">\n<｜｜DSML｜｜ parameter name=\"cmd\" string=\"true\">curl -sL 'https://ya.ru' | head -c 2000</｜｜DSML｜｜ parameter>\n<｜｜DSML｜｜ parameter name=\"why\" string=\"true\">fetch ya.ru content</｜｜DSML｜｜ parameter>\n</｜｜DSML｜｜ invoke>\n</｜｜DSML｜｜ calls>";
+        assert_eq!(
+            parse(answer),
+            Parsed::Action {
+                action: Action::Shell {
+                    cmd: "curl -sL 'https://ya.ru' | head -c 2000".into(),
+                    timeout_s: None,
+                    why: "fetch ya.ru content".into(),
+                },
+                extra: 0,
+            }
+        );
+        // Another spelling of the tags, a number, a value over several lines, two calls.
+        let answer = "<｜DSML｜function_calls>\n<｜DSML｜invoke name=\"write_file\">\n<｜DSML｜parameter name=\"path\" string=\"true\">a.txt</｜DSML｜parameter>\n<｜DSML｜parameter name=\"content\" string=\"true\">one\ntwo</｜DSML｜parameter>\n</｜DSML｜invoke>\n<｜DSML｜invoke name=\"shell\">\n<｜DSML｜parameter name=\"cmd\" string=\"true\">sleep 1</｜DSML｜parameter>\n<｜DSML｜parameter name=\"timeout_s\" string=\"false\">5</｜DSML｜parameter>\n</｜DSML｜invoke>\n</｜DSML｜function_calls>";
+        let Parsed::Action { action, extra } = parse(answer) else {
+            panic!()
+        };
+        assert_eq!(extra, 1);
+        assert_eq!(
+            action,
+            Action::WriteFile {
+                path: "a.txt".into(),
+                content: "one\ntwo".into(),
+                why: String::new(),
+            }
+        );
+        assert_eq!(
+            dsml_calls(answer)[1],
+            r#"{"cmd":"sleep 1","timeout_s":5,"tool":"shell"}"#
+        );
+        // The web tool and done.
+        let web = "<｜DSML｜invoke name=\"web\"><｜DSML｜parameter name=\"query\" string=\"true\">weather in Heidelberg</｜DSML｜parameter></｜DSML｜invoke>";
+        assert!(
+            matches!(parse(web), Parsed::Action { action: Action::Web { query, .. }, .. } if query == "weather in Heidelberg")
+        );
+        assert_eq!(
+            parse("<｜DSML｜invoke name=\"done\"></｜DSML｜invoke>"),
+            Parsed::Done
+        );
+        assert_eq!(parse("plain text about DSML"), Parsed::Final);
     }
 }
