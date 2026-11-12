@@ -1193,6 +1193,10 @@ impl Terminal {
                 "Drop files on the box",
                 "attach them; Backspace in an empty box drops the last",
             ),
+            row(
+                "Click Think, Browse, the mode",
+                "switch it, like /think, /browse, /permissions",
+            ),
             String::new(),
             heading("While a task runs"),
             row("Esc", "stop the task"),
