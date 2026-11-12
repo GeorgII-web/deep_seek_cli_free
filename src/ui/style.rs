@@ -116,10 +116,10 @@ impl Style {
     pub fn faint(&self) -> &'static str {
         self.code("\x1b[38;5;242m")
     }
-    /// `⏵ ask` (green) or `⏵⏵ allow all` (orange), for the hint and progress lines.
+    /// `⏵ ask` (green) or `⏵⏵ allow` (orange), for the hint and progress lines.
     pub fn mode_label(&self, allow_all: bool) -> String {
         match allow_all {
-            true => format!("{}⏵⏵ allow all{}", self.action(), self.reset()),
+            true => format!("{}⏵⏵ allow{}", self.action(), self.reset()),
             false => format!("{}⏵ ask{}", self.ok(), self.reset()),
         }
     }

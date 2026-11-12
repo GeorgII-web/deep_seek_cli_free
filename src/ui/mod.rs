@@ -98,6 +98,8 @@ const INPUT_HINTS: &[(&str, &str)] = &[
     ("↑↓", "history"),
 ];
 const EDIT_HINTS: &[(&str, &str)] = &[("Enter", "run"), ("Ctrl-D", "cancel")];
+/// Shown on the progress line when Think or Browse is clicked while a task runs.
+const SWITCH_LATER: &str = "Not while a task runs";
 /// Shown on the progress line when Enter finds the queue full.
 const QUEUE_FULL: &str = "Queue full · Alt+N drops one";
 /// The slash commands of the chat: offered in the menu when the input starts with `/`.
@@ -109,7 +111,7 @@ const COMMANDS: &[editor::Command] = &[
     ),
     (
         "/permissions",
-        "switch between ask and allow all (also Shift+Tab)",
+        "switch between ask and allow (also Shift+Tab)",
     ),
     (
         "/model",
@@ -319,7 +321,7 @@ pub struct Terminal {
     think: Arc<AtomicBool>,
     /// Browse (DeepSeek's web search) is on: shown next to Think
     browse: Arc<AtomicBool>,
-    /// The approval mode: true = allow all (run without asking), false = ask.
+    /// The approval mode: true = allow (run without asking), false = ask.
     /// Shared with the box, the progress line, the key watcher and the agent loop.
     allow_all: Arc<AtomicBool>,
 }
@@ -440,12 +442,12 @@ impl Terminal {
         self.allow_all.clone()
     }
 
-    /// Switches between ask and allow all (`/permissions`; Shift+Tab does the same in the
+    /// Switches between ask and allow (`/permissions`; Shift+Tab does the same in the
     /// box and while a task runs) and says what is on now.
     pub fn toggle_mode(&mut self) {
         let allow_all = !self.allow_all.fetch_xor(true, Ordering::Relaxed);
         let text = match allow_all {
-            true => "Mode `allow all`: actions run without asking; the deny list still applies.",
+            true => "Mode `allow`: actions run without asking; the deny list still applies.",
             false => "Mode `ask`: actions outside the allow list need your yes.",
         };
         self.info(text);
@@ -515,8 +517,10 @@ impl Terminal {
                     Ok(TermEvent::Key(key)) if key.kind != KeyEventKind::Release => key,
                     Ok(TermEvent::Mouse(mouse)) => {
                         if editor.is_some() {
-                            // The box: a right-click paste, or on to the output.
-                            to_box(TermEvent::Mouse(mouse));
+                            // The box: a label of the bottom row, a right-click paste, or on to the output.
+                            if to_box(TermEvent::Mouse(mouse)) == Busy::Later {
+                                notifier.show(SWITCH_LATER);
+                            }
                         } else if let Some(view) = &view {
                             // Inline there is no box to paste into.
                             let _ = mouse_event(view, mouse);
@@ -1189,6 +1193,10 @@ impl Terminal {
                 "Drop files on the box",
                 "attach them; Backspace in an empty box drops the last",
             ),
+            row(
+                "Click Think, Browse, the mode",
+                "switch it, like /think, /browse, /permissions",
+            ),
             String::new(),
             heading("While a task runs"),
             row("Esc", "stop the task"),
@@ -1204,7 +1212,7 @@ impl Terminal {
             heading("Anywhere"),
             row(
                 "Shift+Tab",
-                "mode: ask (confirm actions) or allow all (run without asking)",
+                "mode: ask (confirm actions) or allow (run without asking)",
             ),
             row("Ctrl-C twice", "quit"),
             row("Ctrl-D", "quit (empty box)"),

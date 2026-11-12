@@ -42,7 +42,7 @@ wrapped in `Terminal::begin` and `finish`; the first task uses `protocol::first_
 |---|---|
 | empty | ignored |
 | `/new` | new `Conversation`, the next task gets the rules again |
-| `/permissions` | `Terminal::toggle_mode` (ask ⇄ allow all) |
+| `/permissions` | `Terminal::toggle_mode` (ask ⇄ allow) |
 | `/model` | `Terminal::pick` ("DeepSeek", "Mock"); a change: `ensure_login` for the real account, a new `Model`, clean screen, `ModeSaver::save_api` → `deepseek.api` |
 | `/think` | deep thinking on or off (on turns Browse off): `Model::set_thinking(thinking, browse)`, `Terminal::set_think` / `set_browse`, `ModeSaver::save_modes` → `deepseek.thinking`, `deepseek.search` |
 | `/browse` | Browse (DeepSeek's web search, `search_enabled`) on or off (on turns thinking off): the same calls as `/think` |
